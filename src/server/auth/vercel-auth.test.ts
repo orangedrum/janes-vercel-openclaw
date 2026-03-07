@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   sanitizeNextPath,
   requireRouteAuth,
-  _resetProductionAuthCheck,
 } from "@/server/auth/vercel-auth";
 
 // ---------------------------------------------------------------------------
@@ -61,7 +60,7 @@ test("sanitizeNextPath: rejects malformed percent encoding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// requireRouteAuth – production auth mode guard
+// requireRouteAuth – deployment-protection mode
 // ---------------------------------------------------------------------------
 
 function withEnv(
@@ -85,7 +84,6 @@ function withEnv(
         process.env[key] = originals[key];
       }
     }
-    _resetProductionAuthCheck();
   };
   try {
     const result = fn();
@@ -99,67 +97,26 @@ function withEnv(
   }
 }
 
-test("requireRouteAuth: throws in production with deployment-protection and no opt-in", async () => {
+test("requireRouteAuth: returns deployment-protection session by default", async () => {
   await withEnv(
     {
       NODE_ENV: "production",
-      VERCEL: undefined,
-      VERCEL_AUTH_MODE: undefined, // defaults to deployment-protection
-      ALLOW_PLATFORM_ONLY_AUTH: undefined,
-    },
-    async () => {
-      const req = new Request("http://localhost/admin");
-      await assert.rejects(
-        () => requireRouteAuth(req),
-        /deployment-protection auth mode is unsafe for production/,
-      );
-    },
-  );
-});
-
-test("requireRouteAuth: throws with VERCEL=1 and deployment-protection without opt-in", async () => {
-  await withEnv(
-    {
-      NODE_ENV: "development",
-      VERCEL: "1",
       VERCEL_AUTH_MODE: undefined,
-      ALLOW_PLATFORM_ONLY_AUTH: undefined,
-    },
-    async () => {
-      const req = new Request("http://localhost/admin");
-      await assert.rejects(
-        () => requireRouteAuth(req),
-        /deployment-protection auth mode is unsafe for production/,
-      );
-    },
-  );
-});
-
-test("requireRouteAuth: allows deployment-protection in production with ALLOW_PLATFORM_ONLY_AUTH=true", async () => {
-  await withEnv(
-    {
-      NODE_ENV: "production",
-      VERCEL: undefined,
-      VERCEL_AUTH_MODE: undefined,
-      ALLOW_PLATFORM_ONLY_AUTH: "true",
     },
     async () => {
       const req = new Request("http://localhost/admin");
       const result = await requireRouteAuth(req);
-      // Should not throw and should return a session (not a Response redirect)
       assert.ok(!("status" in result), "Expected AuthCheckResult, not Response");
       assert.equal(result.session.user.sub, "deployment-protection");
     },
   );
 });
 
-test("requireRouteAuth: allows deployment-protection in development without opt-in", async () => {
+test("requireRouteAuth: returns deployment-protection session in development", async () => {
   await withEnv(
     {
       NODE_ENV: "development",
-      VERCEL: undefined,
       VERCEL_AUTH_MODE: undefined,
-      ALLOW_PLATFORM_ONLY_AUTH: undefined,
     },
     async () => {
       const req = new Request("http://localhost/admin");

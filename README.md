@@ -30,12 +30,12 @@ Clicking the button will prompt you for the required environment variables:
 | `UPSTASH_REDIS_REST_URL` | Upstash Redis REST endpoint. Required for production persistence. Provision via [Vercel Marketplace](https://vercel.com/marketplace/upstash-redis) or the Upstash console. |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token, paired with the URL above. |
 | `SESSION_SECRET` | Random 32+ character secret for encrypting session cookies. Generate with `openssl rand -hex 32`. |
-| `VERCEL_AUTH_MODE` | Set to `sign-in-with-vercel` (recommended) or `deployment-protection`. |
+| `VERCEL_AUTH_MODE` | `deployment-protection` (default, zero config) or `sign-in-with-vercel` (named user sessions). |
 
 ### After deploying
 
-- **If you chose `sign-in-with-vercel`**: you must create a Vercel OAuth application at [vercel.com/account/oauth-apps](https://vercel.com/account/oauth-apps) and set `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` and `VERCEL_APP_CLIENT_SECRET` as additional environment variables in your Vercel project settings. Set the callback URL to `https://<your-domain>/api/auth/callback`.
-- **If you chose `deployment-protection`**: enable Vercel Authentication on the deployment under your project's Security settings. No additional OAuth configuration is needed, but set `ALLOW_PLATFORM_ONLY_AUTH=true` in environment variables to acknowledge you are relying on platform-level protection.
+- **`deployment-protection` (default)**: no extra setup needed — Vercel's built-in Deployment Protection handles auth. Ensure Deployment Protection is enabled in your project's Security settings (it is on by default).
+- **`sign-in-with-vercel` (optional upgrade)**: create a Vercel OAuth application at [vercel.com/account/oauth-apps](https://vercel.com/account/oauth-apps) and set `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` and `VERCEL_APP_CLIENT_SECRET` as additional environment variables. Set the callback URL to `https://<your-domain>/api/auth/callback`.
 - **Upstash Redis is required for production**. Without it, the app falls back to in-memory state that is lost on every function cold start. You can provision Upstash directly from the [Vercel Marketplace](https://vercel.com/marketplace/upstash-redis) for integrated billing.
 - **AI Gateway** (optional): enable AI Gateway in your Vercel project settings and add `AI_GATEWAY_API_KEY` if you want LLM access through the sandbox.
 

@@ -11,52 +11,6 @@ import {
 } from "@/server/env";
 import { logInfo, logWarn } from "@/server/log";
 
-/**
- * In production, deployment-protection mode is only allowed if the deployer
- * explicitly opts in via ALLOW_PLATFORM_ONLY_AUTH=true.  Without it the app
- * refuses to serve authenticated routes, because Vercel's platform-level
- * protection may be absent or misconfigured on forked deploys.
- */
-let _productionAuthChecked = false;
-function assertProductionAuthSafe(): void {
-  if (_productionAuthChecked) return;
-
-  // Skip during next build (prerendering phase)
-  if (process.env.NEXT_PHASE === "phase-production-build") {
-    return;
-  }
-
-  const isProd =
-    process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
-  if (!isProd) {
-    _productionAuthChecked = true;
-    return;
-  }
-
-  if (getAuthMode() === "deployment-protection") {
-    if (process.env.ALLOW_PLATFORM_ONLY_AUTH !== "true") {
-      throw new Error(
-        "deployment-protection auth mode is unsafe for production. " +
-          "Either set VERCEL_AUTH_MODE=sign-in-with-vercel (recommended), " +
-          "or set ALLOW_PLATFORM_ONLY_AUTH=true if Vercel Deployment Protection " +
-          "is confirmed active on this project.",
-      );
-    }
-    logWarn("auth.platform_only", {
-      message:
-        "Running with deployment-protection auth. " +
-        "This relies entirely on Vercel's platform-level protection. " +
-        "Ensure Deployment Protection is enabled in your project settings.",
-    });
-  }
-
-  _productionAuthChecked = true;
-}
-
-/** Reset for testing only. */
-export function _resetProductionAuthCheck(): void {
-  _productionAuthChecked = false;
-}
 import {
   AuthSession,
   clearCookie,
@@ -104,7 +58,6 @@ export async function requireRouteAuth(
   request: Request,
   options?: { mode?: "redirect" | "json" },
 ): Promise<AuthCheckResult | Response> {
-  assertProductionAuthSafe();
   logInfo("auth.check", { mode: getAuthMode(), responseMode: options?.mode ?? "redirect" });
 
   if (getAuthMode() === "deployment-protection") {
