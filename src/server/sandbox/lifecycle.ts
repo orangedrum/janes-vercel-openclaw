@@ -10,7 +10,13 @@ import { applyFirewallPolicyToSandbox } from "@/server/firewall/policy";
 import { logError, logInfo, logWarn } from "@/server/log";
 import { setupOpenClaw } from "@/server/openclaw/bootstrap";
 import {
+  buildGatewayConfig,
+  buildImageGenScript,
+  buildImageGenSkill,
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
+  OPENCLAW_CONFIG_PATH,
+  OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
+  OPENCLAW_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
 } from "@/server/openclaw/config";
@@ -480,6 +486,23 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
         freshApiKey,
       ]);
     }
+
+    // Re-write config and skill files so snapshots taken before code
+    // changes still get the latest gateway config and skills.
+    await sandbox.writeFiles([
+      {
+        path: OPENCLAW_CONFIG_PATH,
+        content: Buffer.from(buildGatewayConfig(freshApiKey, origin)),
+      },
+      {
+        path: OPENCLAW_IMAGE_GEN_SKILL_PATH,
+        content: Buffer.from(buildImageGenSkill()),
+      },
+      {
+        path: OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
+        content: Buffer.from(buildImageGenScript()),
+      },
+    ]);
 
     const restoreResult = await sandbox.runCommand("bash", [
       OPENCLAW_STARTUP_SCRIPT_PATH,
