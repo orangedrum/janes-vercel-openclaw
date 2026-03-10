@@ -305,21 +305,76 @@ async function exchangeToken(
     body.set("refresh_token", input.refreshToken);
   }
 
-  const response = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Token exchange failed with status ${response.status}: ${await response.text()}`,
+  let response: Response;
+  try {
+    response = await fetch(TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+  } catch (error) {
+    logWarn("auth.token_exchange_network_error", {
+      grantType: input.grantType,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new ApiError(
+      502,
+      "OAUTH_UPSTREAM_ERROR",
+      "Authentication provider is temporarily unavailable.",
     );
   }
 
-  return (await response.json()) as TokenResponse;
+  if (!response.ok) {
+    const bodyPreview = (await response.text()).slice(0, 500);
+    logWarn("auth.token_exchange_failed", {
+      grantType: input.grantType,
+      status: response.status,
+      bodyPreview,
+    });
+
+    if (
+      response.status === 400 ||
+      response.status === 401 ||
+      response.status === 403
+    ) {
+      throw new ApiError(
+        400,
+        "OAUTH_TOKEN_EXCHANGE_FAILED",
+        "Authentication failed. Please sign in again.",
+      );
+    }
+
+    if (response.status === 429) {
+      throw new ApiError(
+        429,
+        "OAUTH_RATE_LIMITED",
+        "Authentication is temporarily rate limited. Please try again shortly.",
+      );
+    }
+
+    throw new ApiError(
+      502,
+      "OAUTH_UPSTREAM_ERROR",
+      "Authentication provider is temporarily unavailable.",
+    );
+  }
+
+  try {
+    return (await response.json()) as TokenResponse;
+  } catch (error) {
+    logWarn("auth.token_exchange_parse_failed", {
+      grantType: input.grantType,
+      status: response.status,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new ApiError(
+      502,
+      "OAUTH_UPSTREAM_ERROR",
+      "Authentication provider is temporarily unavailable.",
+    );
+  }
 }
 
 async function buildSessionFromTokenResponse(
