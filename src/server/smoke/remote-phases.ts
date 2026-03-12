@@ -358,14 +358,16 @@ export async function status(baseUrl: string, opts?: PhaseOptions): Promise<Phas
 
 export async function gatewayProbe(baseUrl: string, opts?: PhaseOptions): Promise<PhaseResult> {
   const phase = "gatewayProbe";
-  const endpoint = "/gateway/";
+  const endpoint = "/gateway";
   const timeout = opts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   try {
     const hdrs = authHeaders();
+    // Follow redirects (e.g. Next.js trailing-slash 308) so we reach the
+    // actual gateway HTML rather than classifying the redirect as a failure.
     const [res, ms] = await timed(() =>
       fetchWithTimeout(
         url(baseUrl, endpoint),
-        { headers: hdrs, redirect: "manual" },
+        { headers: hdrs },
         timeout,
       ),
     );
