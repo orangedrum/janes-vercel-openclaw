@@ -197,6 +197,40 @@ export function inferCategory(line: string): DomainCategory {
   return "unknown";
 }
 
+// ---------------------------------------------------------------------------
+// Command redaction — strip secrets before persisting in events
+// ---------------------------------------------------------------------------
+
+/** Matches ENV_VAR=value patterns for known secret variable names */
+const SECRET_ENV_ASSIGN = /\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|AI_GATEWAY_API_KEY|VERCEL_OIDC_TOKEN|VERCEL_TOKEN|GITHUB_TOKEN|NPM_TOKEN|SLACK_BOT_TOKEN|SLACK_SIGNING_SECRET|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN|CRON_SECRET|DATABASE_URL|REDIS_URL|UPSTASH_REDIS_REST_TOKEN|UPSTASH_REDIS_REST_URL|SECRET_KEY|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|API_KEY|API_SECRET|AUTH_TOKEN|SESSION_SECRET|JWT_SECRET|ENCRYPTION_KEY|PASSWORD|PASSWD|CREDENTIALS)\s*=\s*\S+/gi;
+const BEARER_TOKEN = /\b(?:Bearer|Token|Basic)\s+[A-Za-z0-9_\-./+=]{8,}/gi;
+const URL_CREDENTIALS = /(:\/\/)[^@\s]+@/g;
+const INLINE_KEY_VALUES = /--(?:token|key|secret|password|api-key|auth)\s*[=\s]\s*\S+/gi;
+const LONG_HEX_OR_BASE64 = /\b(?:sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|ghs_[A-Za-z0-9]{20,}|xoxb-[A-Za-z0-9\-]{20,}|xoxp-[A-Za-z0-9\-]{20,}|[A-Fa-f0-9]{32,}|[A-Za-z0-9+/=]{40,})\b/g;
+
+/**
+ * Redact likely secrets from a shell command string before persisting.
+ * The goal is best-effort — we redact common patterns, not all possible secrets.
+ */
+export function redactCommand(command: string): string {
+  return command
+    .replace(SECRET_ENV_ASSIGN, (match) => {
+      const eqIndex = match.indexOf("=");
+      return match.slice(0, eqIndex + 1) + "[REDACTED]";
+    })
+    .replace(BEARER_TOKEN, (match) => {
+      const spaceIndex = match.indexOf(" ");
+      return match.slice(0, spaceIndex + 1) + "[REDACTED]";
+    })
+    .replace(URL_CREDENTIALS, "$1[REDACTED]@")
+    .replace(INLINE_KEY_VALUES, (match) => {
+      const sepIndex = match.search(/[\s=]/);
+      const afterFlag = match.slice(sepIndex).search(/\S/);
+      return match.slice(0, sepIndex + afterFlag) + "[REDACTED]";
+    })
+    .replace(LONG_HEX_OR_BASE64, "[REDACTED]");
+}
+
 export type DomainWithContext = {
   domain: string;
   sourceCommand: string;
@@ -219,9 +253,10 @@ export function extractDomainsWithContext(logText: string): DomainWithContext[] 
     if (domains.length === 0) continue;
 
     const category = inferCategory(trimmed);
+    const redacted = redactCommand(trimmed);
     for (const domain of domains) {
       if (!seen.has(domain)) {
-        seen.set(domain, { domain, sourceCommand: trimmed, category });
+        seen.set(domain, { domain, sourceCommand: redacted, category });
       }
     }
   }

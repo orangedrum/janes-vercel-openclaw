@@ -10,8 +10,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { _setSandboxControllerForTesting } from "@/server/sandbox/controller";
+import type { SandboxController, SandboxHandle } from "@/server/sandbox/controller";
+import { _resetLogBuffer } from "@/server/log";
 import {
   _resetStoreForTesting,
+  mutateMeta,
 } from "@/server/store/store";
 import {
   callRoute,
@@ -53,6 +56,7 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
   delete process.env.KV_REST_API_TOKEN;
 
   _resetStoreForTesting();
+  _resetLogBuffer();
 
   try {
     await fn();
@@ -65,6 +69,7 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
       }
     }
     _resetStoreForTesting();
+    _resetLogBuffer();
     resetAfterCallbacks();
     _setSandboxControllerForTesting(null);
   }
@@ -119,5 +124,63 @@ test("GET /api/admin/logs: GET without CSRF headers still works (GET exempt from
     const result = await callRoute(route.GET!, request);
 
     assert.equal(result.status, 200);
+  });
+});
+
+test("GET /api/admin/logs: sandbox log parsing prefers top-level source over ctx.source", async () => {
+  await withTestEnv(async () => {
+    const sandboxController: SandboxController = {
+      async create() {
+        throw new Error("not implemented in this test");
+      },
+      async get() {
+        return {
+          sandboxId: "sandbox-123",
+          async runCommand() {
+            return {
+              exitCode: 0,
+              output: async () =>
+                JSON.stringify({
+                  ts: "2026-03-13T16:00:00.000Z",
+                  level: "info",
+                  source: "firewall",
+                  msg: "source-precedence-test",
+                  ctx: { source: "system", requestId: "req-top-level-source" },
+                }),
+            };
+          },
+          async writeFiles() {},
+          domain() {
+            return "https://sandbox-123.fake.vercel.run";
+          },
+          async snapshot() {
+            return { snapshotId: "snap-123" };
+          },
+          async extendTimeout() {},
+          async updateNetworkPolicy() {
+            return "allow-all";
+          },
+        } satisfies SandboxHandle;
+      },
+    };
+
+    _setSandboxControllerForTesting(sandboxController);
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-123";
+    });
+
+    const route = getAdminLogsRoute();
+    const request = buildAuthGetRequest("/api/admin/logs?source=firewall&search=source-precedence-test");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      logs: Array<{ source: string; message: string; data?: { requestId?: string } }>;
+    };
+    assert.equal(body.logs.length, 1);
+    assert.equal(body.logs[0]?.source, "firewall");
+    assert.equal(body.logs[0]?.message, "source-precedence-test");
+    assert.equal(body.logs[0]?.data?.requestId, "req-top-level-source");
   });
 });

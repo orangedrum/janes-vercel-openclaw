@@ -154,6 +154,7 @@ export type SingleMeta = {
   id: "openclaw-single";
   sandboxId: string | null;
   snapshotId: string | null;
+  openclawVersion: string | null;
   status: SingleStatus;
   gatewayToken: string;
   createdAt: number;
@@ -168,7 +169,7 @@ export type SingleMeta = {
   snapshotHistory: SnapshotRecord[];
 };
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 export function createDefaultMeta(now: number, gatewayToken: string): SingleMeta {
   return {
@@ -177,6 +178,7 @@ export function createDefaultMeta(now: number, gatewayToken: string): SingleMeta
     id: "openclaw-single",
     sandboxId: null,
     snapshotId: null,
+    openclawVersion: null,
     status: "uninitialized",
     gatewayToken,
     createdAt: now,
@@ -231,6 +233,8 @@ export function ensureMetaShape(input: unknown): SingleMeta | null {
     id: "openclaw-single",
     sandboxId: typeof raw.sandboxId === "string" ? raw.sandboxId : null,
     snapshotId: typeof raw.snapshotId === "string" ? raw.snapshotId : null,
+    openclawVersion:
+      typeof raw.openclawVersion === "string" ? raw.openclawVersion : null,
     status: isSingleStatus(raw.status) ? raw.status : "uninitialized",
     gatewayToken: typeof raw.gatewayToken === "string" ? raw.gatewayToken : "",
     createdAt,

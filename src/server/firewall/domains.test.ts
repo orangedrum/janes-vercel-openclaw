@@ -9,6 +9,7 @@ import {
   inferCategory,
   normalizeDomain,
   normalizeDomainList,
+  redactCommand,
 } from "@/server/firewall/domains";
 import type { LearnedDomain } from "@/shared/types";
 
@@ -377,4 +378,61 @@ test("groupByRegistrableDomain sorts groups alphabetically", () => {
     groups.map((g) => g.registrableDomain),
     ["demo.net", "example.com", "test.org"],
   );
+});
+
+// ---------------------------------------------------------------------------
+// redactCommand
+// ---------------------------------------------------------------------------
+
+test("redactCommand redacts env-var-style secrets", () => {
+  assert.equal(
+    redactCommand("OPENAI_API_KEY=sk-abc123xyz fetch https://api.openai.com/v1"),
+    "OPENAI_API_KEY=[REDACTED] fetch https://api.openai.com/v1",
+  );
+  assert.equal(
+    redactCommand("GITHUB_TOKEN=ghp_abcdefghijklmnopqrst1234 git push"),
+    "GITHUB_TOKEN=[REDACTED] git push",
+  );
+});
+
+test("redactCommand redacts Bearer tokens", () => {
+  assert.equal(
+    redactCommand("curl -H 'Authorization: Bearer sk-abc123xyzLongToken456' https://api.openai.com"),
+    "curl -H 'Authorization: Bearer [REDACTED]' https://api.openai.com",
+  );
+});
+
+test("redactCommand redacts URL credentials", () => {
+  assert.equal(
+    redactCommand("git clone https://user:password123@github.com/repo"),
+    "git clone https://[REDACTED]@github.com/repo",
+  );
+});
+
+test("redactCommand redacts CLI flag secrets", () => {
+  assert.equal(
+    redactCommand("npm publish --token abc123def456ghi"),
+    "npm publish --token [REDACTED]",
+  );
+});
+
+test("redactCommand leaves non-secret commands untouched", () => {
+  const cmd = "npm install express && node server.js";
+  assert.equal(redactCommand(cmd), cmd);
+});
+
+test("redactCommand redacts known long token patterns", () => {
+  assert.equal(
+    redactCommand("curl https://api.openai.com -H 'X-Key: sk-aaaabbbbccccddddeeeeffffgggg'"),
+    "curl https://api.openai.com -H 'X-Key: [REDACTED]'",
+  );
+});
+
+test("extractDomainsWithContext applies redaction to sourceCommand", () => {
+  const logText = "curl -H 'Authorization: Bearer sk-longSecretTokenValue1234' https://api.openai.com/v1/chat";
+  const results = extractDomainsWithContext(logText);
+  const entry = results.find((e) => e.domain === "api.openai.com");
+  assert.ok(entry, "Should find api.openai.com");
+  assert.ok(!entry.sourceCommand.includes("sk-longSecretTokenValue1234"), "Secret should be redacted");
+  assert.ok(entry.sourceCommand.includes("[REDACTED]"), "Should contain redaction marker");
 });

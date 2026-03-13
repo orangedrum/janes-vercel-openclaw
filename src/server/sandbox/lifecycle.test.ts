@@ -29,6 +29,7 @@ import {
 } from "@/server/store/store";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
 import {
+  OPENCLAW_BIN,
   OPENCLAW_CONFIG_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_IMAGE_GEN_SKILL_PATH,
@@ -75,6 +76,9 @@ class FakeSandboxHandle implements SandboxHandle {
     if (this.commandHandler) {
       const result = this.commandHandler(command, args);
       return { exitCode: result.exitCode, output: async () => result.output };
+    }
+    if (command === OPENCLAW_BIN && args?.[0] === "--version") {
+      return { exitCode: 0, output: async () => "openclaw 1.2.3" };
     }
     return { exitCode: 0, output: async () => "" };
   }
@@ -949,7 +953,7 @@ test("ensureSandboxRunning full error recovery: error → create → running", a
   const originalFetch = globalThis.fetch;
 
   // Make curl readiness probe succeed (used by setupOpenClaw's waitForGatewayReady)
-  fake.commandHandler = (cmd, args) => {
+  fake.commandHandler = (cmd) => {
     if (cmd === "curl") {
       return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
     }
@@ -987,6 +991,54 @@ test("ensureSandboxRunning full error recovery: error → create → running", a
       assert.equal(meta.lastError, null, "lastError should be cleared");
       assert.ok(meta.sandboxId, "sandboxId should be set");
       assert.equal(fake.created.length, 1, "Should have created exactly one sandbox");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("ensureSandboxRunning create path stores bootstrap snapshot and openclaw version", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  fake.commandHandler = (cmd, args) => {
+    if (cmd === OPENCLAW_BIN && args?.[0] === "--version") {
+      return { exitCode: 0, output: "openclaw 9.9.9" };
+    }
+    if (cmd === "curl") {
+      return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
+    }
+    return { exitCode: 0, output: "" };
+  };
+
+  await withTestEnv(fake, async () => {
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      let scheduledCallback: (() => Promise<void> | void) | null = null;
+
+      await ensureSandboxRunning({
+        origin: "https://test.example.com",
+        reason: "bootstrap-snapshot-test",
+        schedule(cb) {
+          scheduledCallback = cb;
+        },
+      });
+
+      assert.ok(scheduledCallback, "Background work should have been scheduled");
+      await (scheduledCallback as () => Promise<void>)();
+
+      const meta = await getInitializedMeta();
+      const handle = fake.created[0];
+      assert.ok(handle, "sandbox handle should be tracked");
+
+      assert.equal(meta.status, "running");
+      assert.ok(meta.snapshotId?.startsWith("snap-"), "bootstrap should persist a recovery snapshot");
+      assert.equal(meta.openclawVersion, "openclaw 9.9.9");
+      assert.equal(meta.snapshotHistory[0]?.reason, "bootstrap-auto");
+      assert.equal(meta.snapshotHistory[0]?.snapshotId, meta.snapshotId);
+      assert.equal(handle.snapshotCalled, true, "sandbox snapshot API should be called after bootstrap");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1204,7 +1256,7 @@ test("restoreSandboxFromSnapshot falls back to createAndBootstrapSandbox when sn
   const originalFetch = globalThis.fetch;
 
   // Make curl return the openclaw-app marker so waitForGatewayReady succeeds quickly
-  fake.commandHandler = (cmd, args) => {
+  fake.commandHandler = (cmd) => {
     if (cmd === "curl") {
       return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
     }

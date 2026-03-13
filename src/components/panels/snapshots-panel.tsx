@@ -39,7 +39,7 @@ export function SnapshotsPanel({
   requestJson,
 }: SnapshotsPanelProps) {
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const { confirm, dialogProps } = useConfirm();
 
   const isRunning = status.status === "running";
@@ -126,7 +126,13 @@ export function SnapshotsPanel({
       </dl>
 
       {/* Snapshot list */}
-      {snapshots.length === 0 && !loading && (
+      {loading && snapshots.length === 0 && (
+        <div className="snapshot-loading">
+          <div className="skeleton-line" />
+          <div className="skeleton-line" />
+        </div>
+      )}
+      {!loading && snapshots.length === 0 && (
         <p className="empty-token">No snapshots in history yet.</p>
       )}
 

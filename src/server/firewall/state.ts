@@ -3,7 +3,7 @@ import type { FirewallEvent, FirewallIngestOutcome, FirewallReport, FirewallStat
 import { computePolicyHash } from "@/shared/types";
 import { getInitializedMeta, getStore, mutateMeta } from "@/server/store/store";
 import { applyFirewallPolicyToSandbox } from "@/server/firewall/policy";
-import { extractDomains, extractDomainsWithContext, groupByRegistrableDomain, normalizeDomainList } from "@/server/firewall/domains";
+import { extractDomainsWithContext, groupByRegistrableDomain, normalizeDomainList } from "@/server/firewall/domains";
 import { logInfo, logWarn } from "@/server/log";
 import { getSandboxController } from "@/server/sandbox/controller";
 
@@ -48,7 +48,7 @@ export async function setFirewallMode(
     return (await getInitializedMeta()).firewall;
   }
 
-  logInfo("firewall.mode_change_started", { operation: "mode_change", from: current, to: mode, requestId: options?.requestId });
+  logInfo("firewall.mode_change_requested", { operation: "mode_change", from: current, to: mode, requestId: options?.requestId });
   const meta = await mutateMeta((meta) => {
     if (mode === "enforcing" && meta.firewall.allowlist.length === 0) {
       logWarn("firewall.mode_change_failed", {
@@ -76,6 +76,12 @@ export async function setFirewallMode(
     }
   });
   await syncFirewallPolicyAfterMutation("setFirewallMode", options?.requestId);
+  logInfo("firewall.mode_change_applied", {
+    operation: "mode_change",
+    from: current,
+    to: mode,
+    requestId: options?.requestId,
+  });
   return meta.firewall;
 }
 
@@ -83,7 +89,7 @@ export async function approveDomains(
   domains: string[],
   options?: { requestId?: string },
 ): Promise<FirewallState> {
-  logInfo("firewall.approve_started", { operation: "approve", count: domains.length, requestId: options?.requestId });
+  logInfo("firewall.domains_approved_requested", { operation: "approve", count: domains.length, requestId: options?.requestId });
   const normalized = normalizeDomainList(domains);
   if (normalized.invalid.length > 0) {
     logWarn("firewall.approve_failed", {
@@ -118,8 +124,12 @@ export async function approveDomains(
       source: "api",
     });
   });
-  logInfo("firewall.approve_completed", { operation: "approve", count: normalized.valid.length, requestId: options?.requestId });
   await syncFirewallPolicyAfterMutation("approveDomains", options?.requestId);
+  logInfo("firewall.domains_approved_applied", {
+    operation: "approve",
+    count: normalized.valid.length,
+    requestId: options?.requestId,
+  });
   return meta.firewall;
 }
 

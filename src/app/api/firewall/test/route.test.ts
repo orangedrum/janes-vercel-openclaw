@@ -86,10 +86,12 @@ test("POST /api/firewall/test: domain allowed when firewall disabled", async () 
       allowed: boolean;
       reason: string;
       domain: string;
+      normalizedDomain: string;
       mode: string;
     };
     assert.equal(body.allowed, true);
     assert.equal(body.domain, "example.com");
+    assert.equal(body.normalizedDomain, "example.com");
     assert.equal(body.mode, "disabled");
   });
 });
@@ -135,6 +137,34 @@ test("POST /api/firewall/test: domain blocked in enforcing mode when not in allo
   });
 });
 
+test("POST /api/firewall/test: normalizes URLs before checking enforcing allowlist", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.firewall.mode = "enforcing";
+      meta.firewall.allowlist = ["api.openai.com"];
+    });
+
+    const route = getFirewallTestRoute();
+    const request = buildAuthPostRequest(
+      "/api/firewall/test",
+      JSON.stringify({ domain: " https://API.OpenAI.com/v1/chat/completions " }),
+    );
+    const result = await callRoute(route.POST!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      allowed: boolean;
+      domain: string;
+      normalizedDomain: string;
+      reason: string;
+    };
+    assert.equal(body.allowed, true);
+    assert.equal(body.domain, "api.openai.com");
+    assert.equal(body.normalizedDomain, "api.openai.com");
+    assert.match(body.reason, /api\.openai\.com/);
+  });
+});
+
 test("POST /api/firewall/test: domain allowed in enforcing mode when in allowlist", async () => {
   await withTestEnv(async () => {
     await mutateMeta((meta) => {
@@ -165,6 +195,27 @@ test("POST /api/firewall/test: returns error for missing domain", async () => {
     );
     const result = await callRoute(route.POST!, request);
 
-    assert.equal(result.status, 500);
+    assert.equal(result.status, 400);
+    assert.deepEqual(result.json, {
+      error: "MISSING_DOMAIN",
+      message: "Missing or empty 'domain' field.",
+    });
+  });
+});
+
+test("POST /api/firewall/test: returns error for invalid domain input", async () => {
+  await withTestEnv(async () => {
+    const route = getFirewallTestRoute();
+    const request = buildAuthPostRequest(
+      "/api/firewall/test",
+      JSON.stringify({ domain: "not-valid" }),
+    );
+    const result = await callRoute(route.POST!, request);
+
+    assert.equal(result.status, 400);
+    assert.deepEqual(result.json, {
+      error: "INVALID_DOMAIN",
+      message: "Domain must be a valid hostname or URL.",
+    });
   });
 });

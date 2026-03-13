@@ -718,6 +718,7 @@ a[href]:focus-visible {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.5;
+  min-height: 18px;
 }
 
 .policy-meta code {
@@ -1816,6 +1817,28 @@ a[href]:focus-visible {
 .snapshot-reason-bootstrap {
   border-color: var(--border);
   color: var(--foreground-muted);
+}
+
+/* ────── Skeleton loading ────── */
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.08; }
+  50% { opacity: 0.15; }
+}
+
+.skeleton-line {
+  height: 44px;
+  border-radius: 8px;
+  background: var(--foreground);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-line + .skeleton-line {
+  margin-top: 8px;
+}
+
+.snapshot-loading {
+  padding: 4px 0;
 }
 
 /* ────── Confirm dialog ────── */

@@ -550,12 +550,14 @@ test("Scenario: running → stop (snapshot event) → restore (restore event) �
     const afterStop = Date.now();
 
     const snapshotEvents = h.controller.eventsOfKind("snapshot");
-    assert.equal(snapshotEvents.length, 1, "Should have one snapshot event");
+    // 2 snapshots: one auto-snapshot after bootstrap, one from stopSandbox
+    assert.equal(snapshotEvents.length, 2, "Should have two snapshot events (bootstrap + stop)");
+    const stopSnapshot = snapshotEvents[snapshotEvents.length - 1]!;
     assert.ok(
-      snapshotEvents[0]!.timestamp >= beforeStop && snapshotEvents[0]!.timestamp <= afterStop,
-      "Snapshot event timestamp should be within the stop window",
+      stopSnapshot.timestamp >= beforeStop && stopSnapshot.timestamp <= afterStop,
+      "Stop snapshot event timestamp should be within the stop window",
     );
-    assert.equal(snapshotEvents[0]!.sandboxId, "sbx-fake-1");
+    assert.equal(stopSnapshot.sandboxId, "sbx-fake-1");
 
     const meta = await h.getMeta();
     assert.equal(meta.status, "stopped");
@@ -601,14 +603,15 @@ test("Scenario: running → stop (snapshot event) → restore (restore event) �
       const restored = await h.getMeta();
       assert.equal(restored.status, "running");
 
-      // Verify overall event sequence: create → snapshot → restore
+      // Verify overall event sequence: create → bootstrap snapshot → stop snapshot → restore
       const lifecycleEvents = h.controller.events.filter((e) =>
         ["create", "snapshot", "restore"].includes(e.kind),
       );
-      assert.equal(lifecycleEvents.length, 3);
+      assert.equal(lifecycleEvents.length, 4);
       assert.equal(lifecycleEvents[0]!.kind, "create");
-      assert.equal(lifecycleEvents[1]!.kind, "snapshot");
-      assert.equal(lifecycleEvents[2]!.kind, "restore");
+      assert.equal(lifecycleEvents[1]!.kind, "snapshot"); // bootstrap auto-snapshot
+      assert.equal(lifecycleEvents[2]!.kind, "snapshot"); // stop snapshot
+      assert.equal(lifecycleEvents[3]!.kind, "restore");
 
       // Timestamps must be monotonically non-decreasing
       for (let i = 1; i < lifecycleEvents.length; i++) {
@@ -643,8 +646,9 @@ test("Scenario: channel message while stopped → triggers restore → message p
     assert.ok(stoppedMeta.snapshotId);
 
     // Verify we have create + snapshot events so far
+    // 2 snapshots: one auto-snapshot after bootstrap, one from stopSandbox
     assert.equal(h.controller.eventsOfKind("create").length, 1);
-    assert.equal(h.controller.eventsOfKind("snapshot").length, 1);
+    assert.equal(h.controller.eventsOfKind("snapshot").length, 2);
     assert.equal(h.controller.eventsOfKind("restore").length, 0, "No restore yet");
 
     // Set up handlers for drain
@@ -698,11 +702,11 @@ test("Scenario: channel message while stopped → triggers restore → message p
         "Queue should be drained",
       );
 
-      // Full event sequence: create → snapshot → restore
+      // Full event sequence: create → bootstrap snapshot → stop snapshot → restore
       const lifecycle = h.controller.events
         .filter((e) => ["create", "snapshot", "restore"].includes(e.kind))
         .map((e) => e.kind);
-      assert.deepEqual(lifecycle, ["create", "snapshot", "restore"]);
+      assert.deepEqual(lifecycle, ["create", "snapshot", "snapshot", "restore"]);
     } finally {
       globalThis.fetch = originalFetch;
     }

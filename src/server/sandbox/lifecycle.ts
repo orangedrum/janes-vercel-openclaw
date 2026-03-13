@@ -139,21 +139,12 @@ export async function stopSandbox(): Promise<SingleMeta> {
     const snapshot = await sandbox.snapshot();
     logInfo("sandbox.status_transition", { from: meta.status, to: "stopped", snapshotId: snapshot.snapshotId });
     return mutateMeta((next) => {
-      next.snapshotId = snapshot.snapshotId;
+      recordSnapshotMetadata(next, snapshot.snapshotId, "stop");
       next.sandboxId = null;
       next.portUrls = null;
       next.status = "stopped";
       next.lastAccessedAt = Date.now();
       next.lastError = null;
-      next.snapshotHistory = [
-        {
-          id: randomUUID(),
-          snapshotId: snapshot.snapshotId,
-          timestamp: Date.now(),
-          reason: "stop",
-        },
-        ...next.snapshotHistory,
-      ].slice(0, 50);
     });
   });
 }
@@ -445,12 +436,22 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
       meta.portUrls = resolvePortUrls(sandbox);
       meta.lastAccessedAt = Date.now();
       meta.startupScript = setupResult.startupScript;
+      meta.openclawVersion = setupResult.openclawVersion;
       meta.lastError = null;
     });
 
     await applyFirewallPolicyToSandbox(sandbox, next);
-    logInfo("sandbox.create.complete", { sandboxId: sandbox.sandboxId });
-    return next;
+    logInfo("sandbox.bootstrap_snapshot.start", { sandboxId: sandbox.sandboxId });
+    const snapshot = await sandbox.snapshot();
+    const bootstrapped = await mutateMeta((meta) => {
+      recordSnapshotMetadata(meta, snapshot.snapshotId, "bootstrap-auto");
+    });
+    logInfo("sandbox.create.complete", {
+      sandboxId: sandbox.sandboxId,
+      snapshotId: snapshot.snapshotId,
+      openclawVersion: setupResult.openclawVersion,
+    });
+    return bootstrapped;
   });
 }
 
@@ -566,6 +567,24 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
 
     return getInitializedMeta();
   });
+}
+
+function recordSnapshotMetadata(
+  meta: SingleMeta,
+  snapshotId: string,
+  reason: string,
+): void {
+  const timestamp = Date.now();
+  meta.snapshotId = snapshotId;
+  meta.snapshotHistory = [
+    {
+      id: randomUUID(),
+      snapshotId,
+      timestamp,
+      reason,
+    },
+    ...meta.snapshotHistory,
+  ].slice(0, 50);
 }
 
 async function withLifecycleLock<T>(fn: () => Promise<T>): Promise<T> {

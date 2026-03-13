@@ -20,13 +20,46 @@ Full testing playbook for `vercel-openclaw` — a single Next.js 16 App Router p
 ## Quick Reference
 
 ```bash
-pnpm test                                        # all tests (854 tests)
+pnpm test                                        # all tests (1017 tests)
 pnpm test:watch                                  # watch mode (re-runs on file change)
 npx tsx --test src/server/firewall/state.test.ts  # single file
 npx tsx --test src/server/smoke/full-smoke.test.ts # full smoke test
 pnpm build                                        # build gate
 pnpm typecheck                                    # type gate
 pnpm lint                                         # lint gate
+```
+
+## Remote Smoke Testing (Live Deployment)
+
+The production deployment is at `https://vercel-openclaw.labs.vercel.dev`. It uses **deployment protection** mode, so you need the bypass secret.
+
+```bash
+# Safe read-only smoke test (health, status, gateway probe, firewall read, channels summary, SSH echo)
+pnpm smoke:remote --base-url https://vercel-openclaw.labs.vercel.dev --protection-bypass G1nz97mVRqugLZl4Q0pfpTlZBLScslf9
+
+# Destructive smoke test (includes ensure, snapshot, restore — use with caution)
+pnpm smoke:remote --base-url https://vercel-openclaw.labs.vercel.dev --protection-bypass G1nz97mVRqugLZl4Q0pfpTlZBLScslf9 --destructive --timeout 180
+
+# JSON-only output (for CI)
+pnpm smoke:remote --base-url https://vercel-openclaw.labs.vercel.dev --protection-bypass G1nz97mVRqugLZl4Q0pfpTlZBLScslf9 --json-only
+```
+
+**Deployment URLs:**
+- Production: `https://vercel-openclaw.labs.vercel.dev`
+- Alias: `https://vercel-openclaw-prod.labs.vercel.dev`
+- Main branch: `https://vercel-openclaw-git-main.labs.vercel.dev`
+- Preview: `https://vercel-openclaw-<hash>.labs.vercel.dev`
+
+**Auth flags:**
+- `--protection-bypass <secret>` — Vercel deployment protection bypass (recommended for CLI testing)
+- `--auth-cookie <value>` — encrypted session cookie for `sign-in-with-vercel` mode
+- Env: `VERCEL_AUTOMATION_BYPASS_SECRET` — alternative to `--protection-bypass`
+- Env: `SMOKE_AUTH_COOKIE` — alternative to `--auth-cookie`
+
+**Ad-hoc endpoint checks with `vercel curl`:**
+```bash
+vercel curl /api/health --deployment https://vercel-openclaw.labs.vercel.dev
+vercel curl /api/status --deployment https://vercel-openclaw.labs.vercel.dev
 ```
 
 ## Test Framework

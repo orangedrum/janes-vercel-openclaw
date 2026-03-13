@@ -22,11 +22,16 @@ export async function applyFirewallPolicyToSandbox(
   meta: SingleMeta,
 ): Promise<NetworkPolicy> {
   const policy = toNetworkPolicy(meta.firewall.mode, meta.firewall.allowlist);
-  logInfo("firewall.sync_policy_applied", {
+  logInfo("firewall.policy_requested", {
     operation: "sync",
     mode: meta.firewall.mode,
     allowlistCount: meta.firewall.allowlist.length,
   });
   await sandbox.updateNetworkPolicy(policy);
+  logInfo("firewall.policy_applied", {
+    operation: "sync",
+    mode: meta.firewall.mode,
+    allowlistCount: meta.firewall.allowlist.length,
+  });
   return policy;
 }

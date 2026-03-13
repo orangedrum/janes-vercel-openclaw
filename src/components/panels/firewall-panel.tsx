@@ -305,24 +305,28 @@ export function FirewallPanel({
             </div>
           )}
 
-          {/* Policy hash & last apply */}
-          {report && (
-            <div className="policy-meta">
-              <span className="muted-copy">
-                Policy: <code>{report.policyHash.slice(0, 12)}</code>
-              </span>
-              {report.lastSync && report.lastSync.applied && (
+          {/* Policy hash & last apply — always reserve space to avoid CLS */}
+          <div className="policy-meta">
+            {report ? (
+              <>
                 <span className="muted-copy">
-                  {" · "}Applied {formatRelativeTime(report.lastSync.timestamp)}
+                  Policy: <code>{report.policyHash.slice(0, 12)}</code>
                 </span>
-              )}
-              {report.lastSync && !report.lastSync.applied && (
-                <span className="muted-copy sync-fail-text">
-                  {" · "}Not applied: {report.lastSync.reason}
-                </span>
-              )}
-            </div>
-          )}
+                {report.lastSync && report.lastSync.applied && (
+                  <span className="muted-copy">
+                    {" · "}Applied {formatRelativeTime(report.lastSync.timestamp)}
+                  </span>
+                )}
+                {report.lastSync && !report.lastSync.applied && (
+                  <span className="muted-copy sync-fail-text">
+                    {" · "}Not applied: {report.lastSync.reason}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="muted-copy">&nbsp;</span>
+            )}
+          </div>
 
           {fw.mode === "learning" && (
             <div className="learning-status">

@@ -33,7 +33,7 @@ function parseLogLine(line: string, index: number): LogEntry | null {
       id: `log-${parsed.ts ?? index}-${index}`,
       timestamp: parsed.ts ? new Date(parsed.ts).getTime() : Date.now(),
       level,
-      source: normalizeSource(parsed.source ?? parsed.ctx?.source),
+      source: normalizeSource(parsed.source, parsed.ctx?.source),
       message: parsed.msg ?? trimmed,
       ...(data ? { data } : {}),
     };
@@ -56,7 +56,7 @@ function normalizeLevel(raw: unknown): LogLevel {
   return "info";
 }
 
-function normalizeSource(raw: unknown): LogSource {
+function parseSource(raw: unknown): LogSource | null {
   const valid: LogSource[] = [
     "lifecycle",
     "proxy",
@@ -68,7 +68,11 @@ function normalizeSource(raw: unknown): LogSource {
   if (typeof raw === "string" && valid.includes(raw as LogSource)) {
     return raw as LogSource;
   }
-  return "system";
+  return null;
+}
+
+function normalizeSource(primary: unknown, fallback?: unknown): LogSource {
+  return parseSource(primary) ?? parseSource(fallback) ?? "system";
 }
 
 function isValidLevel(value: string): value is LogLevel {

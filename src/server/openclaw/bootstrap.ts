@@ -27,7 +27,7 @@ export async function setupOpenClaw(
     apiKey?: string;
     proxyOrigin: string;
   },
-): Promise<{ startupScript: string }> {
+): Promise<{ startupScript: string; openclawVersion: string | null }> {
   const startupScript = buildStartupScript();
   logInfo("openclaw.setup.start", { sandboxId: sandbox.sandboxId });
 
@@ -80,9 +80,12 @@ export async function setupOpenClaw(
   ]);
 
   const versionResult = await sandbox.runCommand(OPENCLAW_BIN, ["--version"]);
+  const openclawVersion = normalizeOpenClawVersion(
+    await versionResult.output("stdout"),
+  );
   logInfo("openclaw.setup.installed", {
     sandboxId: sandbox.sandboxId,
-    version: (await versionResult.output("stdout")).trim(),
+    version: openclawVersion,
   });
 
   await sandbox.runCommand("bash", [OPENCLAW_STARTUP_SCRIPT_PATH]);
@@ -98,7 +101,7 @@ export async function setupOpenClaw(
   }
 
   logInfo("openclaw.setup.ready", { sandboxId: sandbox.sandboxId });
-  return { startupScript };
+  return { startupScript, openclawVersion };
 }
 
 export async function waitForGatewayReady(
@@ -132,4 +135,9 @@ export async function waitForGatewayReady(
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeOpenClawVersion(raw: string): string | null {
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }

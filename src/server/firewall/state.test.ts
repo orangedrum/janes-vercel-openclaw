@@ -1305,9 +1305,9 @@ test("setFirewallMode includes requestId in log entries", async () => {
 
     const logs = getServerLogs();
     const modeChangeLog = logs.find(
-      (e) => e.message === "firewall.mode_change_started" && e.data?.requestId === "req-abc-123",
+      (e) => e.message === "firewall.mode_change_requested" && e.data?.requestId === "req-abc-123",
     );
-    assert.ok(modeChangeLog, "Expected firewall.mode_change_started log with requestId");
+    assert.ok(modeChangeLog, "Expected firewall.mode_change_requested log with requestId");
   });
 });
 
