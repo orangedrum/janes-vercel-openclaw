@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Sandbox } from "@vercel/sandbox";
+import { getSandboxController } from "@/server/sandbox/controller";
 
 import type { SnapshotRecord } from "@/shared/types";
 import { ApiError, jsonError } from "@/shared/http";
@@ -46,7 +46,7 @@ export async function POST(request: Request): Promise<Response> {
   const reason = typeof body.reason === "string" ? body.reason : "manual";
 
   try {
-    const sandbox = await Sandbox.get({ sandboxId: meta.sandboxId });
+    const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
     const snapshot = await sandbox.snapshot();
 
     const record: SnapshotRecord = {

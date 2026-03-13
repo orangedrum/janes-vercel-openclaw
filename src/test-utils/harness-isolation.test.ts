@@ -44,7 +44,7 @@ test("harness isolation: two sequential instances share no store state", async (
 
 test("harness isolation: two sequential instances have independent controllers", async () => {
   const h1 = createScenarioHarness();
-  await h1.controller.create({ ports: [3000] });
+  await h1.controller.create({});
   assert.equal(h1.controller.created.length, 1);
   h1.teardown();
 

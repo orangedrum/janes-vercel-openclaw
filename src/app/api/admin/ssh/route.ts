@@ -1,4 +1,4 @@
-import { Sandbox } from "@vercel/sandbox";
+import { getSandboxController } from "@/server/sandbox/controller";
 
 import { ApiError, jsonError } from "@/shared/http";
 import { requireMutationAuth, authJsonOk } from "@/server/auth/route-auth";
@@ -67,7 +67,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const sandbox = await Sandbox.get({ sandboxId: meta.sandboxId });
+    const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
     const result = await sandbox.runCommand(command, args ?? []);
 
     const stdout = (await result.output("stdout")).slice(0, MAX_OUTPUT_BYTES);

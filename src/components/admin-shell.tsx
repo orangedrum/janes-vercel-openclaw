@@ -134,12 +134,12 @@ export function AdminShell() {
     return (
       <main className="shell">
         <section className="hero-card">
-          <p className="eyebrow">
-            <BrandIcon size={16} /> OpenClaw
-          </p>
-          <h1>Single-sandbox OpenClaw dashboard.</h1>
+          <h1 style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <BrandIcon size={40} />
+            VClaw Sandbox
+          </h1>
           <p className="lede">
-            Manage one persistent OpenClaw sandbox with on-demand restore,
+            Manage one persistent VClaw sandbox with on-demand restore,
             firewall controls, and channel entry points behind Vercel auth.
           </p>
           <div className="hero-actions">
@@ -161,12 +161,10 @@ export function AdminShell() {
     <main className="shell">
       <section className="hero-card">
         <div className="hero-header">
-          <div>
-            <p className="eyebrow">
-              <BrandIcon size={16} /> OpenClaw
-            </p>
-            <h1>Single persistent OpenClaw sandbox.</h1>
-          </div>
+          <h1 style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <BrandIcon size={40} />
+            VClaw Sandbox
+          </h1>
           <div className="auth-chip">
             <span>
               {status.user?.name ?? status.user?.email ?? "Protected viewer"}

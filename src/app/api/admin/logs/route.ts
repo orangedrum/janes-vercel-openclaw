@@ -1,4 +1,4 @@
-import { Sandbox } from "@vercel/sandbox";
+import { getSandboxController } from "@/server/sandbox/controller";
 
 import type { LogEntry, LogLevel, LogSource } from "@/shared/types";
 import { requireJsonRouteAuth, authJsonOk } from "@/server/auth/route-auth";
@@ -101,7 +101,7 @@ export async function GET(request: Request): Promise<Response> {
   const meta = await getInitializedMeta();
   if (meta.status === "running" && meta.sandboxId) {
     try {
-      const sandbox = await Sandbox.get({ sandboxId: meta.sandboxId });
+      const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
       const result = await sandbox.runCommand("bash", [
         "-c",
         `tail -n ${MAX_LOG_LINES} ${LOG_FILE_GLOB} 2>/dev/null || echo ""`,

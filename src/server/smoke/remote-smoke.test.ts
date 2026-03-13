@@ -185,7 +185,7 @@ test("status phase: fails when missing required fields", async () => {
 test("gatewayProbe phase: passes on 200", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response("<html>openclaw-app</html>", { status: 200 }),
     },
   ]);
@@ -202,7 +202,7 @@ test("gatewayProbe phase: passes on 200", async () => {
 test("gatewayProbe phase: passes on 202 waiting page", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response("<html>waiting</html>", { status: 202 }),
     },
   ]);
@@ -220,7 +220,7 @@ test("gatewayProbe phase: passes on 202 waiting page", async () => {
 test("gatewayProbe phase: fails on 200 without openclaw-app marker", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response("<html><body>Generic page</body></html>", { status: 200 }),
     },
   ]);
@@ -240,7 +240,7 @@ test("gatewayProbe phase: fails on 200 without openclaw-app marker", async () =>
 test("gatewayProbe phase: fails on empty 200 body", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response("", { status: 200 }),
     },
   ]);
@@ -255,20 +255,19 @@ test("gatewayProbe phase: fails on empty 200 body", async () => {
   }
 });
 
-test("gatewayProbe phase: fails on redirect (3xx)", async () => {
+test("gatewayProbe phase: fails when response is a login page", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () =>
-        new Response(null, { status: 302, headers: { Location: "https://elsewhere.com" } }),
+        new Response('<html><form action="/login"><input name="password"></form></html>', { status: 200 }),
     },
   ]);
   try {
     const r = await gatewayProbe(BASE);
     assertPhaseShape(r, "gatewayProbe");
-    assert.equal(r.passed, false, "should fail on redirect");
-    assert.equal(r.httpStatus, 302);
-    assert.equal(r.errorCode, "UNEXPECTED_REDIRECT");
+    assert.equal(r.passed, false, "should fail on login page");
+    assert.equal(r.errorCode, "LOGIN_PAGE");
   } finally {
     restore();
   }
@@ -277,7 +276,7 @@ test("gatewayProbe phase: fails on redirect (3xx)", async () => {
 test("gatewayProbe phase: 200 with marker reports hasMarker=true", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () =>
         new Response('<html><div id="openclaw-app"></div></html>', { status: 200 }),
     },
@@ -296,7 +295,7 @@ test("gatewayProbe phase: 200 with marker reports hasMarker=true", async () => {
 test("gatewayProbe phase: fails on 500", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response("error", { status: 500 }),
     },
   ]);
@@ -477,7 +476,7 @@ test("CLI: all-pass report has passed=true and exit 0", async () => {
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -539,7 +538,7 @@ test("CLI: any-fail report has passed=false and exit 1", async () => {
       res.end(JSON.stringify({ ok: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -682,7 +681,7 @@ test("destructive flow: snapshotId flows from snapshotStop to restoreFromSnapsho
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory", snapshotId: "should-not-use-this" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -761,7 +760,7 @@ test("CLI: safe-only mode runs 6 phases, --destructive runs 9", async () => {
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory", snapshotId: "snap-test" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -874,7 +873,7 @@ test("status failure: returns MISSING_FIELDS errorCode", async () => {
 test("gatewayProbe failure on 200 without marker: returns MISSING_MARKER", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response("<html>not the app</html>", { status: 200 }),
     },
   ]);
@@ -884,7 +883,7 @@ test("gatewayProbe failure on 200 without marker: returns MISSING_MARKER", async
     assert.equal(r.passed, false);
     assert.equal(r.errorCode, "MISSING_MARKER");
     assert.equal(r.httpStatus, 200);
-    assert.equal(r.endpoint, "/gateway/");
+    assert.equal(r.endpoint, "/gateway");
   } finally {
     restore();
   }
@@ -893,7 +892,7 @@ test("gatewayProbe failure on 200 without marker: returns MISSING_MARKER", async
 test("gatewayProbe failure on redirect: returns UNEXPECTED_REDIRECT", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response(null, { status: 302, headers: { Location: "https://x.com" } }),
     },
   ]);
@@ -1228,7 +1227,7 @@ test("channelsSummary phase: 302 redirect returns UNEXPECTED_REDIRECT", async ()
 test("gatewayProbe phase: 401 returns AUTH_FAILED via classifyResponse", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () => new Response("Unauthorized", { status: 401 }),
     },
   ]);
@@ -1246,7 +1245,7 @@ test("gatewayProbe phase: 401 returns AUTH_FAILED via classifyResponse", async (
 test("gatewayProbe phase: login page returns LOGIN_PAGE", async () => {
   const restore = installMockFetch([
     {
-      pattern: /\/gateway\//,
+      pattern: /\/gateway/,
       response: () =>
         new Response('<html><body>Sign in with Vercel</body></html>', { status: 200 }),
     },
@@ -1269,7 +1268,7 @@ test("CLI all-pass report: every phase has endpoint field", async () => {
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1323,7 +1322,7 @@ test("CLI: --request-timeout accepts a positive number", async () => {
       res.end(JSON.stringify({ ok: true }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1371,7 +1370,7 @@ test("CLI: --json-only suppresses stderr, emits only JSON to stdout", async () =
       res.end(JSON.stringify({ ok: true }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1421,7 +1420,7 @@ test("CLI: --auth-cookie overrides SMOKE_AUTH_COOKIE env var", async () => {
       res.end(JSON.stringify({ ok: true }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "sign-in-with-vercel", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1459,7 +1458,7 @@ test("CLI: --auth-cookie value is never logged to stderr or stdout", async () =>
       res.end(JSON.stringify({ ok: true }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1537,7 +1536,7 @@ test("event stream: --json-only emits smoke-start, phase-end, and smoke-finish e
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1624,7 +1623,7 @@ test("event stream: non-json-only mode emits events AND human-readable text", as
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1670,7 +1669,7 @@ test("event stream: each event line is independently parseable", async () => {
       res.end(JSON.stringify({ ok: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
@@ -1721,7 +1720,7 @@ test("event stream: phase-end events have correct phase order", async () => {
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
-    } else if (req.url?.startsWith("/gateway/")) {
+    } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));

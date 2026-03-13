@@ -26,7 +26,7 @@ import {
 
 /** Create a sandbox handle seeded in the fake controller. */
 async function createHandle(h: ReturnType<typeof createScenarioHarness>) {
-  await h.controller.create({ ports: [3000] });
+  await h.controller.create({});
   return h.controller.lastCreated()!;
 }
 
