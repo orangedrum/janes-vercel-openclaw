@@ -10,6 +10,10 @@ import {
   isVercelDeployment,
 } from "@/server/env";
 import { getWebhookBypassRequirement } from "@/server/deploy-requirements";
+import {
+  readChannelReadiness,
+  getCurrentDeploymentId,
+} from "@/server/launch-verify/state";
 import { buildPublicUrl } from "@/server/public-url";
 
 const WEBHOOK_PATHS: Record<ChannelName, string> = {
@@ -129,10 +133,13 @@ export async function buildChannelConnectability(
   }
 
   if (!getStoreEnv()) {
+    const onVercel = isVercelDeployment();
     addIssue(issues, {
       id: "store",
-      status: "fail",
-      message: `${label} cannot be connected without durable state.`,
+      status: onVercel ? "fail" : "warn",
+      message: onVercel
+        ? `${label} cannot be connected without durable state on a Vercel deployment.`
+        : `${label} is using in-memory state. Channel reliability requires Upstash in production.`,
       remediation:
         "Add Upstash Redis from the Vercel Marketplace so queue state, channel credentials, session history, and sandbox metadata survive cold starts.",
       env: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
@@ -149,6 +156,24 @@ export async function buildChannelConnectability(
       remediation:
         "Remove AI_GATEWAY_API_KEY from the Vercel project and redeploy. This app should use the deployment's Vercel OIDC token for AI Gateway auth.",
       env: ["AI_GATEWAY_API_KEY"],
+    });
+  }
+
+  const readiness = await readChannelReadiness();
+  const currentDeploymentId = getCurrentDeploymentId();
+  if (!readiness.ready || readiness.deploymentId !== currentDeploymentId) {
+    const reason = readiness.deploymentId !== currentDeploymentId
+      ? "Launch verification has not been run for the current deployment."
+      : readiness.failingPhaseId
+        ? `Launch verification failed at phase "${readiness.failingPhaseId}".`
+        : "Launch verification has not passed yet.";
+    addIssue(issues, {
+      id: "launch-verification",
+      status: "fail",
+      message: `${label} cannot be connected until destructive launch verification passes. ${reason}`,
+      remediation:
+        "Run destructive launch verification from the admin panel or POST /api/admin/launch-verify?mode=destructive to prove the full queue → wake → reply path works.",
+      env: [],
     });
   }
 

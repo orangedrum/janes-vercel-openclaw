@@ -45,17 +45,21 @@ When `VERCEL_AUTOMATION_BYPASS_SECRET` is available, vercel-openclaw will automa
 
 ## Production launch contract
 
-A deployment is not channel-ready until these three conditions are met:
+A deployment is not channel-ready until launch verification passes. The authoritative check is `POST /api/admin/launch-verify`, which runs:
 
-- `"ok": true` — no failing preflight checks
-- `"storeBackend": "upstash"` — durable state is required for channel reliability
-- `"aiGatewayAuth": "oidc"` — deployed Vercel environments must use OIDC, not a static API key
+1. **Preflight** — config checks (public origin, webhook bypass, durable store, AI Gateway OIDC)
+2. **Queue delivery** — publishes a loopback probe through Vercel Queues and waits for the private callback at `/api/queues/launch-verify`
+3. **Sandbox ensure** — starts or restores the sandbox
+4. **Chat completions** — sends a test message through the OpenClaw gateway
+5. **Wake from sleep** *(destructive mode)* — stops the sandbox, then verifies a queue-delivered job can wake it and complete a chat round-trip
 
-**Do not connect Slack, Telegram, or Discord until the readiness gate passes.**
+A deployment passes when all phases return `"status": "pass"` or `"skip"`.
+
+**Do not connect Slack, Telegram, or Discord until launch verification passes.**
 
 ### Verifying deployed readiness
 
-Run the readiness verifier against your deployed instance:
+Run the full launch verification against your deployed instance:
 
 ```bash
 OPENCLAW_BASE_URL="https://your-project.vercel.app" \
@@ -70,7 +74,7 @@ OPENCLAW_BASE_URL="https://your-project.vercel.app" \
   node scripts/check-deploy-readiness.mjs --json-only
 ```
 
-The script fetches `GET /api/admin/preflight`, checks the launch contract, and exits 0 only when all conditions pass. Secrets are redacted in all output.
+The script POSTs to `/api/admin/launch-verify`, validates the launch contract, and exits 0 only when all phases pass. Use `--preflight-only` for a lightweight config-only check via `GET /api/admin/preflight`. Secrets are redacted in all output.
 
 ### Requirements for channel-capable deployments
 
@@ -319,6 +323,7 @@ src/
 | `/api/channels/discord` | Discord config CRUD |
 | `/api/channels/discord/register-command` | Register Discord `/ask` |
 | `/api/channels/discord/webhook` | Public Discord interactions endpoint |
+| `/api/queues/launch-verify` | Private Vercel Queues consumer for launch verification probes |
 | `/api/queues/channels/slack` | Private Vercel Queues consumer for Slack delivery |
 | `/api/queues/channels/telegram` | Private Vercel Queues consumer for Telegram delivery |
 | `/api/queues/channels/discord` | Private Vercel Queues consumer for Discord delivery |
@@ -326,7 +331,8 @@ src/
 | `/api/admin/ensure` | Trigger create or restore |
 | `/api/admin/stop` | Snapshot and stop |
 | `/api/admin/snapshot` | Snapshot and stop |
-| `/api/admin/preflight` | Deployment readiness checks |
+| `/api/admin/preflight` | Deployment readiness checks (config-only) |
+| `/api/admin/launch-verify` | Full launch verification (preflight + runtime phases) |
 | `/api/firewall` | Read or update firewall mode |
 | `/api/firewall/allowlist` | Add or remove allowlist domains |
 | `/api/firewall/promote` | Promote learned domains to enforcing |
@@ -359,7 +365,7 @@ OPENCLAW_BASE_URL="https://your-project.vercel.app" \
   node scripts/check-deploy-readiness.mjs --json-only
 ```
 
-This fetches `/api/admin/preflight` and enforces the production launch contract (`ok=true`, `storeBackend=upstash`, `aiGatewayAuth=oidc`). See [Production launch contract](#production-launch-contract) for details.
+This POSTs to `/api/admin/launch-verify` and validates the full launch contract. Use `--preflight-only` for a lightweight config-only check. See [Production launch contract](#production-launch-contract) for details.
 
 ## Limitations and sharp edges
 

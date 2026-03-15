@@ -73,7 +73,9 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) read signing secrets
 
 | Route | Purpose |
 | ----- | ------- |
-| `/api/admin/preflight` | Deploy-readiness report: public origin, webhook bypass, durable state, AI Gateway auth, Vercel Queues delivery |
+| `/api/admin/preflight` | Deploy-readiness report: public origin, webhook bypass, durable state, AI Gateway auth (config-only) |
+| `/api/admin/launch-verify` | Full launch verification: preflight + queue delivery probe + sandbox ensure + chat completions + wake from sleep (destructive) |
+| `/api/queues/launch-verify` | Private Vercel Queues consumer for launch verification probes (not publicly reachable on Vercel) |
 | `/api/admin/ensure` | Trigger sandbox create or restore |
 | `/api/admin/stop` | Snapshot and stop the sandbox |
 | `/api/admin/snapshot` | Snapshot and stop (same as stop for now) |
@@ -101,9 +103,13 @@ All channel webhook URL builders (`buildSlackWebhookUrl`, `buildTelegramWebhookU
 
 ### `src/server/deploy-preflight.ts`
 
-Machine-checkable readiness report consumed by `/api/admin/preflight`.
+Machine-checkable config readiness report consumed by `/api/admin/preflight`.
 
 Checks: `public-origin`, `webhook-bypass`, `store`, `ai-gateway`, `drain-recovery` (always passes — Vercel Queues is the primary delivery mechanism).
+
+The authoritative readiness check is `POST /api/admin/launch-verify` (`src/app/api/admin/launch-verify/route.ts`), which runs preflight as its first phase and then verifies runtime behavior: Vercel Queue loopback delivery via `/api/queues/launch-verify`, sandbox ensure, gateway chat completions, and wake-from-sleep recovery (destructive mode). `scripts/check-deploy-readiness.mjs` consumes launch-verify by default.
+
+Store requirement policy: missing Upstash is a hard fail (`status: "fail"`) on Vercel deployments but a warning (`status: "warn"`) in non-Vercel/local environments. This applies to both connectability and preflight checks.
 
 `GET /api/admin/preflight` returns a `PreflightPayload`:
 

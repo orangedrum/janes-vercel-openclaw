@@ -142,11 +142,13 @@ function buildActions(input: {
   }
 
   if (input.storeBackend === "memory") {
+    const onVercel = isVercelDeployment();
     actions.push({
       id: "configure-upstash",
-      status: "required",
-      message:
-        "Configure Upstash before connecting channels. Durable queue and metadata storage is required for this project goal.",
+      status: onVercel ? "required" : "recommended",
+      message: onVercel
+        ? "Configure Upstash before connecting channels. Durable queue and metadata storage is required on Vercel deployments."
+        : "Upstash is recommended for channel reliability. In-memory state is acceptable for local development.",
       remediation:
         "Add Upstash Redis from the Vercel Marketplace so the project receives UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.",
       env: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
@@ -281,11 +283,18 @@ export async function buildDeployPreflight(
     },
     {
       id: "store",
-      status: storeBackend === "upstash" ? "pass" : "fail",
+      status:
+        storeBackend === "upstash"
+          ? "pass"
+          : isVercelDeployment()
+            ? "fail"
+            : "warn",
       message:
         storeBackend === "upstash"
           ? "Durable Upstash-backed state is configured."
-          : "Channel-capable deployments require Upstash. In-memory state loses queue data, credentials, and sandbox metadata on cold starts.",
+          : isVercelDeployment()
+            ? "Vercel deployments require Upstash. In-memory state loses queue data, credentials, and sandbox metadata on cold starts."
+            : "Using in-memory state. Channel reliability requires Upstash in production.",
     },
     {
       id: "ai-gateway",

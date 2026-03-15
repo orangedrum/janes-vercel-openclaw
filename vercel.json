@@ -27,6 +27,15 @@
           "topic": "channel-discord"
         }
       ]
+    },
+    "src/app/api/queues/launch-verify/route.ts": {
+      "maxDuration": 300,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "launch-verify"
+        }
+      ]
     }
   }
 }

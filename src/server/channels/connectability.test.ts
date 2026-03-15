@@ -3,6 +3,11 @@ import { afterEach, test } from "node:test";
 
 import { buildChannelConnectability } from "@/server/channels/connectability";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
+import {
+  _setChannelReadinessOverrideForTesting,
+  getCurrentDeploymentId,
+} from "@/server/launch-verify/state";
+import type { ChannelReadiness } from "@/shared/launch-verification";
 
 const ORIGINAL_ENV = { ...process.env };
 const LOCAL_ORIGIN = "http://localhost:3000";
@@ -24,6 +29,18 @@ function resetEnv(): void {
   }
 }
 
+function makeReadyReadiness(): ChannelReadiness {
+  return {
+    deploymentId: getCurrentDeploymentId(),
+    ready: true,
+    verifiedAt: new Date().toISOString(),
+    mode: "destructive",
+    wakeFromSleepPassed: true,
+    failingPhaseId: null,
+    phases: [],
+  };
+}
+
 function makeRequest(origin: string): Request {
   const host = origin.replace(/^https?:\/\//, "");
   return new Request(`${origin}/api/status`, {
@@ -38,6 +55,7 @@ function makeRequest(origin: string): Request {
 afterEach(() => {
   resetEnv();
   _setAiGatewayTokenOverrideForTesting(null);
+  _setChannelReadinessOverrideForTesting(null);
 });
 
 test("fails when the webhook url is not public https", async () => {
@@ -88,6 +106,7 @@ test("passes with public origin, bypass, durable store, and OIDC", async () => {
   process.env.UPSTASH_REDIS_REST_TOKEN = "token";
   delete process.env.AI_GATEWAY_API_KEY;
   _setAiGatewayTokenOverrideForTesting("oidc-token");
+  _setChannelReadinessOverrideForTesting(makeReadyReadiness());
 
   const result = await buildChannelConnectability(
     "slack",
@@ -105,6 +124,7 @@ test("does not warn about missing CRON_SECRET", async () => {
   process.env.UPSTASH_REDIS_REST_TOKEN = "token";
   delete process.env.CRON_SECRET;
   _setAiGatewayTokenOverrideForTesting("oidc-token");
+  _setChannelReadinessOverrideForTesting(makeReadyReadiness());
 
   const result = await buildChannelConnectability(
     "slack",
@@ -119,7 +139,32 @@ test("does not warn about missing CRON_SECRET", async () => {
   );
 });
 
-test("fails when Upstash env vars are missing", async () => {
+test("warns when Upstash env vars are missing in non-Vercel environment", async () => {
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+  _setChannelReadinessOverrideForTesting(makeReadyReadiness());
+
+  const result = await buildChannelConnectability(
+    "slack",
+    makeRequest(PUBLIC_ORIGIN),
+  );
+
+  assert.equal(result.canConnect, true, "non-Vercel missing store should still allow connect");
+  const issue = result.issues.find((i) => i.id === "store");
+  assert.ok(issue, "expected store issue");
+  assert.equal(issue.status, "warn");
+});
+
+test("fails when Upstash env vars are missing on Vercel deployment", async () => {
+  process.env.VERCEL = "1";
   process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
   delete process.env.UPSTASH_REDIS_REST_URL;
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -158,7 +203,7 @@ test("fails with multiple issues when bypass, store, and OIDC are all missing on
   assert.equal(result.canConnect, false);
   assert.equal(result.status, "fail");
   const issueIds = result.issues.map((i) => i.id).sort();
-  assert.deepEqual(issueIds, ["ai-gateway", "store", "webhook-bypass"]);
+  assert.deepEqual(issueIds, ["ai-gateway", "launch-verification", "store", "webhook-bypass"]);
   assert.equal(
     result.webhookUrl,
     `${PUBLIC_ORIGIN}/api/channels/slack/webhook`,
@@ -174,6 +219,7 @@ test("webhook URL includes bypass query param when bypass secret is set", async 
   process.env.UPSTASH_REDIS_REST_TOKEN = "token";
   delete process.env.AI_GATEWAY_API_KEY;
   _setAiGatewayTokenOverrideForTesting("oidc-token");
+  _setChannelReadinessOverrideForTesting(makeReadyReadiness());
 
   const result = await buildChannelConnectability(
     "telegram",
@@ -208,4 +254,82 @@ test("fails when isVercelDeployment() and auth is not oidc", async () => {
   const issue = result.issues.find((i) => i.id === "ai-gateway");
   assert.ok(issue, "expected ai-gateway issue");
   assert.equal(issue.status, "fail");
+});
+
+test("launch-verification blocker fires when readiness is missing", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+  // No readiness override — defaults to ready: false
+  _setChannelReadinessOverrideForTesting({
+    deploymentId: getCurrentDeploymentId(),
+    ready: false,
+    verifiedAt: null,
+    mode: null,
+    wakeFromSleepPassed: false,
+    failingPhaseId: null,
+    phases: [],
+  });
+
+  const result = await buildChannelConnectability(
+    "slack",
+    makeRequest(PUBLIC_ORIGIN),
+  );
+
+  assert.equal(result.canConnect, false);
+  const issue = result.issues.find((i) => i.id === "launch-verification");
+  assert.ok(issue, "expected launch-verification issue");
+  assert.equal(issue.status, "fail");
+  assert.ok(
+    issue.remediation.includes("destructive launch verification"),
+    "remediation should mention destructive launch verification",
+  );
+});
+
+test("launch-verification blocker fires when readiness belongs to a different deploymentId", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+  _setChannelReadinessOverrideForTesting({
+    deploymentId: "old-deployment-abc123",
+    ready: true,
+    verifiedAt: new Date().toISOString(),
+    mode: "destructive",
+    wakeFromSleepPassed: true,
+    failingPhaseId: null,
+    phases: [],
+  });
+
+  const result = await buildChannelConnectability(
+    "telegram",
+    makeRequest(PUBLIC_ORIGIN),
+  );
+
+  assert.equal(result.canConnect, false);
+  const issue = result.issues.find((i) => i.id === "launch-verification");
+  assert.ok(issue, "expected launch-verification issue");
+  assert.equal(issue.status, "fail");
+  assert.ok(
+    issue.message.includes("current deployment"),
+    "message should mention current deployment",
+  );
+});
+
+test("launch-verification blocker clears when readiness is valid for current deployment", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+  _setChannelReadinessOverrideForTesting(makeReadyReadiness());
+
+  const result = await buildChannelConnectability(
+    "slack",
+    makeRequest(PUBLIC_ORIGIN),
+  );
+
+  assert.equal(result.canConnect, true);
+  const issue = result.issues.find((i) => i.id === "launch-verification");
+  assert.equal(issue, undefined, "should have no launch-verification issue");
 });

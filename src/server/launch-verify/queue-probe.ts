@@ -1,0 +1,178 @@
+import { randomUUID } from "node:crypto";
+
+import { extractReply, toPlainText } from "@/server/channels/core/reply";
+import { logInfo } from "@/server/log";
+import { getStore, wait } from "@/server/store/store";
+
+const RESULT_TTL_SECONDS = 15 * 60;
+const RESULT_POLL_MS = 1_000;
+
+type BaseProbe = {
+  probeId: string;
+  origin: string;
+  createdAt: number;
+};
+
+export type LaunchVerifyQueueProbe =
+  | (BaseProbe & { kind: "ack" })
+  | (BaseProbe & {
+      kind: "chat";
+      prompt: string;
+      expectedText: string;
+      sandboxReadyTimeoutMs?: number;
+      requestTimeoutMs?: number;
+    });
+
+export type LaunchVerifyQueueResult = {
+  probeId: string;
+  ok: boolean;
+  completedAt: number;
+  message: string;
+  messageId?: string | null;
+  replyText?: string;
+  error?: string;
+};
+
+function resultKey(probeId: string): string {
+  return `launch-verify:queue-result:${probeId}`;
+}
+
+type ProbeInput =
+  | { kind: "ack"; origin: string }
+  | {
+      kind: "chat";
+      origin: string;
+      prompt: string;
+      expectedText: string;
+      sandboxReadyTimeoutMs?: number;
+      requestTimeoutMs?: number;
+    };
+
+export async function publishLaunchVerifyQueueProbe(
+  probe: ProbeInput,
+): Promise<{ probeId: string; messageId: string | null }> {
+  const { send } = await import("@vercel/queue");
+
+  const probeId = randomUUID();
+  const payload: LaunchVerifyQueueProbe = {
+    ...probe,
+    probeId,
+    createdAt: Date.now(),
+  } as LaunchVerifyQueueProbe;
+
+  logInfo("launch_verify.queue_probe_publish", {
+    kind: payload.kind,
+    probeId,
+  });
+
+  const result = await send("launch-verify", payload, {
+    idempotencyKey: `launch-verify:${probeId}`,
+  });
+
+  logInfo("launch_verify.queue_probe_published", {
+    probeId,
+    messageId: result.messageId ?? null,
+  });
+
+  return { probeId, messageId: result.messageId ?? null };
+}
+
+export async function saveLaunchVerifyQueueResult(
+  result: LaunchVerifyQueueResult,
+): Promise<void> {
+  logInfo("launch_verify.queue_result_save", {
+    probeId: result.probeId,
+    ok: result.ok,
+  });
+  await getStore().setValue(resultKey(result.probeId), result, RESULT_TTL_SECONDS);
+}
+
+export async function waitForLaunchVerifyQueueResult(
+  probeId: string,
+  timeoutMs = 60_000,
+): Promise<LaunchVerifyQueueResult> {
+  const deadline = Date.now() + timeoutMs;
+
+  logInfo("launch_verify.queue_result_wait_start", {
+    probeId,
+    timeoutMs,
+  });
+
+  while (Date.now() < deadline) {
+    const result =
+      await getStore().getValue<LaunchVerifyQueueResult>(resultKey(probeId));
+
+    if (result) {
+      await getStore().deleteValue(resultKey(probeId)).catch(() => {});
+      logInfo("launch_verify.queue_result_received", {
+        probeId,
+        ok: result.ok,
+      });
+      return result;
+    }
+
+    await wait(RESULT_POLL_MS);
+  }
+
+  throw new Error(`Timed out waiting for launch-verify queue probe ${probeId}.`);
+}
+
+function normalizeReply(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+export async function runLaunchVerifyCompletion(options: {
+  gatewayUrl: string;
+  gatewayToken: string;
+  prompt: string;
+  expectedText: string;
+  requestTimeoutMs?: number;
+}): Promise<string> {
+  logInfo("launch_verify.completion_start", {
+    gatewayUrl: options.gatewayUrl,
+    prompt: options.prompt,
+  });
+
+  const response = await fetch(
+    new URL("/v1/chat/completions", options.gatewayUrl),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${options.gatewayToken}`,
+      },
+      body: JSON.stringify({
+        model: "default",
+        messages: [{ role: "user", content: options.prompt }],
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(options.requestTimeoutMs ?? 90_000),
+    },
+  );
+
+  if (!response.ok) {
+    const text = (await response.text().catch(() => "")).slice(0, 300);
+    throw new Error(`Gateway returned ${response.status}: ${text}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  const reply = extractReply(payload);
+  if (!reply) {
+    throw new Error("Gateway response did not contain a reply.");
+  }
+
+  const replyText = toPlainText(reply);
+
+  logInfo("launch_verify.completion_done", {
+    replyText,
+    expectedText: options.expectedText,
+  });
+
+  if (normalizeReply(replyText) !== normalizeReply(options.expectedText)) {
+    throw new Error(
+      `Expected ${JSON.stringify(options.expectedText)} but got ${JSON.stringify(replyText)}`,
+    );
+  }
+
+  return replyText;
+}

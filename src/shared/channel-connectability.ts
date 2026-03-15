@@ -7,7 +7,8 @@ export type ChannelConnectabilityIssueId =
   | "public-webhook-url"
   | "webhook-bypass"
   | "store"
-  | "ai-gateway";
+  | "ai-gateway"
+  | "launch-verification";
 
 export type ChannelConnectabilityIssue = {
   id: ChannelConnectabilityIssueId;

@@ -8,6 +8,7 @@ import type {
 import { TelegramPanel } from "@/components/panels/telegram-panel";
 import { SlackPanel } from "@/components/panels/slack-panel";
 import { DiscordPanel } from "@/components/panels/discord-panel";
+import type { ChannelReadiness } from "@/shared/launch-verification";
 
 type ChannelSummaryEntry = {
   connected: boolean;
@@ -48,6 +49,7 @@ type ChannelsPanelProps = {
   runAction: RunAction;
   requestJson: RequestJson;
   refresh: () => Promise<void>;
+  channelReadiness?: ChannelReadiness | null;
 };
 
 async function loadChannelSummary(): Promise<ChannelSummary | null> {
@@ -72,6 +74,7 @@ export function ChannelsPanel({
   runAction,
   requestJson,
   refresh,
+  channelReadiness,
 }: ChannelsPanelProps) {
   const [summary, setSummary] = useState<ChannelSummary | null>(null);
   const [preflight, setPreflight] = useState<PreflightData | null>(null);
@@ -107,6 +110,8 @@ export function ChannelsPanel({
     (summary?.telegram.failedCount ?? 0) +
     (summary?.discord.failedCount ?? 0);
 
+  const isReady = channelReadiness?.ready === true;
+
   return (
     <article className="panel-card full-span">
       <div className="panel-head">
@@ -115,6 +120,9 @@ export function ChannelsPanel({
           <h2>External entry points.</h2>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {isReady && (
+            <ChannelPill variant="good">Verified</ChannelPill>
+          )}
           {totalQueue > 0 && (
             <ChannelPill variant="good">{totalQueue} queued</ChannelPill>
           )}
@@ -133,6 +141,20 @@ export function ChannelsPanel({
           </button>
         </div>
       </div>
+
+      {!isReady && (
+        <div className="connectability-warning-banner" style={{ marginBottom: 16 }}>
+          <p style={{ margin: 0, fontWeight: 500 }}>
+            Launch verification required before connecting channels.
+          </p>
+          <p className="muted-copy" style={{ margin: "4px 0 0" }}>
+            {channelReadiness?.failingPhaseId
+              ? `Last attempt failed at "${channelReadiness.failingPhaseId}". `
+              : ""}
+            Run <strong>Verify &amp; Unlock Channels</strong> above to prove the full queue, wake, and reply path works.
+          </p>
+        </div>
+      )}
 
       {preflight && !preflight.ok ? (
         <div className="error-banner" style={{ marginBottom: 16 }}>
@@ -159,29 +181,55 @@ export function ChannelsPanel({
         </div>
       ) : null}
 
-      <div className="channel-grid">
-        <SlackPanel
-          status={status}
-          busy={busy}
-          runAction={runAction}
-          requestJson={requestJson}
-          refresh={refresh}
-        />
-        <TelegramPanel
-          status={status}
-          busy={busy}
-          runAction={runAction}
-          requestJson={requestJson}
-          refresh={refresh}
-        />
-        <DiscordPanel
-          status={status}
-          busy={busy}
-          runAction={runAction}
-          requestJson={requestJson}
-          refresh={refresh}
-        />
-      </div>
+      {isReady ? (
+        <div className="channel-grid">
+          <SlackPanel
+            status={status}
+            busy={busy}
+            runAction={runAction}
+            requestJson={requestJson}
+            refresh={refresh}
+          />
+          <TelegramPanel
+            status={status}
+            busy={busy}
+            runAction={runAction}
+            requestJson={requestJson}
+            refresh={refresh}
+          />
+          <DiscordPanel
+            status={status}
+            busy={busy}
+            runAction={runAction}
+            requestJson={requestJson}
+            refresh={refresh}
+          />
+        </div>
+      ) : (
+        <div className="channel-grid" style={{ opacity: 0.5, pointerEvents: "none" }}>
+          <SlackPanel
+            status={status}
+            busy={busy}
+            runAction={runAction}
+            requestJson={requestJson}
+            refresh={refresh}
+          />
+          <TelegramPanel
+            status={status}
+            busy={busy}
+            runAction={runAction}
+            requestJson={requestJson}
+            refresh={refresh}
+          />
+          <DiscordPanel
+            status={status}
+            busy={busy}
+            runAction={runAction}
+            requestJson={requestJson}
+            refresh={refresh}
+          />
+        </div>
+      )}
     </article>
   );
 }

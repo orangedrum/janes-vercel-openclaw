@@ -8,6 +8,7 @@ import { BrandIcon } from "@/components/ui/brand-icon";
 import { StatusPanel } from "@/components/panels/status-panel";
 import { FirewallPanel } from "@/components/panels/firewall-panel";
 import { ChannelsPanel } from "@/components/panels/channels-panel";
+import { LaunchPanel } from "@/components/panels/launch-panel";
 import { SshPanel } from "@/components/panels/ssh-panel";
 import { LogsPanel } from "@/components/panels/logs-panel";
 import { SnapshotsPanel } from "@/components/panels/snapshots-panel";
@@ -19,6 +20,7 @@ import type {
   StatusPayload,
   UnauthorizedPayload,
 } from "@/components/admin-types";
+import type { ChannelReadiness } from "@/shared/launch-verification";
 
 const TABS = [
   { id: "status", label: "Status" },
@@ -39,6 +41,7 @@ export function AdminShell({
     "/api/auth/authorize?next=/admin",
   );
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [channelReadiness, setChannelReadiness] = useState<ChannelReadiness | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -240,13 +243,22 @@ export function AdminShell({
                 />
               )}
               {activeTab === "channels" && (
-                <ChannelsPanel
-                  status={status}
-                  busy={busy}
-                  runAction={runAction}
-                  requestJson={requestJson}
-                  refresh={refresh}
-                />
+                <>
+                  <LaunchPanel
+                    status={status}
+                    busy={busy}
+                    requestJson={requestJson}
+                    onReadinessChange={setChannelReadiness}
+                  />
+                  <ChannelsPanel
+                    status={status}
+                    busy={busy}
+                    runAction={runAction}
+                    requestJson={requestJson}
+                    refresh={refresh}
+                    channelReadiness={channelReadiness}
+                  />
+                </>
               )}
               {activeTab === "terminal" && (
                 <SshPanel
