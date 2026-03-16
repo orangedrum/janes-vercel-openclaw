@@ -2122,14 +2122,14 @@ a[href]:focus-visible {
 /* ────── Sonner overrides ────── */
 
 [data-sonner-toaster] [data-sonner-toast] {
-  --normal-bg: #111;
+  --normal-bg: #1a1a1a;
   --normal-border: var(--border);
   --normal-text: var(--foreground);
-  --success-bg: var(--success-surface);
-  --success-border: rgba(69, 165, 87, 0.3);
+  --success-bg: #0f2a14;
+  --success-border: rgba(69, 165, 87, 0.4);
   --success-text: var(--success);
-  --error-bg: var(--danger-surface);
-  --error-border: rgba(229, 72, 77, 0.2);
+  --error-bg: #2a0f11;
+  --error-border: rgba(229, 72, 77, 0.4);
   --error-text: var(--danger);
 }
 
