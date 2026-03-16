@@ -998,7 +998,7 @@ test("ensureSandboxRunning full error recovery: error → create → running", a
   });
 });
 
-test("ensureSandboxRunning create path stores bootstrap snapshot and openclaw version", async () => {
+test("ensureSandboxRunning create path stores openclaw version (no auto-snapshot)", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -1035,11 +1035,9 @@ test("ensureSandboxRunning create path stores bootstrap snapshot and openclaw ve
       assert.ok(handle, "sandbox handle should be tracked");
 
       assert.equal(meta.status, "running");
-      assert.ok(meta.snapshotId?.startsWith("snap-"), "bootstrap should persist a recovery snapshot");
       assert.equal(meta.openclawVersion, "openclaw 9.9.9");
-      assert.equal(meta.snapshotHistory[0]?.reason, "bootstrap-auto");
-      assert.equal(meta.snapshotHistory[0]?.snapshotId, meta.snapshotId);
-      assert.equal(handle.snapshotCalled, true, "sandbox snapshot API should be called after bootstrap");
+      assert.equal(meta.snapshotId, null, "no auto-snapshot after bootstrap");
+      assert.equal(handle.snapshotCalled, false, "snapshot should not be called after bootstrap");
     } finally {
       globalThis.fetch = originalFetch;
     }

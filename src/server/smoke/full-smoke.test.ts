@@ -290,9 +290,8 @@ test("full-smoke: complete lifecycle with channels, firewall, and proxy", async 
 
       // Verify controller events
       const snapshotEvents = h.controller.eventsOfKind("snapshot");
-      assert.equal(snapshotEvents.length, 2, "Bootstrap auto-snapshot plus stop snapshot should be recorded");
+      assert.equal(snapshotEvents.length, 1, "Stop snapshot should be recorded");
       assert.equal(snapshotEvents[0]!.sandboxId, sandboxId);
-      assert.equal(snapshotEvents[1]!.sandboxId, sandboxId);
 
       // Verify the handle's snapshot was called
       const handle = h.controller.getHandle(sandboxId);
@@ -523,8 +522,8 @@ test("full-smoke: complete lifecycle with channels, firewall, and proxy", async 
 
       assert.deepEqual(
         lifecycleEvents,
-        ["create", "snapshot", "snapshot", "restore"],
-        "Lifecycle sequence should be: create → bootstrap snapshot → stop snapshot → restore",
+        ["create", "snapshot", "restore"],
+        "Lifecycle sequence should be: create → stop snapshot → restore",
       );
 
       // --- Timestamps are monotonically non-decreasing ---

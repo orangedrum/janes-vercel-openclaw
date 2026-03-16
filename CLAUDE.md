@@ -409,7 +409,6 @@ These variables are checked by `buildDeploymentContract()` in `src/server/deploy
 
 ## Current sharp edges
 
-- Initial bootstrap now creates a recovery snapshot automatically.
 - The memory store is not safe for production persistence.
 - Firewall learning is based on shell command observation, not full traffic inspection.
 - Channel webhook durability depends on the store backend. Use Upstash when channels matter.

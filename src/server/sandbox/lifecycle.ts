@@ -356,6 +356,17 @@ async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string):
     });
   }
 
+  // The startup script deletes paired.json — re-pair the device identity
+  // so the gateway continues to accept Control UI connections.
+  try {
+    await sandbox.runCommand("node", [
+      OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
+      OPENCLAW_STATE_DIR,
+    ]);
+  } catch {
+    // Best-effort only — matches setupOpenClaw behavior.
+  }
+
   await mutateMeta((next) => {
     next.lastTokenRefreshAt = Date.now();
   });
@@ -598,17 +609,11 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
     });
 
     await applyFirewallPolicyToSandbox(sandbox, next);
-    logInfo("sandbox.bootstrap_snapshot.start", { sandboxId: sandbox.sandboxId });
-    const snapshot = await sandbox.snapshot();
-    const bootstrapped = await mutateMeta((meta) => {
-      recordSnapshotMetadata(meta, snapshot.snapshotId, "bootstrap-auto");
-    });
     logInfo("sandbox.create.complete", {
       sandboxId: sandbox.sandboxId,
-      snapshotId: snapshot.snapshotId,
       openclawVersion: setupResult.openclawVersion,
     });
-    return bootstrapped;
+    return next;
   });
 }
 

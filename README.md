@@ -171,7 +171,6 @@ Important lifecycle behavior:
 - `POST /api/admin/ensure` or the first request to `/gateway` starts create or restore work in the background.
 - `POST /api/admin/stop` creates a snapshot and leaves the sandbox in `stopped`.
 - `POST /api/admin/snapshot` currently has the same snapshot-and-stop behavior.
-- The first successful bootstrap automatically creates a recovery snapshot, so later `ensure` calls can restore instead of rebuilding from scratch.
 
 ## Firewall model
 
