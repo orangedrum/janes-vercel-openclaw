@@ -293,7 +293,6 @@ export function AdminShell({
                     requestJson={requestJson}
                     onReadinessChange={setChannelReadiness}
                   />
-                  <ChannelQueueHealthCard />
                   <ChannelsPanel
                     status={status}
                     busy={busy}
@@ -302,6 +301,7 @@ export function AdminShell({
                     refresh={refresh}
                     channelReadiness={channelReadiness}
                   />
+                  <ChannelQueueHealthCard />
                 </>
               )}
               {activeTab === "terminal" && (

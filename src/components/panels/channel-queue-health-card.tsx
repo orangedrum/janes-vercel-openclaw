@@ -12,9 +12,9 @@ function statusLabel(item: ChannelQueueHealthPayload["channels"][number]): strin
 }
 
 function statusClass(item: ChannelQueueHealthPayload["channels"][number]): string {
-  if (item.hasFailures) return "launch-phase-fail";
-  if (item.hasBacklog) return "launch-phase-skip";
-  return "launch-phase-pass";
+  if (item.hasFailures) return "queue-status-fail";
+  if (item.hasBacklog) return "queue-status-busy";
+  return "queue-status-clear";
 }
 
 export function ChannelQueueHealthCard() {
@@ -51,10 +51,10 @@ export function ChannelQueueHealthCard() {
   }, []);
 
   return (
-    <article className="panel-card full-span" style={{ marginTop: 12 }}>
+    <article className="panel-card full-span queue-health-card">
       <div className="panel-head">
         <div>
-          <p className="eyebrow">Channel queues</p>
+          <p className="eyebrow">Message queues</p>
         </div>
         {payload && (
           <span className="mono" style={{ fontSize: 11, opacity: 0.5 }}>
@@ -66,21 +66,32 @@ export function ChannelQueueHealthCard() {
       {error ? (
         <p className="error-banner">Failed to load queue health: {error}</p>
       ) : (
-        <dl className="metrics-grid">
-          {(payload?.channels ?? []).map((item) => (
-            <div key={item.channel} className="metric-group">
-              <dt style={{ textTransform: "capitalize" }}>{item.channel}</dt>
-              <dd>
-                <span className={statusClass(item)}>
-                  {statusLabel(item)}
-                </span>
-                <span className="mono" style={{ marginLeft: 8, fontSize: 12 }}>
-                  {item.counts.queued}q / {item.counts.processing}p / {item.counts.failed}f
-                </span>
-              </dd>
-            </div>
-          ))}
-        </dl>
+        <>
+          <div className="queue-grid">
+            {(payload?.channels ?? []).map((item) => (
+              <div key={item.channel} className={`queue-channel-card ${statusClass(item)}`}>
+                <div className="queue-channel-head">
+                  <span className="queue-channel-name">{item.channel}</span>
+                  <span className="queue-channel-status">{statusLabel(item)}</span>
+                </div>
+                <div className="queue-channel-counts">
+                  <span className="queue-count">
+                    <span className="queue-count-value">{item.counts.queued}</span>
+                    <span className="queue-count-label">queued</span>
+                  </span>
+                  <span className="queue-count">
+                    <span className="queue-count-value">{item.counts.processing}</span>
+                    <span className="queue-count-label">processing</span>
+                  </span>
+                  <span className="queue-count">
+                    <span className="queue-count-value">{item.counts.failed}</span>
+                    <span className="queue-count-label">failed</span>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </article>
   );

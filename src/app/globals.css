@@ -1049,6 +1049,14 @@ a[href]:focus-visible {
   50% { opacity: 0.4; }
 }
 
+.launch-verified-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  gap: 12px;
+}
+
 .launch-progress-bar {
   height: 4px;
   background: var(--card-border);
@@ -1072,6 +1080,73 @@ a[href]:focus-visible {
 
 .full-span {
   grid-column: 1 / -1;
+}
+
+/* ────── Queue health ────── */
+
+.queue-health-card {
+  margin-top: 12px;
+}
+
+.queue-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.queue-channel-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+}
+
+.queue-channel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.queue-channel-name {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.queue-channel-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.queue-status-clear .queue-channel-status { color: var(--success); }
+.queue-status-busy .queue-channel-status { color: var(--warning); }
+.queue-status-fail .queue-channel-status { color: var(--danger); }
+
+.queue-channel-counts {
+  display: flex;
+  gap: 16px;
+}
+
+.queue-count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.queue-count-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.queue-count-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--foreground-muted);
 }
 
 /* ────── Channels ────── */
@@ -1267,6 +1342,15 @@ a[href]:focus-visible {
   min-height: 36px;
   padding: 0 10px;
   font-size: 12px;
+}
+
+.channel-card .inline-actions {
+  margin-top: 12px;
+}
+
+.channel-card .inline-actions .button {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .channel-validation-error {

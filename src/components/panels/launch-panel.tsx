@@ -80,6 +80,7 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
   const [readiness, setReadiness] = useState<ChannelReadiness | null>(null);
   const [running, setRunning] = useState(false);
   const [streamingPhases, setStreamingPhases] = useState<LaunchVerificationPhase[]>([]);
+  const [expanded, setExpanded] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -98,6 +99,7 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
     setRunning(true);
     setStreamingPhases([]);
     setResult(null);
+    setExpanded(false);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -164,6 +166,7 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
                 onReadinessChange?.(event.payload.channelReadiness);
               }
               if (!event.payload.ok) {
+                setExpanded(true);
                 const failing = event.payload.phases.find((p) => p.status === "fail");
                 if (failing) {
                   toast.error(`Verification failed at ${failing.id}: ${failing.error ?? failing.message}`);
@@ -188,6 +191,8 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
   const displayResult = result;
   const displayReadiness = readiness;
   const isStreaming = running && streamingPhases.length > 0;
+  const isVerified = displayReadiness?.ready === true;
+  const isFailed = displayResult && !displayResult.ok;
 
   const totalMs = displayResult
     ? new Date(displayResult.completedAt).getTime() - new Date(displayResult.startedAt).getTime()
@@ -203,12 +208,16 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
     ? Math.round((completedStreamCount / totalPhaseCount) * 100)
     : 0;
 
+  const showDetails = expanded || isStreaming || isFailed || !isVerified;
+
   return (
     <article className="panel-card full-span">
       <div className="panel-head">
-        <div>
-          <p className="eyebrow">Launch Verification</p>
-          <h2>Prove this deployment works end-to-end</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div>
+            <p className="eyebrow">Launch Verification</p>
+            {!isVerified && <h2>Prove this deployment works end-to-end</h2>}
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {displayReadiness && (
@@ -228,24 +237,51 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
         </div>
       </div>
 
-      <div className="hero-actions">
-        <button
-          className="button primary"
-          disabled={busy || running}
-          onClick={() => void runVerification("destructive")}
-          title="Runs full verification including stop/restore cycle"
-        >
-          {running ? "Verifying\u2026" : "Verify & Unlock Channels"}
-        </button>
-        <button
-          className="button ghost"
-          disabled={busy || running}
-          onClick={() => void runVerification("safe")}
-          title="Quick diagnostic — does not unlock channels"
-        >
-          Quick Check
-        </button>
-      </div>
+      {isVerified && !isStreaming && !isFailed && (
+        <div className="launch-verified-summary">
+          <span className="muted-copy">
+            Verified {displayReadiness.verifiedAt ? formatTimestamp(displayReadiness.verifiedAt) : ""}
+            {displayResult ? ` in ${formatDuration(totalMs)}` : ""}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="button ghost"
+              disabled={busy || running}
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? "Hide details" : "Show details"}
+            </button>
+            <button
+              className="button ghost"
+              disabled={busy || running}
+              onClick={() => void runVerification("destructive")}
+            >
+              Re-verify
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isVerified && !isStreaming && (
+        <div className="hero-actions">
+          <button
+            className="button primary"
+            disabled={busy || running}
+            onClick={() => void runVerification("destructive")}
+            title="Runs full verification including stop/restore cycle"
+          >
+            {running ? "Verifying\u2026" : "Verify & Unlock Channels"}
+          </button>
+          <button
+            className="button ghost"
+            disabled={busy || running}
+            onClick={() => void runVerification("safe")}
+            title="Quick diagnostic \u2014 does not unlock channels"
+          >
+            Quick Check
+          </button>
+        </div>
+      )}
 
       {isStreaming && (
         <div style={{ marginTop: 16 }}>
@@ -277,7 +313,7 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
         </div>
       )}
 
-      {displayResult && (
+      {displayResult && showDetails && (
         <div style={{ marginTop: 16 }}>
           <div
             className="metrics-grid"
@@ -331,7 +367,7 @@ export function LaunchPanel({ status, busy, requestJson, onReadinessChange }: La
         </div>
       )}
 
-      {showPersistedPhases && (
+      {showPersistedPhases && showDetails && (
         <div style={{ marginTop: 16 }}>
           <div
             className="metrics-grid"
