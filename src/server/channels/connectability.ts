@@ -5,12 +5,9 @@ import type {
   ChannelConnectabilityStatus,
 } from "@/shared/channel-connectability";
 import {
-  getAiGatewayAuthMode,
-  getStoreEnv,
-  isVercelDeployment,
-} from "@/server/env";
-import { buildDeploymentContract } from "@/server/deployment-contract";
-import { getWebhookBypassRequirement } from "@/server/deploy-requirements";
+  buildDeploymentContract,
+  type DeploymentRequirement,
+} from "@/server/deployment-contract";
 import {
   readChannelReadiness,
   getCurrentDeploymentId,
@@ -98,9 +95,38 @@ function buildResult(
   };
 }
 
+function contractRequirementToIssue(
+  channel: ChannelName,
+  requirement: DeploymentRequirement,
+): ChannelConnectabilityIssue {
+  const label = CHANNEL_LABELS[channel];
+  return {
+    id: requirement.id as ChannelConnectabilityIssue["id"],
+    status: requirement.status,
+    message:
+      requirement.status === "fail"
+        ? `${label} cannot be connected: ${requirement.message}`
+        : `${label}: ${requirement.message}`,
+    remediation: requirement.remediation,
+    env: requirement.env,
+  };
+}
+
+function collectContractIssues(
+  channel: ChannelName,
+  contract: { requirements: DeploymentRequirement[] },
+): ChannelConnectabilityIssue[] {
+  return contract.requirements
+    .filter((r) => r.status !== "pass")
+    .map((r) => contractRequirementToIssue(channel, r));
+}
+
 /**
  * Config-only prerequisite check for a channel.
- * Checks: public origin, HTTPS, bypass secret, store, AI gateway auth.
+ * Delegates deployment-level checks (public-origin, webhook-bypass, store,
+ * ai-gateway, package-spec, auth) to the deployment contract — single source
+ * of truth. Only channel-specific checks (webhook URL construction, public
+ * HTTPS validation) remain here.
  * Does NOT check launch-verification readiness state.
  * Used by buildDeployPreflight() so preflight is purely config-based.
  */
@@ -110,21 +136,31 @@ export async function buildChannelPrerequisite(
   webhookUrlOverride?: string,
 ): Promise<ChannelConnectability> {
   const label = CHANNEL_LABELS[channel];
-  const issues: ChannelConnectabilityIssue[] = [];
+  const contract = await buildDeploymentContract({ request });
+  const issues: ChannelConnectabilityIssue[] = collectContractIssues(
+    channel,
+    contract,
+  );
+
   let webhookUrl: string | null = webhookUrlOverride ?? null;
+
+  const hasIssue = (id: ChannelConnectabilityIssue["id"]) =>
+    issues.some((issue) => issue.id === id);
 
   if (!webhookUrl) {
     try {
       webhookUrl = buildPublicUrl(WEBHOOK_PATHS[channel], request);
     } catch {
-      addIssue(issues, {
-        id: "public-origin",
-        status: "fail",
-        message: `Could not resolve a canonical public origin for ${label}.`,
-        remediation:
-          "Deploy to Vercel so the app gets a public URL automatically, or set NEXT_PUBLIC_APP_URL to your custom domain.",
-        env: [...PUBLIC_ORIGIN_ENVS],
-      });
+      if (!hasIssue("public-origin")) {
+        addIssue(issues, {
+          id: "public-origin",
+          status: "fail",
+          message: `Could not resolve a canonical public origin for ${label}.`,
+          remediation:
+            "Deploy to Vercel so the app gets a public URL automatically, or set NEXT_PUBLIC_APP_URL to your custom domain.",
+          env: [...PUBLIC_ORIGIN_ENVS],
+        });
+      }
     }
   }
 
@@ -134,66 +170,9 @@ export async function buildChannelPrerequisite(
       status: "fail",
       message: `${label} requires a public HTTPS webhook URL before it can be connected.`,
       remediation:
-        "Deploy to Vercel to get a public HTTPS URL. Local development URLs (localhost) cannot receive webhooks from external platforms.",
+        "Deploy to Vercel to get a public HTTPS URL. Local development URLs cannot receive platform webhooks.",
       env: [...PUBLIC_ORIGIN_ENVS],
     });
-  }
-
-  const bypassRequirement = getWebhookBypassRequirement();
-
-  if (bypassRequirement.required && !bypassRequirement.configured) {
-    addIssue(issues, {
-      id: "webhook-bypass",
-      status: "fail",
-      message:
-        `${label} cannot reach a protected Vercel deployment until ` +
-        "VERCEL_AUTOMATION_BYPASS_SECRET is configured.",
-      remediation:
-        "In your Vercel project, go to Settings > Deployment Protection > Protection Bypass for Automation and enable it. Copy the generated secret and add it as the VERCEL_AUTOMATION_BYPASS_SECRET environment variable.",
-      env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
-    });
-  }
-
-  if (!getStoreEnv()) {
-    const onVercel = isVercelDeployment();
-    addIssue(issues, {
-      id: "store",
-      status: onVercel ? "fail" : "warn",
-      message: onVercel
-        ? `${label} cannot be connected without durable state on a Vercel deployment.`
-        : `${label} is using in-memory state. Channel reliability requires Upstash in production.`,
-      remediation:
-        "Add Upstash Redis from the Vercel Marketplace so queue state, channel credentials, session history, and sandbox metadata survive cold starts.",
-      env: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
-    });
-  }
-
-  const aiGatewayAuth = await getAiGatewayAuthMode();
-  if (isVercelDeployment() && aiGatewayAuth !== "oidc") {
-    addIssue(issues, {
-      id: "ai-gateway",
-      status: "fail",
-      message:
-        `${label} requires Vercel AI Gateway authentication through OIDC on deployed Vercel environments.`,
-      remediation:
-        "Remove AI_GATEWAY_API_KEY from the Vercel project and redeploy. This app should use the deployment's Vercel OIDC token for AI Gateway auth.",
-      env: ["AI_GATEWAY_API_KEY"],
-    });
-  }
-
-  // Contract-derived issues: openclaw-package-spec, auth config.
-  // Uses the same deployment contract as preflight so wording is identical.
-  const contract = await buildDeploymentContract();
-  for (const req of contract.requirements) {
-    if (req.status === "fail") {
-      addIssue(issues, {
-        id: req.id as ChannelConnectabilityIssue["id"],
-        status: "fail",
-        message: `${label} cannot be connected: ${req.message}`,
-        remediation: req.remediation,
-        env: req.env,
-      });
-    }
   }
 
   logInfo("channel_prerequisite.built", {

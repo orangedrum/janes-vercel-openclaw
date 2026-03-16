@@ -5,6 +5,7 @@ import {
   getStoreEnv,
   isVercelDeployment,
 } from "@/server/env";
+import { resolvePublicOrigin, getProtectionBypassSecret } from "@/server/public-url";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +40,10 @@ export type DeploymentContract = {
   requirements: DeploymentRequirement[];
 };
 
+export type BuildDeploymentContractOptions = {
+  request?: Request;
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -60,6 +65,133 @@ export function isPinnedPackageSpec(
 // ---------------------------------------------------------------------------
 // Requirement builders
 // ---------------------------------------------------------------------------
+
+const PUBLIC_ORIGIN_ENV = [
+  "NEXT_PUBLIC_APP_URL",
+  "NEXT_PUBLIC_BASE_DOMAIN",
+  "BASE_DOMAIN",
+  "VERCEL_PROJECT_PRODUCTION_URL",
+  "VERCEL_BRANCH_URL",
+  "VERCEL_URL",
+];
+
+function checkPublicOrigin(
+  onVercel: boolean,
+  request?: Request,
+): DeploymentRequirement {
+  try {
+    const resolution = resolvePublicOrigin(request);
+    return {
+      id: "public-origin",
+      status: "pass",
+      message: `Public origin resolves from ${resolution.source}.`,
+      remediation: "",
+      env: PUBLIC_ORIGIN_ENV,
+    };
+  } catch {
+    return {
+      id: "public-origin",
+      status: onVercel ? "fail" : "warn",
+      message: onVercel
+        ? "Could not resolve a canonical public origin on a Vercel deployment."
+        : "Could not resolve a canonical public origin in this environment.",
+      remediation:
+        "Set NEXT_PUBLIC_APP_URL or NEXT_PUBLIC_BASE_DOMAIN, or rely on Vercel system URL variables in deployed environments.",
+      env: PUBLIC_ORIGIN_ENV,
+    };
+  }
+}
+
+function checkWebhookBypass(
+  authMode: "deployment-protection" | "sign-in-with-vercel",
+  onVercel: boolean,
+): DeploymentRequirement | null {
+  if (!onVercel || authMode !== "deployment-protection") {
+    return null;
+  }
+
+  const configured = Boolean(getProtectionBypassSecret());
+
+  return configured
+    ? {
+        id: "webhook-bypass",
+        status: "pass",
+        message:
+          "Webhook protection bypass is configured for deployment-protection mode.",
+        remediation: "",
+        env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
+      }
+    : {
+        id: "webhook-bypass",
+        status: "fail",
+        message:
+          "Deployment-protection mode requires VERCEL_AUTOMATION_BYPASS_SECRET for public webhooks.",
+        remediation:
+          "In your Vercel project, go to Settings > Deployment Protection > Protection Bypass for Automation and enable it. Copy the generated secret and add it as the VERCEL_AUTOMATION_BYPASS_SECRET environment variable.",
+        env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
+      };
+}
+
+function checkStore(onVercel: boolean): DeploymentRequirement {
+  const configured = Boolean(getStoreEnv());
+
+  if (configured) {
+    return {
+      id: "store",
+      status: "pass",
+      message: "Durable store is configured.",
+      remediation: "",
+      env: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
+    };
+  }
+
+  return {
+    id: "store",
+    status: onVercel ? "fail" : "warn",
+    message: onVercel
+      ? "Upstash Redis is required on Vercel deployments."
+      : "Using in-memory store in a non-Vercel environment.",
+    remediation:
+      "Add Upstash Redis so sandbox metadata, queue state, and channel/session history survive restarts.",
+    env: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
+  };
+}
+
+function checkAiGateway(
+  onVercel: boolean,
+  aiGatewayAuth: "oidc" | "api-key" | "unavailable",
+): DeploymentRequirement {
+  if (onVercel && aiGatewayAuth !== "oidc") {
+    return {
+      id: "ai-gateway",
+      status: "fail",
+      message:
+        "Deployed Vercel environments must use OIDC for AI Gateway auth.",
+      remediation:
+        "Remove AI_GATEWAY_API_KEY from the deployment and rely on the Vercel OIDC token.",
+      env: ["AI_GATEWAY_API_KEY"],
+    };
+  }
+
+  if (!onVercel && aiGatewayAuth === "unavailable") {
+    return {
+      id: "ai-gateway",
+      status: "warn",
+      message: "AI Gateway auth is not configured in this environment.",
+      remediation:
+        "Set AI_GATEWAY_API_KEY for local development, or run on Vercel with OIDC enabled.",
+      env: ["AI_GATEWAY_API_KEY"],
+    };
+  }
+
+  return {
+    id: "ai-gateway",
+    status: "pass",
+    message: `AI Gateway auth mode is ${aiGatewayAuth}.`,
+    remediation: "",
+    env: ["AI_GATEWAY_API_KEY"],
+  };
+}
 
 function checkOpenclawPackageSpec(
   onVercel: boolean,
@@ -190,7 +322,9 @@ function checkSessionSecret(
 // Contract builder
 // ---------------------------------------------------------------------------
 
-export async function buildDeploymentContract(): Promise<DeploymentContract> {
+export async function buildDeploymentContract(
+  options: BuildDeploymentContractOptions = {},
+): Promise<DeploymentContract> {
   const onVercel = isVercelDeployment();
   const authMode = getAuthMode();
   const storeEnv = getStoreEnv();
@@ -198,20 +332,16 @@ export async function buildDeploymentContract(): Promise<DeploymentContract> {
   const aiGatewayAuth = await getAiGatewayAuthMode();
   const openclawPackageSpec = getOpenclawPackageSpec();
 
-  const requirements: DeploymentRequirement[] = [];
-
-  const checks = [
+  const requirements = [
+    checkPublicOrigin(onVercel, options.request),
+    checkWebhookBypass(authMode, onVercel),
+    checkStore(onVercel),
+    checkAiGateway(onVercel, aiGatewayAuth),
     checkOpenclawPackageSpec(onVercel),
     checkOauthClientId(authMode),
     checkOauthClientSecret(authMode),
     checkSessionSecret(authMode, onVercel),
-  ];
-
-  for (const check of checks) {
-    if (check) {
-      requirements.push(check);
-    }
-  }
+  ].filter((value): value is DeploymentRequirement => value !== null);
 
   const ok = requirements.every((r) => r.status !== "fail");
 

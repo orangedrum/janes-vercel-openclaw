@@ -4,6 +4,7 @@ import { afterEach, test } from "node:test";
 import {
   _setAiGatewayTokenOverrideForTesting,
   getAiGatewayAuthMode,
+  getSessionSecret,
   isVercelDeployment,
   requiresDurableStore,
 } from "@/server/env";
@@ -145,6 +146,78 @@ test("requiresDurableStore returns true on Vercel deployments", () => {
     },
     () => {
       assert.equal(requiresDurableStore(), true);
+    },
+  );
+});
+
+// --- getSessionSecret ---
+
+test("deployed sign-in-with-vercel requires explicit session secret", () => {
+  withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "sign-in-with-vercel",
+      SESSION_SECRET: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_TOKEN: undefined,
+    },
+    () => {
+      assert.throws(
+        () => getSessionSecret(),
+        /SESSION_SECRET is required for deployed sign-in-with-vercel mode/,
+      );
+    },
+  );
+});
+
+test("deployed sign-in-with-vercel with upstash token still throws without SESSION_SECRET", () => {
+  withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "sign-in-with-vercel",
+      SESSION_SECRET: undefined,
+      UPSTASH_REDIS_REST_TOKEN: "some-upstash-token",
+    },
+    () => {
+      assert.throws(
+        () => getSessionSecret(),
+        /SESSION_SECRET is required for deployed sign-in-with-vercel mode/,
+      );
+    },
+  );
+});
+
+test("deployment-protection mode on Vercel can derive from upstash token", () => {
+  withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "deployment-protection",
+      SESSION_SECRET: undefined,
+      UPSTASH_REDIS_REST_TOKEN: "upstash-token-value",
+    },
+    () => {
+      const secret = getSessionSecret();
+      assert.ok(secret.includes("upstash-token-value"));
+    },
+  );
+});
+
+test("local dev returns placeholder session secret", () => {
+  withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      VERCEL_AUTH_MODE: undefined,
+      SESSION_SECRET: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_TOKEN: undefined,
+      NODE_ENV: "development",
+    },
+    () => {
+      const secret = getSessionSecret();
+      assert.ok(secret.includes("change-me"));
     },
   );
 });

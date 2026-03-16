@@ -187,6 +187,9 @@ test("sign-in-with-vercel on Vercel with all config passes", async () => {
   process.env.VERCEL_APP_CLIENT_SECRET = "test-secret";
   process.env.SESSION_SECRET = "a-good-random-secret-value";
   process.env.OPENCLAW_PACKAGE_SPEC = "openclaw@2.0.0";
+  process.env.NEXT_PUBLIC_APP_URL = "https://test.example.com";
+  process.env.UPSTASH_REDIS_REST_URL = "https://test.upstash.io";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "test-upstash-token";
   _setAiGatewayTokenOverrideForTesting("test-token");
 
   const contract = await buildDeploymentContract();
@@ -272,4 +275,169 @@ test("contract exposes expected metadata fields", async () => {
   );
   assert.equal(contract.openclawPackageSpec, "openclaw@3.1.0");
   assert.ok(Array.isArray(contract.requirements));
+});
+
+// ---------------------------------------------------------------------------
+// buildDeploymentContract — public-origin, webhook-bypass, store, ai-gateway
+// ---------------------------------------------------------------------------
+
+test("deployed protected env fails store and webhook bypass when missing", async () => {
+  process.env.VERCEL = "1";
+  process.env.VERCEL_AUTH_MODE = "deployment-protection";
+  process.env.NEXT_PUBLIC_APP_URL = "https://public-host.test";
+  process.env.OPENCLAW_PACKAGE_SPEC = "openclaw@1.2.3";
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+  delete process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  delete process.env.AI_GATEWAY_API_KEY;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const contract = await buildDeploymentContract();
+  const failedIds = contract.requirements
+    .filter((r) => r.status === "fail")
+    .map((r) => r.id)
+    .sort();
+
+  assert.deepEqual(failedIds, ["store", "webhook-bypass"]);
+  assert.equal(contract.ok, false);
+});
+
+test("public-origin passes when NEXT_PUBLIC_APP_URL is set", async () => {
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  process.env.NEXT_PUBLIC_APP_URL = "https://example.com";
+  _setAiGatewayTokenOverrideForTesting("test-token");
+
+  const contract = await buildDeploymentContract();
+  const originReq = contract.requirements.find((r) => r.id === "public-origin");
+  assert.ok(originReq, "expected public-origin requirement");
+  assert.equal(originReq.status, "pass");
+});
+
+test("public-origin warns on non-Vercel when unresolvable", async () => {
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  delete process.env.NEXT_PUBLIC_APP_URL;
+  delete process.env.NEXT_PUBLIC_BASE_DOMAIN;
+  delete process.env.BASE_DOMAIN;
+  _setAiGatewayTokenOverrideForTesting("test-token");
+
+  const contract = await buildDeploymentContract();
+  const originReq = contract.requirements.find((r) => r.id === "public-origin");
+  assert.ok(originReq, "expected public-origin requirement");
+  assert.equal(originReq.status, "warn");
+});
+
+test("public-origin fails on Vercel when unresolvable", async () => {
+  process.env.VERCEL = "1";
+  // Clear all origin sources
+  delete process.env.NEXT_PUBLIC_APP_URL;
+  delete process.env.NEXT_PUBLIC_BASE_DOMAIN;
+  delete process.env.BASE_DOMAIN;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  delete process.env.VERCEL_BRANCH_URL;
+  delete process.env.VERCEL_URL;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const contract = await buildDeploymentContract();
+  const originReq = contract.requirements.find((r) => r.id === "public-origin");
+  assert.ok(originReq, "expected public-origin requirement");
+  assert.equal(originReq.status, "fail");
+});
+
+test("store warns on non-Vercel when missing", async () => {
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+  _setAiGatewayTokenOverrideForTesting("test-token");
+
+  const contract = await buildDeploymentContract();
+  const storeReq = contract.requirements.find((r) => r.id === "store");
+  assert.ok(storeReq, "expected store requirement");
+  assert.equal(storeReq.status, "warn");
+});
+
+test("store fails on Vercel when missing", async () => {
+  process.env.VERCEL = "1";
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const contract = await buildDeploymentContract();
+  const storeReq = contract.requirements.find((r) => r.id === "store");
+  assert.ok(storeReq, "expected store requirement");
+  assert.equal(storeReq.status, "fail");
+});
+
+test("ai-gateway fails on Vercel with api-key auth", async () => {
+  process.env.VERCEL = "1";
+  process.env.AI_GATEWAY_API_KEY = "static-key";
+  _setAiGatewayTokenOverrideForTesting("static-key");
+
+  const contract = await buildDeploymentContract();
+  const gwReq = contract.requirements.find((r) => r.id === "ai-gateway");
+  assert.ok(gwReq, "expected ai-gateway requirement");
+  assert.equal(gwReq.status, "fail");
+});
+
+test("ai-gateway warns on non-Vercel when unavailable", async () => {
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  delete process.env.AI_GATEWAY_API_KEY;
+  _setAiGatewayTokenOverrideForTesting(undefined);
+
+  const contract = await buildDeploymentContract();
+  const gwReq = contract.requirements.find((r) => r.id === "ai-gateway");
+  assert.ok(gwReq, "expected ai-gateway requirement");
+  assert.equal(gwReq.status, "warn");
+});
+
+test("webhook-bypass not emitted for sign-in-with-vercel mode", async () => {
+  process.env.VERCEL = "1";
+  process.env.VERCEL_AUTH_MODE = "sign-in-with-vercel";
+  _setAiGatewayTokenOverrideForTesting("test-token");
+
+  const contract = await buildDeploymentContract();
+  const bypassReq = contract.requirements.find((r) => r.id === "webhook-bypass");
+  assert.equal(bypassReq, undefined);
+});
+
+test("webhook-bypass not emitted for non-Vercel environments", async () => {
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
+  delete process.env.VERCEL_URL;
+  delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  delete process.env.VERCEL_AUTH_MODE;
+  _setAiGatewayTokenOverrideForTesting("test-token");
+
+  const contract = await buildDeploymentContract();
+  const bypassReq = contract.requirements.find((r) => r.id === "webhook-bypass");
+  assert.equal(bypassReq, undefined);
+});
+
+test("webhook-bypass passes when configured on protected Vercel", async () => {
+  process.env.VERCEL = "1";
+  delete process.env.VERCEL_AUTH_MODE;
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass-secret-value";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const contract = await buildDeploymentContract();
+  const bypassReq = contract.requirements.find((r) => r.id === "webhook-bypass");
+  assert.ok(bypassReq, "expected webhook-bypass requirement");
+  assert.equal(bypassReq.status, "pass");
 });

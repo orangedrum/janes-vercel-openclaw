@@ -285,7 +285,7 @@ export async function buildDeployPreflight(
 
   // Build the deployment contract once — single source of truth for
   // openclaw-package-spec, oauth, and session-secret requirements.
-  const contract = await buildDeploymentContract();
+  const contract = await buildDeploymentContract({ request });
 
   let publicOriginResolution: PublicOriginResolution | null = null;
   try {

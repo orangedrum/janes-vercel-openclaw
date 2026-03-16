@@ -24,8 +24,16 @@ export function getSessionSecret(): string {
     return configured;
   }
 
-  // Derive from the Upstash token — available on every Vercel deployment that
-  // has the Upstash integration, so this is effectively zero-config.
+  // Deployed sign-in-with-vercel mode requires an explicit session secret.
+  // Do not silently derive from the Upstash token — the deployment contract
+  // hard-fails this scenario, and runtime must agree.
+  if (getAuthMode() === "sign-in-with-vercel" && isVercelDeployment()) {
+    throw new Error(
+      "SESSION_SECRET is required for deployed sign-in-with-vercel mode.",
+    );
+  }
+
+  // Derive from the Upstash token for deployment-protection mode or local dev.
   const upstashToken =
     process.env.UPSTASH_REDIS_REST_TOKEN?.trim() ??
     process.env.KV_REST_API_TOKEN?.trim();
