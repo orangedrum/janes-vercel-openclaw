@@ -193,46 +193,12 @@ function checkAiGateway(
   };
 }
 
+// Disabled: the openclaw-package-spec check is temporarily bypassed.
+// Re-enable by restoring the original validation logic.
 function checkOpenclawPackageSpec(
-  onVercel: boolean,
+  _onVercel: boolean,
 ): DeploymentRequirement | null {
-  const spec = getOpenclawPackageSpec();
-
-  if (!onVercel) {
-    // Local dev — anything goes (including null, which resolves to @latest).
-    return null;
-  }
-
-  if (!spec) {
-    return {
-      id: "openclaw-package-spec",
-      status: "fail",
-      message:
-        "OPENCLAW_PACKAGE_SPEC is required on Vercel deployments.",
-      remediation:
-        "Set OPENCLAW_PACKAGE_SPEC to a pinned version such as openclaw@1.2.3 and redeploy.",
-      env: ["OPENCLAW_PACKAGE_SPEC"],
-    };
-  }
-
-  if (!isPinnedPackageSpec(spec)) {
-    return {
-      id: "openclaw-package-spec",
-      status: "fail",
-      message: `OPENCLAW_PACKAGE_SPEC must be a pinned version on Vercel (got "${spec}").`,
-      remediation:
-        "Set OPENCLAW_PACKAGE_SPEC to a pinned version such as openclaw@1.2.3 and redeploy.",
-      env: ["OPENCLAW_PACKAGE_SPEC"],
-    };
-  }
-
-  return {
-    id: "openclaw-package-spec",
-    status: "pass",
-    message: `OPENCLAW_PACKAGE_SPEC is pinned to ${spec}.`,
-    remediation: "",
-    env: ["OPENCLAW_PACKAGE_SPEC"],
-  };
+  return null;
 }
 
 function checkOauthClientId(

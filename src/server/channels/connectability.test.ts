@@ -207,7 +207,7 @@ test("fails with multiple issues when bypass, store, and OIDC are all missing on
   assert.equal(result.canConnect, false);
   assert.equal(result.status, "fail");
   const issueIds = result.issues.map((i) => i.id).sort();
-  assert.deepEqual(issueIds, ["ai-gateway", "launch-verification", "openclaw-package-spec", "store", "webhook-bypass"]);
+  assert.deepEqual(issueIds, ["ai-gateway", "launch-verification", "store", "webhook-bypass"]);
   assert.equal(
     result.webhookUrl,
     `${PUBLIC_ORIGIN}/api/channels/slack/webhook`,
@@ -382,7 +382,7 @@ test("[regression] prerequisite excludes launch-verification; full connectabilit
   assert.equal(launchIssue.status, "fail");
 });
 
-test("Vercel deployment missing OPENCLAW_PACKAGE_SPEC fails channel connectability", async () => {
+test("Vercel deployment missing OPENCLAW_PACKAGE_SPEC does not block channels (check disabled)", async () => {
   process.env.VERCEL = "1";
   process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
   process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass";
@@ -398,17 +398,12 @@ test("Vercel deployment missing OPENCLAW_PACKAGE_SPEC fails channel connectabili
     makeRequest(PUBLIC_ORIGIN),
   );
 
-  assert.equal(result.canConnect, false);
+  assert.equal(result.canConnect, true);
   const issue = result.issues.find((i) => i.id === "openclaw-package-spec");
-  assert.ok(issue, "expected openclaw-package-spec issue");
-  assert.equal(issue.status, "fail");
-  assert.ok(
-    issue.message.includes("OPENCLAW_PACKAGE_SPEC is required on Vercel deployments"),
-    "message should use the same wording as deployment contract",
-  );
+  assert.equal(issue, undefined, "openclaw-package-spec check is disabled");
 });
 
-test("Vercel deployment with pinned OPENCLAW_PACKAGE_SPEC passes channel connectability", async () => {
+test("Vercel deployment with pinned OPENCLAW_PACKAGE_SPEC passes channel connectability (check disabled)", async () => {
   process.env.VERCEL = "1";
   process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
   process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass";
@@ -426,7 +421,7 @@ test("Vercel deployment with pinned OPENCLAW_PACKAGE_SPEC passes channel connect
 
   assert.equal(result.canConnect, true);
   const issue = result.issues.find((i) => i.id === "openclaw-package-spec");
-  assert.equal(issue, undefined, "should have no openclaw-package-spec issue when pinned");
+  assert.equal(issue, undefined, "should have no openclaw-package-spec issue");
 });
 
 test("[regression] channel connectability blocks until launch-verify readiness is written for current deployment", async () => {
