@@ -369,7 +369,7 @@ async function geminiGenerate() {
   for (const part of parts) {
     const url = part?.image_url?.url || part?.image_url;
     if (typeof url === "string" && url.startsWith("data:image")) {
-      const match = url.match(/^data:image\\\\/[^;]+;base64,(.+)$/);
+      const match = url.match(/^data:image\\/[^;]+;base64,(.+)$/);
       if (match) buffers.push(Buffer.from(match[1], "base64"));
     }
   }
