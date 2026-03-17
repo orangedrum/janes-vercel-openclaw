@@ -1691,6 +1691,201 @@ test("[lifecycle] touchRunningSandbox token refresh interval elapsed -> triggers
   });
 });
 
+test("[lifecycle] token refresh: writes token then restarts gateway with bash -c (not -lc)", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    _setAiGatewayTokenOverrideForTesting("fresh-oidc-token");
+
+    try {
+      await mutateMeta((meta) => {
+        meta.status = "running";
+        meta.sandboxId = "sbx-refresh-script";
+        meta.lastAccessedAt = null;
+        meta.lastTokenRefreshAt = Date.now() - 15 * 60 * 1000;
+      });
+
+      await touchRunningSandbox();
+      await sleep(100);
+
+      const handle = fake.handlesByIds.get("sbx-refresh-script") as FakeSandboxHandle | undefined;
+      assert.ok(handle, "Handle should exist");
+
+      // Step 1: token write via sh -c
+      const writeCmd = handle.commands.find(
+        (c) => c.cmd === "sh" && c.args?.[0] === "-c",
+      );
+      assert.ok(writeCmd, "Should write token via sh -c");
+      assert.ok(
+        writeCmd.args?.includes("fresh-oidc-token"),
+        "Token value should be passed as argument",
+      );
+
+      // Step 2: gateway restart via bash -c (NOT bash -lc)
+      const restartCmd = handle.commands.find(
+        (c) => c.cmd === "bash" && c.args?.[0] === "-c",
+      );
+      assert.ok(restartCmd, "Should restart gateway via bash -c");
+      const scriptContent = restartCmd.args?.[1] ?? "";
+      assert.ok(scriptContent.includes("pkill"), "Restart script should kill old gateway");
+      assert.ok(scriptContent.includes("setsid"), "Restart script should start gateway with setsid");
+      assert.ok(scriptContent.includes("AI_GATEWAY_API_KEY"), "Script should set AI_GATEWAY_API_KEY env");
+
+      // Verify NO bash -lc (login shell) is used
+      const loginCmd = handle.commands.find(
+        (c) => c.cmd === "bash" && c.args?.[0] === "-lc",
+      );
+      assert.equal(loginCmd, undefined, "Should NOT use bash -lc (login shell)");
+
+      // Step 3: metadata updated
+      const meta = await getInitializedMeta();
+      assert.ok(
+        meta.lastTokenRefreshAt !== null && meta.lastTokenRefreshAt > Date.now() - 5000,
+        "lastTokenRefreshAt should be updated to recent time",
+      );
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+    }
+  });
+});
+
+test("[lifecycle] token refresh: no OIDC token available -> skips silently", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    // Set override to undefined = "return undefined from getAiGatewayBearerTokenOptional"
+    // (null means "no override, use real logic")
+    _setAiGatewayTokenOverrideForTesting(undefined);
+
+    try {
+      const staleRefreshTime = Date.now() - 15 * 60 * 1000;
+      await mutateMeta((meta) => {
+        meta.status = "running";
+        meta.sandboxId = "sbx-no-oidc";
+        meta.lastAccessedAt = null;
+        meta.lastTokenRefreshAt = staleRefreshTime;
+      });
+
+      await touchRunningSandbox();
+      await sleep(100);
+
+      const handle = fake.handlesByIds.get("sbx-no-oidc") as FakeSandboxHandle | undefined;
+      if (handle) {
+        // Should have extendTimeout but no sh -c (token write)
+        const shCmd = handle.commands.find(
+          (c) => c.cmd === "sh" && c.args?.[0] === "-c",
+        );
+        assert.equal(shCmd, undefined, "Should not write token when OIDC unavailable");
+      }
+
+      const meta = await getInitializedMeta();
+      assert.equal(
+        meta.lastTokenRefreshAt,
+        staleRefreshTime,
+        "lastTokenRefreshAt should not be updated when token unavailable",
+      );
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+    }
+  });
+});
+
+test("[lifecycle] token refresh: restart failure does not corrupt metadata", async () => {
+  const fake = new FakeSandboxController();
+
+  await withTestEnv(fake, async () => {
+    _setAiGatewayTokenOverrideForTesting("fresh-token");
+
+    try {
+      const refreshTime = Date.now() - 15 * 60 * 1000;
+      await mutateMeta((meta) => {
+        meta.status = "running";
+        meta.sandboxId = "sbx-restart-fail";
+        meta.lastAccessedAt = null;
+        meta.lastTokenRefreshAt = refreshTime;
+      });
+
+      // Pre-create the handle with a failing restart command handler
+      const handle = new FakeSandboxHandle("sbx-restart-fail");
+      handle.commandHandler = (cmd, args) => {
+        if (cmd === "bash" && args?.[0] === "-c") {
+          return { exitCode: 255, output: "gateway restart failed" };
+        }
+        return { exitCode: 0, output: "" };
+      };
+      fake.handlesByIds.set("sbx-restart-fail", handle);
+
+      await touchRunningSandbox();
+      await sleep(100);
+
+      // Metadata should NOT be updated since restart failed
+      const meta = await getInitializedMeta();
+      assert.equal(meta.status, "running", "Status should still be running");
+      assert.equal(
+        meta.lastTokenRefreshAt,
+        refreshTime,
+        "lastTokenRefreshAt should not be updated on failure",
+      );
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+    }
+  });
+});
+
+test("[lifecycle] token refresh: restart script reads token from correct file paths", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    _setAiGatewayTokenOverrideForTesting("check-paths-token");
+
+    try {
+      await mutateMeta((meta) => {
+        meta.status = "running";
+        meta.sandboxId = "sbx-check-paths";
+        meta.lastAccessedAt = null;
+        meta.lastTokenRefreshAt = Date.now() - 15 * 60 * 1000;
+      });
+
+      await touchRunningSandbox();
+      await sleep(100);
+
+      const handle = fake.handlesByIds.get("sbx-check-paths") as FakeSandboxHandle | undefined;
+      assert.ok(handle, "Handle should exist");
+
+      const restartCmd = handle.commands.find(
+        (c) => c.cmd === "bash" && c.args?.[0] === "-c",
+      );
+      assert.ok(restartCmd, "Should have restart command");
+      const script = restartCmd.args?.[1] ?? "";
+
+      // Verify the script reads from the correct paths
+      assert.ok(
+        script.includes("/home/vercel-sandbox/.openclaw/.gateway-token"),
+        "Should read gateway token from correct path",
+      );
+      assert.ok(
+        script.includes("/home/vercel-sandbox/.openclaw/.ai-gateway-api-key"),
+        "Should read AI gateway key from correct path",
+      );
+      assert.ok(
+        script.includes("OPENCLAW_CONFIG_PATH="),
+        "Should set OPENCLAW_CONFIG_PATH",
+      );
+      assert.ok(
+        script.includes("OPENAI_BASE_URL="),
+        "Should set OPENAI_BASE_URL for AI Gateway",
+      );
+      assert.ok(
+        script.includes("--port 3000"),
+        "Should start gateway on port 3000",
+      );
+      assert.ok(
+        script.includes("--bind loopback"),
+        "Should bind to loopback",
+      );
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Edge-branch: stale booting/setup re-schedule
 // ---------------------------------------------------------------------------
