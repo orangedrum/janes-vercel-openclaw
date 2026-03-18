@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  buildFastRestoreScript,
   buildForcePairScript,
   buildGatewayConfig,
   buildImageGenScript,
@@ -17,6 +18,7 @@ import {
   OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
   OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_CONFIG_PATH,
+  OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
   OPENCLAW_IMAGE_GEN_SKILL_PATH,
@@ -45,6 +47,7 @@ export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
   return [
     { path: OPENCLAW_FORCE_PAIR_SCRIPT_PATH, content: Buffer.from(buildForcePairScript()) },
     { path: OPENCLAW_STARTUP_SCRIPT_PATH, content: Buffer.from(buildStartupScript()) },
+    { path: OPENCLAW_FAST_RESTORE_SCRIPT_PATH, content: Buffer.from(buildFastRestoreScript()) },
     { path: OPENCLAW_IMAGE_GEN_SKILL_PATH, content: Buffer.from(buildImageGenSkill()) },
     { path: OPENCLAW_IMAGE_GEN_SCRIPT_PATH, content: Buffer.from(buildImageGenScript()) },
     { path: OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH, content: Buffer.from(buildImageGenSkill()) },

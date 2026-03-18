@@ -34,6 +34,7 @@ import {
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
   OPENCLAW_BIN,
   OPENCLAW_CONFIG_PATH,
+  OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
@@ -680,12 +681,13 @@ test("restoreSandboxFromSnapshot writes all files + manifest on first restore (n
       assert.ok(writtenPaths.includes(OPENCLAW_CONFIG_PATH), "Should write config");
       assert.ok(writtenPaths.includes(OPENCLAW_FORCE_PAIR_SCRIPT_PATH), "Should write force-pair script");
       assert.ok(writtenPaths.includes(OPENCLAW_STARTUP_SCRIPT_PATH), "Should write startup script");
+      assert.ok(writtenPaths.includes(OPENCLAW_FAST_RESTORE_SCRIPT_PATH), "Should write fast-restore script");
       assert.ok(writtenPaths.includes(OPENCLAW_IMAGE_GEN_SKILL_PATH), "Should write image-gen skill");
       assert.ok(writtenPaths.includes(OPENCLAW_IMAGE_GEN_SCRIPT_PATH), "Should write image-gen script");
       assert.ok(writtenPaths.includes(OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH), "Should write builtin image-gen skill");
       assert.ok(writtenPaths.includes(OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH), "Should write builtin image-gen script");
-      // 16 total: 1 dynamic (config) + 14 static + 1 manifest
-      assert.equal(handle.writtenFiles.length, 16, "Should write exactly 16 files (dynamic + static + manifest)");
+      // 17 total: 1 dynamic (config) + 15 static + 1 manifest
+      assert.equal(handle.writtenFiles.length, 17, "Should write exactly 17 files (dynamic + static + manifest)");
 
       // Verify manifest was written
       const manifestPath = writtenPaths.find((p) => p.includes(".restore-assets-manifest.json"));
@@ -715,7 +717,7 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
       const { handle: firstHandle } = await triggerRestore(fake, {
         tokenOverride: "test-ai-key",
       });
-      assert.equal(firstHandle.writtenFiles.length, 16, "First restore should write 16 files");
+      assert.equal(firstHandle.writtenFiles.length, 17, "First restore should write 17 files");
 
       // Snapshot the sandbox so we can restore again
       const snap = await firstHandle.snapshot();
@@ -756,7 +758,7 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
       // Instead, let's verify the contract: on a fresh handle (no manifest),
       // we get all 16 files. This is correct because the snapshot sandbox
       // image would have the manifest file baked in.
-      assert.equal(secondHandle.writtenFiles.length, 16, "Second restore on fresh handle writes 16 files");
+      assert.equal(secondHandle.writtenFiles.length, 17, "Second restore on fresh handle writes 17 files");
 
       // Now test the actual skip path: manually seed a handle with the manifest
       // and trigger a restore that reads it back.
@@ -812,6 +814,117 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
     } finally {
       globalThis.fetch = originalFetch;
       _setSandboxControllerForTesting(null);
+    }
+  });
+});
+
+test("restoreSandboxFromSnapshot appends to restoreHistory capped at MAX_RESTORE_HISTORY", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-history-test";
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      // First restore
+      await triggerRestore(fake, { tokenOverride: "test-ai-key" });
+      let meta = await getInitializedMeta();
+      assert.ok(meta.lastRestoreMetrics, "Should have restore metrics after first restore");
+      assert.equal(meta.restoreHistory.length, 1, "restoreHistory should have 1 entry");
+      assert.deepStrictEqual(
+        meta.restoreHistory[0],
+        meta.lastRestoreMetrics,
+        "First history entry should match lastRestoreMetrics",
+      );
+
+      // Reset to stopped for second restore
+      await mutateMeta((m) => {
+        m.status = "stopped";
+        m.snapshotId = "snap-history-test-2";
+        m.sandboxId = null;
+        m.portUrls = null;
+      });
+
+      // Second restore
+      await triggerRestore(fake, { tokenOverride: "test-ai-key" });
+      meta = await getInitializedMeta();
+      assert.equal(meta.restoreHistory.length, 2, "restoreHistory should have 2 entries");
+      assert.deepStrictEqual(
+        meta.restoreHistory[0],
+        meta.lastRestoreMetrics,
+        "Most recent entry should be first (newest first ordering)",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("restoreSandboxFromSnapshot overlaps firewall sync with local readiness and skips public ready", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-overlap-test";
+      meta.gatewayToken = "test-gw-token";
+      // Set up a firewall allowlist so the sync has work to do
+      meta.firewall.mode = "enforcing";
+      meta.firewall.allowlist = ["api.openai.com", "registry.npmjs.org"];
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle, meta } = await triggerRestore(fake, {
+        tokenOverride: "test-ai-key",
+      });
+
+      // Verify restore metrics include overlapped timing fields
+      assert.ok(meta.lastRestoreMetrics, "Should have restore metrics");
+      assert.ok(
+        typeof meta.lastRestoreMetrics.bootOverlapMs === "number",
+        "Should report bootOverlapMs",
+      );
+      assert.equal(
+        meta.lastRestoreMetrics.skippedPublicReady,
+        true,
+        "Background restore should skip public readiness",
+      );
+      assert.equal(
+        meta.lastRestoreMetrics.publicReadyMs,
+        0,
+        "publicReadyMs should be 0 when skipped",
+      );
+
+      // bootOverlapMs should be >= max(firewallSyncMs, localReadyMs)
+      // (wall-clock time for the overlapped phase)
+      const m = meta.lastRestoreMetrics;
+      assert.ok(
+        typeof m.bootOverlapMs === "number",
+        "bootOverlapMs should be a number",
+      );
+      assert.ok(
+        m.bootOverlapMs! >= Math.max(m.firewallSyncMs, m.localReadyMs),
+        `bootOverlapMs (${m.bootOverlapMs}) should be >= max(firewallSyncMs=${m.firewallSyncMs}, localReadyMs=${m.localReadyMs})`,
+      );
+
+      // Firewall policy should have been applied to the sandbox
+      assert.ok(
+        handle.networkPolicies.length >= 1,
+        "Firewall policy should be applied during overlapped restore",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });
@@ -882,7 +995,7 @@ test("restoreSandboxFromSnapshot always writes credential files, truncating API 
   });
 });
 
-test("restoreSandboxFromSnapshot runs bash startup-script and checks exit code", async () => {
+test("restoreSandboxFromSnapshot runs bash fast-restore-script and checks exit code", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -901,25 +1014,31 @@ test("restoreSandboxFromSnapshot runs bash startup-script and checks exit code",
         tokenOverride: "test-key",
       });
 
-      // Should have a "bash" command with the startup script path
+      // Should have a "bash" command with the fast-restore script path
       const bashCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_STARTUP_SCRIPT_PATH,
+        (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
       );
-      assert.ok(bashCmd, "Should run bash with startup script path");
+      assert.ok(bashCmd, "Should run bash with fast-restore script path");
+
+      // Should NOT have a separate force-pair step — it's inlined
+      const forcePairCmd = handle.commands.find(
+        (c) => c.cmd === "node" && c.args?.[0] === OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
+      );
+      assert.equal(forcePairCmd, undefined, "Should not run separate force-pair (inlined in fast-restore)");
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 });
 
-test("restoreSandboxFromSnapshot with startup script exit code != 0 throws error", async () => {
+test("restoreSandboxFromSnapshot with fast-restore script exit code != 0 throws error", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
-  // Make the startup script command fail
+  // Make the fast-restore script command fail
   fake.commandHandler = (cmd, args) => {
-    if (cmd === "bash" && args?.[0] === OPENCLAW_STARTUP_SCRIPT_PATH) {
-      return { exitCode: 1, output: "startup script failed: missing config" };
+    if (cmd === "bash" && args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
+      return { exitCode: 1, output: "fast-restore script failed: missing config" };
     }
     return { exitCode: 0, output: "" };
   };
@@ -951,8 +1070,8 @@ test("restoreSandboxFromSnapshot with startup script exit code != 0 throws error
       await (scheduledCallback as () => Promise<void>)();
 
       const meta = await getInitializedMeta();
-      assert.equal(meta.status, "error", "Status should be error after startup script failure");
-      assert.ok(meta.lastError?.includes("restore-startup-script"), "lastError should mention startup script failure");
+      assert.equal(meta.status, "error", "Status should be error after fast-restore script failure");
+      assert.ok(meta.lastError?.includes("fast-restore-script"), "lastError should mention fast-restore script failure");
     } finally {
       _setAiGatewayTokenOverrideForTesting(null);
       globalThis.fetch = originalFetch;
@@ -1717,9 +1836,9 @@ test("[lifecycle] ensureFreshGatewayToken: writes token then runs startup script
         "Token value should be passed as argument",
       );
 
-      // Step 2: gateway restart via startup script (not inline bash -c)
+      // Step 2: gateway restart via env -> startup script
       const restartCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_STARTUP_SCRIPT_PATH,
+        (c) => c.cmd === "env" && c.args?.includes("bash") && c.args?.includes(OPENCLAW_STARTUP_SCRIPT_PATH),
       );
       assert.ok(restartCmd, "Should restart gateway via startup script");
 
@@ -2103,14 +2222,14 @@ test("[failure] snapshot failure during stop propagates error", async () => {
   });
 });
 
-test("[failure] restore failure from stopped state (startup script fails)", async () => {
+test("[failure] restore failure from stopped state (fast-restore script fails)", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
-  // Make bash startup-script command return non-zero exit code
+  // Make bash fast-restore-script command return non-zero exit code
   fake.commandHandler = (cmd, args) => {
-    if (cmd === "bash" && args?.[0] === OPENCLAW_STARTUP_SCRIPT_PATH) {
-      return { exitCode: 1, output: "startup script failed" };
+    if (cmd === "bash" && args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
+      return { exitCode: 1, output: "fast-restore script failed" };
     }
     return { exitCode: 0, output: "" };
   };
@@ -2140,8 +2259,8 @@ test("[failure] restore failure from stopped state (startup script fails)", asyn
       await (scheduledCallback as () => Promise<void>)();
 
       const meta = await getInitializedMeta();
-      assert.equal(meta.status, "error", "Status should be error after startup script failure");
-      assert.ok(meta.lastError?.includes("restore-startup-script"), "lastError should mention startup failure");
+      assert.equal(meta.status, "error", "Status should be error after fast-restore script failure");
+      assert.ok(meta.lastError?.includes("fast-restore-script"), "lastError should mention fast-restore failure");
     } finally {
       globalThis.fetch = originalFetch;
     }

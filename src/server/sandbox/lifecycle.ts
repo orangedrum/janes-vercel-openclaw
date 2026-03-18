@@ -3,13 +3,14 @@ import { randomUUID } from "node:crypto";
 import { pollUntil } from "@/server/async/poll";
 import { ApiError } from "@/shared/http";
 import type { RestorePhaseMetrics, SingleMeta } from "@/shared/types";
+import { MAX_RESTORE_HISTORY } from "@/shared/types";
 import { getAiGatewayBearerTokenOptional } from "@/server/env";
-import { syncFirewallPolicyIfRunning } from "@/server/firewall/state";
 import { applyFirewallPolicyToSandbox } from "@/server/firewall/policy";
 import { logError, logInfo, logWarn } from "@/server/log";
 import { setupOpenClaw, CommandFailedError, waitForGatewayReady } from "@/server/openclaw/bootstrap";
 import {
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
+  OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
@@ -662,7 +663,12 @@ async function scheduleLifecycleWork(options: {
       async () => {
         try {
           if (nextStatus === "restoring") {
-            await restoreSandboxFromSnapshot(options.origin);
+            // Background restores skip the public readiness probe — the
+            // gateway is locally healthy and callers that need public
+            // reachability poll via waitForSandboxReady / probeGatewayReady.
+            await restoreSandboxFromSnapshot(options.origin, {
+              skipPublicReady: true,
+            });
           } else {
             await createAndBootstrapSandbox(options.origin);
           }
@@ -750,7 +756,10 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
   });
 }
 
-async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
+async function restoreSandboxFromSnapshot(
+  origin: string,
+  options?: { skipPublicReady?: boolean },
+): Promise<SingleMeta> {
   return withLifecycleLock(async () => {
     const current = await getInitializedMeta();
     if (current.status === "running" && current.sandboxId) {
@@ -760,6 +769,7 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
       return createAndBootstrapSandbox(origin);
     }
 
+    const skipPublicReady = options?.skipPublicReady ?? false;
     const restoreStartedAt = Date.now();
     const vcpus = getSandboxVcpus();
 
@@ -813,32 +823,28 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
       assetSha256: assetSyncResult.assetSha256,
     });
 
+    // Use the dedicated fast-restore script which inlines force-pair and
+    // skips shell-hook setup already baked into the snapshot.  This replaces
+    // the previous two-step sequence of generic startup + separate force-pair.
     const startupScriptStart = Date.now();
+    logInfo("sandbox.restore.fast_restore_start", { sandboxId: sandbox.sandboxId });
     const restoreResult = await sandbox.runCommand("bash", [
-      OPENCLAW_STARTUP_SCRIPT_PATH,
+      OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
     ]);
     if (restoreResult.exitCode !== 0) {
       const output = await restoreResult.output("both");
       throw new CommandFailedError({
-        command: "restore-startup-script",
+        command: "fast-restore-script",
         exitCode: restoreResult.exitCode,
         output,
       });
     }
     const startupScriptMs = Date.now() - startupScriptStart;
+    logInfo("sandbox.restore.fast_restore_complete", { startupScriptMs, sandboxId: sandbox.sandboxId });
 
-    // Force-pair the device identity so the gateway doesn't require
-    // manual pairing after restore (the startup script clears paired.json).
-    const forcePairStart = Date.now();
-    try {
-      await sandbox.runCommand("node", [
-        OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
-        OPENCLAW_STATE_DIR,
-      ]);
-    } catch {
-      // Best-effort only — matches setupOpenClaw behavior.
-    }
-    const forcePairMs = Date.now() - forcePairStart;
+    // Force-pair is now inlined in the fast-restore script, so this phase
+    // is always 0.  Kept for RestorePhaseMetrics backward compatibility.
+    const forcePairMs = 0;
 
     const next = await mutateMeta((meta) => {
       meta.status = "booting";
@@ -848,27 +854,79 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
       meta.lastError = null;
     });
 
-    const firewallSyncStart = Date.now();
-    await applyFirewallPolicyToSandbox(sandbox, next);
-    const firewallSyncMs = Date.now() - firewallSyncStart;
+    // Overlap firewall sync with local gateway readiness polling.
+    // Firewall policy application does not depend on the gateway being
+    // healthy, and gateway boot does not depend on firewall rules.
+    // Running them concurrently saves the full firewallSyncMs from the
+    // critical path.
+    const bootOverlapStart = Date.now();
+    let firewallSyncMs = 0;
+    let localReadyMs = 0;
 
-    // Local-first readiness: curl inside the sandbox is much faster than
-    // going through the public proxy/DNS path.
-    const localReadyStart = Date.now();
-    await waitForGatewayReady(sandbox, { maxAttempts: 120, delayMs: 250 });
-    const localReadyMs = Date.now() - localReadyStart;
-    logInfo("sandbox.restore.local_ready", { localReadyMs, sandboxId: sandbox.sandboxId });
+    await Promise.all([
+      (async () => {
+        const t0 = Date.now();
+        await applyFirewallPolicyToSandbox(sandbox, next);
+        firewallSyncMs = Date.now() - t0;
+        logInfo("sandbox.restore.firewall_sync_overlapped", {
+          firewallSyncMs,
+          sandboxId: sandbox.sandboxId,
+        });
+      })(),
+      (async () => {
+        const t0 = Date.now();
+        await waitForGatewayReady(sandbox, { maxAttempts: 120, delayMs: 250 });
+        localReadyMs = Date.now() - t0;
+        logInfo("sandbox.restore.local_ready", {
+          localReadyMs,
+          sandboxId: sandbox.sandboxId,
+        });
+      })(),
+    ]);
 
-    // Short public probe — once the gateway is locally healthy the public
-    // route should come up quickly.  Uses a tight 1s per-probe timeout
-    // instead of the default 5s to avoid accumulating tail latency.
-    const publicReadyStart = Date.now();
-    await waitForPublicGatewayReady({
-      maxAttempts: 20,
-      delayMs: 250,
-      timeoutMs: 1_000,
+    const bootOverlapMs = Date.now() - bootOverlapStart;
+    logInfo("sandbox.restore.boot_overlap_complete", {
+      bootOverlapMs,
+      firewallSyncMs,
+      localReadyMs,
+      sandboxId: sandbox.sandboxId,
     });
-    const publicReadyMs = Date.now() - publicReadyStart;
+
+    // Gateway is locally healthy — mark as running so callers that poll
+    // metadata (channel drains, waitForSandboxReady) see the correct state.
+    // This is set before the optional public probe because locally-healthy is
+    // the authoritative signal; the public probe below is best-effort and its
+    // failure does not invalidate the sandbox (it will converge on its own).
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.lastError = null;
+    });
+
+    // Public readiness probe — skipped for non-waiting callers (background
+    // ensure) since the gateway is locally healthy and the public route will
+    // converge on its own.  Callers that explicitly wait (ensure?wait=1,
+    // channel drains) go through waitForSandboxReady which polls probeGatewayReady.
+    let publicReadyMs = 0;
+    if (!skipPublicReady) {
+      const publicReadyStart = Date.now();
+      try {
+        await waitForPublicGatewayReady({
+          maxAttempts: 20,
+          delayMs: 250,
+          timeoutMs: 1_000,
+        });
+      } catch (err) {
+        logInfo("sandbox.restore.public_ready_failed", {
+          sandboxId: sandbox.sandboxId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      publicReadyMs = Date.now() - publicReadyStart;
+    } else {
+      logInfo("sandbox.restore.public_ready_skipped", {
+        sandboxId: sandbox.sandboxId,
+      });
+    }
 
     const totalMs = Date.now() - restoreStartedAt;
 
@@ -886,15 +944,20 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
       assetSha256: assetSyncResult.assetSha256,
       vcpus,
       recordedAt: Date.now(),
+      bootOverlapMs,
+      skippedPublicReady: skipPublicReady,
     };
 
     logInfo("sandbox.restore.metrics", metrics as unknown as Record<string, unknown>);
 
     await mutateMeta((meta) => {
       meta.lastRestoreMetrics = metrics;
+      meta.restoreHistory = [metrics, ...(meta.restoreHistory ?? [])].slice(
+        0,
+        MAX_RESTORE_HISTORY,
+      );
     });
 
-    await syncFirewallPolicyIfRunning();
     return getInitializedMeta();
   });
 }

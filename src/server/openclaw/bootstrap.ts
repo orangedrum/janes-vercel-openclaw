@@ -1,6 +1,8 @@
 import { logError, logInfo, logWarn } from "@/server/log";
-import { getOpenclawPackageSpec } from "@/server/env";
+import { getOpenclawPackageSpec, isVercelDeployment } from "@/server/env";
+import { isPinnedPackageSpec } from "@/server/deployment-contract";
 import {
+  buildFastRestoreScript,
   buildForcePairScript,
   buildGatewayConfig,
   buildImageGenScript,
@@ -17,6 +19,7 @@ import {
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
   OPENCLAW_BIN,
   OPENCLAW_CONFIG_PATH,
+  OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
   OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
@@ -98,8 +101,20 @@ export async function setupOpenClaw(
   const startupScript = buildStartupScript();
 
   const packageSpec = getOpenclawPackageSpec();
+  const onVercel = isVercelDeployment();
 
-  logInfo("openclaw.setup.start", { sandboxId: sandbox.sandboxId, packageSpec });
+  if (onVercel && !isPinnedPackageSpec(packageSpec)) {
+    logError("openclaw.setup.unpinned_package_spec", {
+      sandboxId: sandbox.sandboxId,
+      packageSpec,
+      reason: "Vercel deployments require a pinned OPENCLAW_PACKAGE_SPEC for deterministic restores",
+    });
+    throw new Error(
+      `OPENCLAW_PACKAGE_SPEC must be a pinned version on Vercel deployments (e.g. "openclaw@1.2.3"), got "${packageSpec}".`,
+    );
+  }
+
+  logInfo("openclaw.setup.start", { sandboxId: sandbox.sandboxId, packageSpec, onVercel });
 
   const installResult = await sandbox.runCommand("npm", [
     "install",
@@ -131,6 +146,10 @@ export async function setupOpenClaw(
     {
       path: OPENCLAW_STARTUP_SCRIPT_PATH,
       content: Buffer.from(startupScript),
+    },
+    {
+      path: OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
+      content: Buffer.from(buildFastRestoreScript()),
     },
     {
       path: OPENCLAW_IMAGE_GEN_SKILL_PATH,

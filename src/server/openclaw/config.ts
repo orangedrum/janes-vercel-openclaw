@@ -26,6 +26,7 @@ export const OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH = `${OPENCLAW_PKG_DIR}/skills
 export const OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH = `${OPENCLAW_PKG_DIR}/skills/openai-image-gen/scripts/gen.mjs`;
 export const OPENCLAW_LOG_FILE = "/tmp/openclaw.log";
 export const OPENCLAW_STARTUP_SCRIPT_PATH = "/vercel/sandbox/.on-restore.sh";
+export const OPENCLAW_FAST_RESTORE_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.fast-restore.sh`;
 
 function readBooleanEnv(name: string, defaultValue = false): boolean {
   const raw = process.env[name]?.trim().toLowerCase();
@@ -254,6 +255,48 @@ if ! grep -q 'shell-commands-for-learning' "$_home/.bashrc" 2>/dev/null; then
 trap 'printf "%s\\n" "$BASH_COMMAND" >> /tmp/shell-commands-for-learning.log' DEBUG
 BASHEOF
 fi
+`;
+}
+
+/**
+ * Restore-only startup script optimised for snapshot resume.
+ *
+ * Differences from the generic startup script:
+ * - Does NOT clear paired.json / pending.json — force-pair is inlined below.
+ * - Does NOT install shell hooks — they are already baked into the snapshot.
+ * - Inlines device identity force-pair so we avoid a second `node` process.
+ *
+ * The script reads fresh tokens from on-disk files that the restore path has
+ * already written via writeRestoreCredentialFiles.
+ */
+export function buildFastRestoreScript(): string {
+  return `#!/bin/bash
+set -euo pipefail
+gateway_token="$(cat "${OPENCLAW_GATEWAY_TOKEN_PATH}")"
+if [ -z "$gateway_token" ]; then
+  echo '{"event":"fast_restore.error","reason":"empty_gateway_token"}' >&2
+  exit 1
+fi
+if [ -z "\${AI_GATEWAY_API_KEY:-}" ]; then
+  ai_gateway_api_key="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
+else
+  ai_gateway_api_key="$AI_GATEWAY_API_KEY"
+fi
+ai_gateway_base_url="https://ai-gateway.vercel.sh/v1"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"
+export OPENCLAW_GATEWAY_TOKEN="$gateway_token"
+if [ -n "$ai_gateway_api_key" ]; then
+  export AI_GATEWAY_API_KEY="$ai_gateway_api_key"
+  export OPENAI_API_KEY="$ai_gateway_api_key"
+  export OPENAI_BASE_URL="$ai_gateway_base_url"
+fi
+echo '{"event":"fast_restore.kill_old_gateway"}' >&2
+pkill -f "openclaw gateway" || true
+echo '{"event":"fast_restore.start_gateway"}' >&2
+setsid ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &
+echo '{"event":"fast_restore.force_pair_inline"}' >&2
+node ${OPENCLAW_FORCE_PAIR_SCRIPT_PATH} ${OPENCLAW_STATE_DIR} >> ${OPENCLAW_LOG_FILE} 2>&1 || echo '{"event":"fast_restore.force_pair_failed"}' >&2
+echo '{"event":"fast_restore.complete"}' >&2
 `;
 }
 
