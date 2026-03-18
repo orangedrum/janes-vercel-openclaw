@@ -16,6 +16,7 @@ import {
   type ScenarioHarness,
 } from "@/test-utils/harness";
 import { gatewayReadyResponse } from "@/test-utils/fake-fetch";
+import { getServerLogs, _resetLogBuffer } from "@/server/log";
 import {
   patchNextServerAfter,
   getGatewayRoute,
@@ -1244,6 +1245,60 @@ test("Gateway: upstream 500 error is passed through to client", async () => {
       const result = await callGatewayGet("/api/broken");
       assert.equal(result.status, 500);
       assert.deepEqual(result.json, { error: "Internal Server Error" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  } finally {
+    h.teardown();
+  }
+});
+
+test("sandbox running + upstream 410 triggers restore via gateway.upstream_410 path", async () => {
+  const h = createScenarioHarness();
+  try {
+    // Step 1: Drive sandbox to "running" — simulates admin page showing Running + Gateway Ready
+    await driveToRunning(h);
+
+    // Verify metadata says running (same as what admin page would show)
+    const { getInitializedMeta } = await import("@/server/store/store");
+    const metaBefore = await getInitializedMeta();
+    assert.equal(metaBefore.status, "running", "Precondition: meta should be running");
+    assert.ok(metaBefore.sandboxId, "Precondition: sandboxId should exist");
+
+    // Step 2: Sandbox dies — upstream starts returning 410 (Vercel auto-suspended)
+    _resetLogBuffer();
+    h.fakeFetch.reset();
+    h.fakeFetch.onGet(/fake\.vercel\.run/, () =>
+      new Response("Gone", { status: 410 }),
+    );
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = h.fakeFetch.fetch;
+    try {
+      // Step 3: User clicks "Open VClaw" → hits /gateway
+      const result = await callGatewayGet("/", { accept: "text/html" });
+
+      // Step 4: Verify we get the waiting page
+      assert.equal(result.status, 202, "Should return 202 waiting page");
+      assert.ok(
+        result.text.includes("Restoring snapshot"),
+        `Expected "Restoring snapshot" in HTML, got: ${result.text.slice(0, 200)}`,
+      );
+
+      const logs = getServerLogs();
+      const logMessages = logs.map((e) => e.message);
+
+      assert.ok(logMessages.includes("gateway.upstream_410"), "upstream 410 path should fire when sandbox is gone");
+      assert.ok(!logMessages.includes("gateway.pending"), "gateway.pending should NOT fire — metadata said running");
+      assert.ok(!logMessages.includes("gateway.missing_credentials"), "missing_credentials should NOT fire");
+
+      // Also verify that ensureSandboxRunning saw running status
+      const ensureLog = logs.find((e) => e.message === "sandbox.ensure_running");
+      assert.ok(ensureLog, "Should have sandbox.ensure_running log");
+      assert.equal(
+        ensureLog?.data?.status,
+        "running",
+        "ensureSandboxRunning should have seen status=running in metadata",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

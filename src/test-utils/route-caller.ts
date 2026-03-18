@@ -230,6 +230,10 @@ type ChannelRouteModule = {
 let _slackWebhookRoute: ChannelRouteModule | null = null;
 let _telegramWebhookRoute: ChannelRouteModule | null = null;
 let _discordWebhookRoute: ChannelRouteModule | null = null;
+let _slackChannelRoute: SimpleRouteModule | null = null;
+let _discordChannelRoute: SimpleRouteModule | null = null;
+let _slackQueueRoute: SimpleRouteModule | null = null;
+let _discordQueueRoute: SimpleRouteModule | null = null;
 
 export function getSlackWebhookRoute(): ChannelRouteModule {
   if (!_slackWebhookRoute) {
@@ -256,6 +260,42 @@ export function getDiscordWebhookRoute(): ChannelRouteModule {
     _discordWebhookRoute = require("@/app/api/channels/discord/webhook/route") as ChannelRouteModule;
   }
   return _discordWebhookRoute;
+}
+
+export function getSlackChannelRoute(): SimpleRouteModule {
+  if (!_slackChannelRoute) {
+    patchNextServerAfter();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _slackChannelRoute = require("@/app/api/channels/slack/route") as SimpleRouteModule;
+  }
+  return _slackChannelRoute;
+}
+
+export function getDiscordChannelRoute(): SimpleRouteModule {
+  if (!_discordChannelRoute) {
+    patchNextServerAfter();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _discordChannelRoute = require("@/app/api/channels/discord/route") as SimpleRouteModule;
+  }
+  return _discordChannelRoute;
+}
+
+export function getSlackQueueRoute(): SimpleRouteModule {
+  if (!_slackQueueRoute) {
+    patchNextServerAfter();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _slackQueueRoute = require("@/app/api/queues/channels/slack/route") as SimpleRouteModule;
+  }
+  return _slackQueueRoute;
+}
+
+export function getDiscordQueueRoute(): SimpleRouteModule {
+  if (!_discordQueueRoute) {
+    patchNextServerAfter();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _discordQueueRoute = require("@/app/api/queues/channels/discord/route") as SimpleRouteModule;
+  }
+  return _discordQueueRoute;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +515,7 @@ export function getAdminLaunchVerifyRoute(): LaunchVerifyRouteModule {
 let _slackManifestRoute: SimpleRouteModule | null = null;
 let _slackTestRoute: SimpleRouteModule | null = null;
 let _telegramPreviewRoute: SimpleRouteModule | null = null;
+let _telegramSyncCommandsRoute: SimpleRouteModule | null = null;
 let _discordRegisterCommandRoute: SimpleRouteModule | null = null;
 
 export function getSlackManifestRoute(): SimpleRouteModule {
@@ -499,6 +540,14 @@ export function getTelegramPreviewRoute(): SimpleRouteModule {
     _telegramPreviewRoute = require("@/app/api/channels/telegram/preview/route") as SimpleRouteModule;
   }
   return _telegramPreviewRoute;
+}
+
+export function getTelegramSyncCommandsRoute(): SimpleRouteModule {
+  if (!_telegramSyncCommandsRoute) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _telegramSyncCommandsRoute = require("@/app/api/channels/telegram/sync-commands/route") as SimpleRouteModule;
+  }
+  return _telegramSyncCommandsRoute;
 }
 
 export function getDiscordRegisterCommandRoute(): SimpleRouteModule {

@@ -73,6 +73,12 @@ async function handleProxy(request: Request, path: string): Promise<Response> {
 
   const meta = await touchRunningSandbox();
   if (!meta.sandboxId || !meta.gatewayToken) {
+    logWarn("gateway.missing_credentials", {
+      ...reqCtx,
+      sandboxStatus: meta.status,
+      hasSandboxId: Boolean(meta.sandboxId),
+      hasGatewayToken: Boolean(meta.gatewayToken),
+    });
     return buildGatewayPendingResponse({
       request,
       returnPath,
