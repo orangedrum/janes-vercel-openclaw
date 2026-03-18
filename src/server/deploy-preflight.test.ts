@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildDeployPreflight } from "@/server/deploy-preflight";
+import { buildDeployPreflight, getLaunchVerifyBlocking } from "@/server/deploy-preflight";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
 import { _resetStoreForTesting } from "@/server/store/store";
 
@@ -46,6 +46,7 @@ test("preflight passes when bypass secret is absent in admin-secret mode", async
       VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "token",
+      OPENCLAW_PACKAGE_SPEC: "openclaw@1.0.0",
       CRON_SECRET: "cron-secret",
     },
     async () => {
@@ -225,6 +226,7 @@ test("preflight ok is true when Upstash and OIDC are configured without bypass s
       VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "token",
+      OPENCLAW_PACKAGE_SPEC: "openclaw@1.0.0",
       CRON_SECRET: "cron-secret",
     },
     async () => {
@@ -534,6 +536,549 @@ test("preflight checks do not include launch-verification (config-only guarantee
   );
 });
 
+test("preflight fails when OPENCLAW_PACKAGE_SPEC is missing on Vercel", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "admin-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      OPENCLAW_PACKAGE_SPEC: undefined,
+      CRON_SECRET: "cron-secret",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      // Package-spec should be a fail check on Vercel
+      const specCheck = payload.checks.find(
+        (c) => c.id === "openclaw-package-spec",
+      );
+      assert.ok(specCheck, "expected openclaw-package-spec check on Vercel");
+      assert.equal(specCheck.status, "fail");
+
+      // Preflight should fail (missing pinned spec blocks readiness)
+      assert.equal(payload.ok, false, "missing package-spec on Vercel should block preflight");
+
+      // The action should be required, not recommended
+      const specAction = payload.actions.find(
+        (a) => a.id === "configure-openclaw-package-spec",
+      );
+      assert.ok(specAction, "expected configure-openclaw-package-spec action");
+      assert.equal(specAction.status, "required");
+    },
+  );
+});
+
+test("preflight has no package-spec check when pinned on Vercel", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "admin-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      OPENCLAW_PACKAGE_SPEC: "openclaw@2.0.0",
+      CRON_SECRET: "cron-secret",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      // Pinned spec passes — check present with pass status
+      const specCheck = payload.checks.find(
+        (c) => c.id === "openclaw-package-spec",
+      );
+      assert.ok(specCheck, "expected openclaw-package-spec check on Vercel");
+      assert.equal(specCheck.status, "pass");
+
+      // No action needed
+      const specAction = payload.actions.find(
+        (a) => a.id === "configure-openclaw-package-spec",
+      );
+      assert.equal(specAction, undefined, "no action needed when pinned");
+
+      assert.equal(payload.ok, true);
+    },
+  );
+});
+
+// ===========================================================================
+// Cross-surface OPENCLAW_PACKAGE_SPEC consistency
+// ===========================================================================
+
+test("cross-surface: all surfaces agree on package-spec failure when Vercel and unpinned", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "admin-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      OPENCLAW_PACKAGE_SPEC: "openclaw@latest",
+      CRON_SECRET: "cron-secret",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const request = new Request(
+        "https://app.example.com/api/admin/preflight",
+      );
+
+      const payload = await buildDeployPreflight(request);
+
+      // Preflight should fail — contract says unpinned spec is a fail on Vercel
+      assert.equal(payload.ok, false, "preflight.ok should be false with unpinned spec");
+
+      const specCheck = payload.checks.find(
+        (c) => c.id === "openclaw-package-spec",
+      );
+      assert.ok(specCheck, "expected openclaw-package-spec check");
+      assert.equal(specCheck.status, "fail");
+      assert.ok(
+        specCheck.message.includes("not a pinned version"),
+        "message should mention unpinned version",
+      );
+
+      // Channels should NOT be blocked by package-spec (it's excluded from channel blockers)
+      for (const ch of Object.values(payload.channels)) {
+        const specIssue = ch.issues.find(
+          (i) => i.id === "openclaw-package-spec",
+        );
+        assert.equal(
+          specIssue,
+          undefined,
+          `channel ${ch.channel} should not have openclaw-package-spec issue`,
+        );
+        assert.equal(
+          ch.canConnect,
+          true,
+          `channel ${ch.channel} should be connectable despite unpinned spec`,
+        );
+      }
+
+      // Action should be emitted
+      const specAction = payload.actions.find(
+        (a) => a.id === "configure-openclaw-package-spec",
+      );
+      assert.ok(specAction, "expected configure-openclaw-package-spec action");
+      assert.equal(specAction.status, "required");
+    },
+  );
+});
+
+test("cross-surface: no surfaces emit package-spec blocker when non-Vercel", async () => {
+  await withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      VERCEL_AUTH_MODE: "admin-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      OPENCLAW_PACKAGE_SPEC: undefined,
+      CRON_SECRET: "cron-secret",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const request = new Request(
+        "https://app.example.com/api/admin/preflight",
+      );
+
+      const payload = await buildDeployPreflight(request);
+
+      // Non-Vercel: contract does not check package-spec
+      assert.equal(payload.ok, true, "preflight.ok should be true without Vercel");
+
+      const specCheck = payload.checks.find(
+        (c) => c.id === "openclaw-package-spec",
+      );
+      assert.equal(
+        specCheck,
+        undefined,
+        "no openclaw-package-spec check should be emitted on non-Vercel",
+      );
+
+      const specAction = payload.actions.find(
+        (a) => a.id === "configure-openclaw-package-spec",
+      );
+      assert.equal(
+        specAction,
+        undefined,
+        "no configure-openclaw-package-spec action should be emitted on non-Vercel",
+      );
+
+      // Channels should have no package-spec issue
+      for (const ch of Object.values(payload.channels)) {
+        const specIssue = ch.issues.find(
+          (i) => i.id === "openclaw-package-spec",
+        );
+        assert.equal(
+          specIssue,
+          undefined,
+          `channel ${ch.channel} should not have openclaw-package-spec issue on non-Vercel`,
+        );
+      }
+    },
+  );
+});
+
+// ===========================================================================
+// Contract → Preflight parity matrix
+// Ensures preflight derives status from contract, not its own inline logic.
+// ===========================================================================
+
+test("parity: local missing public-origin env vars is warn in contract (no request)", async () => {
+  const { buildDeploymentContract } = await import(
+    "@/server/deployment-contract"
+  );
+  await withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      NEXT_PUBLIC_APP_URL: undefined,
+      NEXT_PUBLIC_BASE_DOMAIN: undefined,
+      BASE_DOMAIN: undefined,
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      // Without a request, contract sees unresolvable origin → warn (not fail)
+      const contract = await buildDeploymentContract();
+      const contractOrigin = contract.requirements.find(
+        (r) => r.id === "public-origin",
+      );
+      assert.equal(contractOrigin?.status, "warn");
+
+      // With a request, contract resolves origin from request URL → pass.
+      // This is correct: preflight always has a live request so can resolve.
+      const payload = await buildDeployPreflight(
+        new Request("http://localhost:3000/api/admin/preflight"),
+      );
+      const preflightOrigin = payload.checks.find(
+        (c) => c.id === "public-origin",
+      );
+      assert.equal(preflightOrigin?.status, "pass");
+
+      // All checks should be pass or warn (no fail) since this is non-Vercel
+      for (const check of payload.checks) {
+        assert.notEqual(
+          check.status,
+          "fail",
+          `check ${check.id} should not fail on non-Vercel: ${check.message}`,
+        );
+      }
+    },
+  );
+});
+
+test("parity: Vercel missing public-origin is fail in contract (no request)", async () => {
+  const { buildDeploymentContract } = await import(
+    "@/server/deployment-contract"
+  );
+  await withEnv(
+    {
+      VERCEL: "1",
+      NEXT_PUBLIC_APP_URL: undefined,
+      NEXT_PUBLIC_BASE_DOMAIN: undefined,
+      BASE_DOMAIN: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      VERCEL_BRANCH_URL: undefined,
+      VERCEL_URL: undefined,
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      OPENCLAW_PACKAGE_SPEC: "openclaw@1.0.0",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      // Without a request, there is no host fallback, so origin fails
+      const contract = await buildDeploymentContract();
+      const contractOrigin = contract.requirements.find(
+        (r) => r.id === "public-origin",
+      );
+      assert.equal(contractOrigin?.status, "fail");
+
+      // When preflight receives a request, it passes it to the contract,
+      // which resolves origin from the request URL's host. This is correct:
+      // a live request can always resolve its own origin.
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+      const preflightOrigin = payload.checks.find(
+        (c) => c.id === "public-origin",
+      );
+      // Preflight passes because the contract received the request
+      assert.equal(preflightOrigin?.status, "pass");
+    },
+  );
+});
+
+test("parity: local missing OIDC is warn (not fail) in both contract and preflight", async () => {
+  const { buildDeploymentContract } = await import(
+    "@/server/deployment-contract"
+  );
+  await withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      NEXT_PUBLIC_APP_URL: "https://local.example.com",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      AI_GATEWAY_API_KEY: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const contract = await buildDeploymentContract();
+      const contractGw = contract.requirements.find(
+        (r) => r.id === "ai-gateway",
+      );
+      assert.equal(contractGw?.status, "warn");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://local.example.com/api/admin/preflight"),
+      );
+      const preflightGw = payload.checks.find(
+        (c) => c.id === "ai-gateway",
+      );
+      assert.equal(
+        preflightGw?.status,
+        "warn",
+        "preflight must derive ai-gateway warn from contract, not hard-fail",
+      );
+      assert.equal(payload.ok, true, "warn does not block ok");
+    },
+  );
+});
+
+test("parity: Vercel missing OIDC is fail in both contract and preflight", async () => {
+  const { buildDeploymentContract } = await import(
+    "@/server/deployment-contract"
+  );
+  await withEnv(
+    {
+      VERCEL: "1",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      AI_GATEWAY_API_KEY: undefined,
+      OPENCLAW_PACKAGE_SPEC: "openclaw@1.0.0",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const contract = await buildDeploymentContract();
+      const contractGw = contract.requirements.find(
+        (r) => r.id === "ai-gateway",
+      );
+      assert.equal(contractGw?.status, "fail");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+      const preflightGw = payload.checks.find(
+        (c) => c.id === "ai-gateway",
+      );
+      assert.equal(preflightGw?.status, "fail");
+      assert.equal(payload.ok, false);
+    },
+  );
+});
+
+test("parity: local missing store is warn in both contract and preflight", async () => {
+  const { buildDeploymentContract } = await import(
+    "@/server/deployment-contract"
+  );
+  await withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      NEXT_PUBLIC_APP_URL: "https://local.example.com",
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const contract = await buildDeploymentContract();
+      const contractStore = contract.requirements.find(
+        (r) => r.id === "store",
+      );
+      assert.equal(contractStore?.status, "warn");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://local.example.com/api/admin/preflight"),
+      );
+      const preflightStore = payload.checks.find(
+        (c) => c.id === "store",
+      );
+      assert.equal(
+        preflightStore?.status,
+        "warn",
+        "preflight must derive store warn from contract",
+      );
+      assert.equal(payload.ok, true, "warn does not block ok");
+    },
+  );
+});
+
+test("parity: Vercel missing store is fail in both contract and preflight", async () => {
+  const { buildDeploymentContract } = await import(
+    "@/server/deployment-contract"
+  );
+  await withEnv(
+    {
+      VERCEL: "1",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      OPENCLAW_PACKAGE_SPEC: "openclaw@1.0.0",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const contract = await buildDeploymentContract();
+      const contractStore = contract.requirements.find(
+        (r) => r.id === "store",
+      );
+      assert.equal(contractStore?.status, "fail");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+      const preflightStore = payload.checks.find(
+        (c) => c.id === "store",
+      );
+      assert.equal(preflightStore?.status, "fail");
+      assert.equal(payload.ok, false);
+    },
+  );
+});
+
+test("parity: local env action severity is recommended for store and ai-gateway", async () => {
+  // Local environment with missing store and OIDC — both should be
+  // "recommended" actions (warn in contract), not "required" (fail).
+  // Public origin resolves from the request URL, so no origin action.
+  await withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      NEXT_PUBLIC_APP_URL: undefined,
+      NEXT_PUBLIC_BASE_DOMAIN: undefined,
+      BASE_DOMAIN: undefined,
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      AI_GATEWAY_API_KEY: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const payload = await buildDeployPreflight(
+        new Request("http://localhost:3000/api/admin/preflight"),
+      );
+
+      const storeAction = payload.actions.find(
+        (a) => a.id === "configure-upstash",
+      );
+      assert.ok(storeAction, "expected configure-upstash action");
+      assert.equal(
+        storeAction.status,
+        "recommended",
+        "local missing store should be recommended, not required",
+      );
+
+      const gwAction = payload.actions.find(
+        (a) => a.id === "configure-ai-gateway-auth",
+      );
+      assert.ok(gwAction, "expected configure-ai-gateway-auth action");
+      assert.equal(
+        gwAction.status,
+        "recommended",
+        "local missing OIDC should be recommended, not required",
+      );
+
+      // All preflight checks should be pass or warn — no hard-fail on non-Vercel
+      for (const check of payload.checks) {
+        assert.notEqual(
+          check.status,
+          "fail",
+          `check ${check.id} should not fail on non-Vercel: ${check.message}`,
+        );
+      }
+    },
+  );
+});
+
+test("parity: Vercel env action severity is required for store and ai-gateway", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      AI_GATEWAY_API_KEY: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      const storeAction = payload.actions.find(
+        (a) => a.id === "configure-upstash",
+      );
+      assert.ok(storeAction, "expected configure-upstash action");
+      assert.equal(
+        storeAction.status,
+        "required",
+        "Vercel missing store should be required",
+      );
+
+      const gwAction = payload.actions.find(
+        (a) => a.id === "configure-ai-gateway-auth",
+      );
+      assert.ok(gwAction, "expected configure-ai-gateway-auth action");
+      assert.equal(
+        gwAction.status,
+        "required",
+        "Vercel missing OIDC should be required",
+      );
+
+      assert.equal(payload.ok, false);
+    },
+  );
+});
+
 test("preflight is config-only: passes on a fresh deployment before launch-verify has ever run", async () => {
   await withEnv(
     {
@@ -571,6 +1116,99 @@ test("preflight is config-only: passes on a fresh deployment before launch-verif
           `preflight channel ${ch.channel} should not have launch-verification issue`,
         );
       }
+    },
+  );
+});
+
+// ===========================================================================
+// getLaunchVerifyBlocking — canonical helper tests
+// ===========================================================================
+
+test("getLaunchVerifyBlocking returns not blocking when all checks pass", async () => {
+  await withEnv(
+    {
+      VERCEL_AUTH_MODE: "admin-secret",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      CRON_SECRET: "cron-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+      const result = getLaunchVerifyBlocking(payload);
+      assert.equal(result.blocking, false);
+    },
+  );
+});
+
+test("getLaunchVerifyBlocking returns blocking with skip phase IDs when checks fail", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "admin-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+      const result = getLaunchVerifyBlocking(payload);
+      assert.equal(result.blocking, true);
+      if (result.blocking) {
+        assert.ok(result.failingCheckIds.length > 0, "should have failing check IDs");
+        assert.ok(result.errorMessage.length > 0, "should have error message");
+        assert.deepEqual(
+          [...result.skipPhaseIds],
+          ["queuePing", "ensureRunning", "chatCompletions", "wakeFromSleep"],
+          "skip phase IDs should match the canonical set",
+        );
+        // Error message should include at least one failing check ID
+        for (const id of result.failingCheckIds) {
+          assert.ok(
+            result.errorMessage.includes(id),
+            `errorMessage should include failing check ID '${id}'`,
+          );
+        }
+      }
+    },
+  );
+});
+
+test("getLaunchVerifyBlocking treats warn-only checks as non-blocking", async () => {
+  await withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      VERCEL_AUTH_MODE: "admin-secret",
+      NEXT_PUBLIC_APP_URL: "https://local.example.com",
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const payload = await buildDeployPreflight(
+        new Request("https://local.example.com/api/admin/preflight"),
+      );
+      // On non-Vercel, store and ai-gateway are warn, not fail
+      assert.equal(payload.ok, true);
+      const result = getLaunchVerifyBlocking(payload);
+      assert.equal(result.blocking, false, "warn-only checks should not block launch-verify");
     },
   );
 });
