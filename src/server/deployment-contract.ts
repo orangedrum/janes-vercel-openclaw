@@ -182,9 +182,9 @@ function checkOpenclawPackageSpec(
   const missing = !process.env.OPENCLAW_PACKAGE_SPEC?.trim();
   return {
     id: "openclaw-package-spec",
-    status: "fail",
+    status: "warn",
     message: missing
-      ? "OPENCLAW_PACKAGE_SPEC is not set. The deployment contract requires a pinned version on Vercel for deterministic sandbox restores."
+      ? "OPENCLAW_PACKAGE_SPEC is not set. Pin to a specific version for deterministic sandbox restores."
       : `OPENCLAW_PACKAGE_SPEC is set to "${spec}" which is not a pinned version. Restores are non-deterministic.`,
     remediation:
       'Set OPENCLAW_PACKAGE_SPEC to a pinned version like "openclaw@1.2.3" for deterministic sandbox restores.',

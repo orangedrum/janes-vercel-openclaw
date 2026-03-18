@@ -536,7 +536,7 @@ test("preflight checks do not include launch-verification (config-only guarantee
   );
 });
 
-test("preflight fails when OPENCLAW_PACKAGE_SPEC is missing on Vercel", async () => {
+test("preflight warns when OPENCLAW_PACKAGE_SPEC is missing on Vercel", async () => {
   await withEnv(
     {
       VERCEL: "1",
@@ -554,22 +554,22 @@ test("preflight fails when OPENCLAW_PACKAGE_SPEC is missing on Vercel", async ()
         new Request("https://app.example.com/api/admin/preflight"),
       );
 
-      // Package-spec should be a fail check on Vercel
+      // Package-spec should be a warn check on Vercel (not a blocker)
       const specCheck = payload.checks.find(
         (c) => c.id === "openclaw-package-spec",
       );
       assert.ok(specCheck, "expected openclaw-package-spec check on Vercel");
-      assert.equal(specCheck.status, "fail");
+      assert.equal(specCheck.status, "warn");
 
-      // Preflight should fail (missing pinned spec blocks readiness)
-      assert.equal(payload.ok, false, "missing package-spec on Vercel should block preflight");
+      // Preflight should still pass (missing package-spec is only a warning)
+      assert.equal(payload.ok, true, "missing package-spec on Vercel should not block preflight");
 
-      // The action should be required, not recommended
+      // The action should be recommended, not required
       const specAction = payload.actions.find(
         (a) => a.id === "configure-openclaw-package-spec",
       );
       assert.ok(specAction, "expected configure-openclaw-package-spec action");
-      assert.equal(specAction.status, "required");
+      assert.equal(specAction.status, "recommended");
     },
   );
 });
@@ -614,7 +614,7 @@ test("preflight has no package-spec check when pinned on Vercel", async () => {
 // Cross-surface OPENCLAW_PACKAGE_SPEC consistency
 // ===========================================================================
 
-test("cross-surface: all surfaces agree on package-spec failure when Vercel and unpinned", async () => {
+test("cross-surface: unpinned package-spec is a warning, not a blocker", async () => {
   await withEnv(
     {
       VERCEL: "1",
@@ -634,14 +634,14 @@ test("cross-surface: all surfaces agree on package-spec failure when Vercel and 
 
       const payload = await buildDeployPreflight(request);
 
-      // Preflight should fail — contract says unpinned spec is a fail on Vercel
-      assert.equal(payload.ok, false, "preflight.ok should be false with unpinned spec");
+      // Preflight should pass — unpinned spec is only a warning
+      assert.equal(payload.ok, true, "preflight.ok should be true with unpinned spec (warn only)");
 
       const specCheck = payload.checks.find(
         (c) => c.id === "openclaw-package-spec",
       );
       assert.ok(specCheck, "expected openclaw-package-spec check");
-      assert.equal(specCheck.status, "fail");
+      assert.equal(specCheck.status, "warn");
       assert.ok(
         specCheck.message.includes("not a pinned version"),
         "message should mention unpinned version",
@@ -664,12 +664,12 @@ test("cross-surface: all surfaces agree on package-spec failure when Vercel and 
         );
       }
 
-      // Action should be emitted
+      // Action should be emitted as recommended (not required)
       const specAction = payload.actions.find(
         (a) => a.id === "configure-openclaw-package-spec",
       );
       assert.ok(specAction, "expected configure-openclaw-package-spec action");
-      assert.equal(specAction.status, "required");
+      assert.equal(specAction.status, "recommended");
     },
   );
 });
