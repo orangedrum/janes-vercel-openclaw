@@ -460,6 +460,11 @@ async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string):
     // Best-effort only — matches setupOpenClaw behavior.
   }
 
+  // Wait for the gateway to become healthy before returning.
+  // Without this, the caller's immediate forwardToGateway() hits a dead gateway.
+  await waitForGatewayReady(sandbox, { maxAttempts: 40, delayMs: 250 });
+  logInfo("sandbox.token_refresh.gateway_ready", { sandboxId });
+
   await mutateMeta((next) => {
     next.lastTokenRefreshAt = Date.now();
   });
