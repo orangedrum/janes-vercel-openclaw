@@ -67,7 +67,7 @@ Output:
 Safe phases (always run): `health`, `status`, `gatewayProbe`, `firewallRead`, `channelsSummary`, `sshEcho`, `chatCompletions`, `channelRoundTrip`.
 Destructive phases (opt-in): `ensureRunning`, `chatCompletions`, `channelRoundTrip`, `channelWakeFromSleep`, `chatCompletions` (post-wake), `selfHealTokenRefresh`.
 
-Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) read signing secrets from `/api/admin/channel-secrets`, construct properly-signed webhooks, and verify the full ingestion + drain + completions pipeline. They gracefully skip if no channels are configured.
+Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) call `POST /api/admin/channel-secrets` with `{ channel, body }` so the server signs and dispatches synthetic webhooks. Raw channel secrets never leave the server, and the phases still verify the full ingestion + drain + completions pipeline. They gracefully skip if no channels are configured.
 
 ## Routes
 
@@ -80,7 +80,7 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) read signing secrets
 | `/api/admin/stop` | Snapshot and stop the sandbox |
 | `/api/admin/snapshot` | Snapshot and stop (same as stop for now) |
 | `/api/admin/snapshots/delete` | Delete a past snapshot from Vercel and local history (cannot delete current restore target) |
-| `/api/admin/channel-secrets` | Expose signing secrets for smoke-test webhook construction |
+| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch server-signed synthetic Slack/Telegram/Discord webhooks. Raw secrets are never returned. |
 | `/api/queues/channels/slack` | Private Vercel Queues consumer for Slack delivery (not publicly reachable on Vercel) |
 | `/api/queues/channels/telegram` | Private Vercel Queues consumer for Telegram delivery (not publicly reachable on Vercel) |
 | `/api/queues/channels/discord` | Private Vercel Queues consumer for Discord delivery (not publicly reachable on Vercel) |
@@ -455,7 +455,7 @@ These variables are checked by `buildDeploymentContract()` in `src/server/deploy
 | `UPSTASH_REDIS_REST_TOKEN` | All deployments | Required for persistent state. Paired with the URL above. |
 | `OPENCLAW_PACKAGE_SPEC` | All environments | Optional locally, **required on Vercel**. Defaults to `openclaw@latest` when unset in local dev. On Vercel deployments the deployment contract **fails** when unset or unpinned (e.g. `openclaw@latest`); the runtime still falls back to `openclaw@latest` with a warning log. Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox restores. |
 | `OPENCLAW_SANDBOX_VCPUS` | All environments | Optional. vCPU count for sandbox create and snapshot restore (valid: 1, 2, 4, 8; default: 1). Keep this fixed during benchmarks so restore timings stay comparable. |
-| `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | All environments | Optional. How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place; the new value becomes exact on the next create or restore. |
+| `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | All environments | Optional. How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place. If you increase this value, the next touch/heartbeat can top the sandbox timeout up to the new target. If you decrease it, the lower value becomes exact on the next create or restore. |
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode | Required for OAuth flow. |
 | `VERCEL_APP_CLIENT_SECRET` | `sign-in-with-vercel` mode | Required for OAuth flow. |
 | `SESSION_SECRET` | `sign-in-with-vercel` on Vercel | Required. Must be explicitly set — do not rely on silent derivation from the Upstash token. |
