@@ -1,4 +1,5 @@
 {
+  "regions": ["iad1"],
   "installCommand": "npm install",
   "crons": [
     { "path": "/api/cron/watchdog", "schedule": "*/5 * * * *" }
