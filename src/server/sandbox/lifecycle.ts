@@ -263,17 +263,41 @@ export async function stopSandbox(): Promise<SingleMeta> {
     }
 
     logInfo("sandbox.snapshotting", { sandboxId: meta.sandboxId });
-    const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
-    const snapshot = await sandbox.snapshot();
-    logInfo("sandbox.status_transition", { from: meta.status, to: "stopped", snapshotId: snapshot.snapshotId });
-    return mutateMeta((next) => {
-      recordSnapshotMetadata(next, snapshot.snapshotId, "stop");
-      next.sandboxId = null;
-      next.portUrls = null;
-      next.status = "stopped";
-      next.lastAccessedAt = Date.now();
-      next.lastError = null;
-    });
+    try {
+      const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+      const snapshot = await sandbox.snapshot();
+      logInfo("sandbox.status_transition", { from: meta.status, to: "stopped", snapshotId: snapshot.snapshotId });
+      return mutateMeta((next) => {
+        recordSnapshotMetadata(next, snapshot.snapshotId, "stop");
+        next.sandboxId = null;
+        next.portUrls = null;
+        next.status = "stopped";
+        next.lastAccessedAt = Date.now();
+        next.lastError = null;
+      });
+    } catch (err) {
+      // The sandbox may have already been stopped by the platform (timeout
+      // expiry, etc.).  The Vercel API returns 404 or 410 in this case.
+      // Mark as stopped using the existing snapshot if available so the
+      // next ensure can restore from it.
+      const message = err instanceof Error ? err.message : String(err);
+      const isGone = message.includes("404") || message.includes("410");
+      if (isGone && meta.snapshotId) {
+        logWarn("sandbox.stop.sandbox_already_gone", {
+          sandboxId: meta.sandboxId,
+          snapshotId: meta.snapshotId,
+          error: message,
+        });
+        return mutateMeta((next) => {
+          next.sandboxId = null;
+          next.portUrls = null;
+          next.status = "stopped";
+          next.lastAccessedAt = Date.now();
+          next.lastError = null;
+        });
+      }
+      throw err;
+    }
   });
 }
 
@@ -1201,8 +1225,12 @@ async function restoreSandboxFromSnapshot(
     // from the current values.  When no fresh credential is available do NOT
     // blank the existing .ai-gateway-api-key file — a stale token is better
     // than no token at all during restore.
+    //
+    // Reuse the credential resolved before sandbox.create() — calling
+    // getAiGatewayBearerTokenOptional() here would trigger a second OIDC
+    // round-trip (~5s), which was the main cost in tokenWriteMs.
     const tokenWriteStart = Date.now();
-    const freshApiKey = credential?.token ?? (await getAiGatewayBearerTokenOptional());
+    const freshApiKey = credential?.token;
     const latest = await getInitializedMeta();
 
     if (freshApiKey) {
