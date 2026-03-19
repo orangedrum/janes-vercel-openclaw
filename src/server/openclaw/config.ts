@@ -164,9 +164,9 @@ export function buildGatewayConfig(
 
   // OpenClaw reads the bot token from its config file on the sandbox filesystem.
   // The token is also written to a separate file (OPENCLAW_TELEGRAM_BOT_TOKEN_PATH)
-  // for the restore deleteWebhook script.  Neither file is logged or exposed
-  // via any API — they live only on the sandbox's restricted filesystem,
-  // consistent with how the gateway token and AI Gateway key are stored.
+  // so the sandbox has access to it for native Telegram handling.  Neither file
+  // is logged or exposed via any API — they live only on the sandbox's restricted
+  // filesystem, consistent with how the gateway token and AI Gateway key are stored.
   if (telegramBotToken) {
     config.channels = {
       telegram: {
@@ -282,10 +282,6 @@ if [ -n "$ai_gateway_api_key" ]; then
   export OPENAI_API_KEY="$ai_gateway_api_key"
   export OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1"
 fi
-tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
-if [ -n "$tg_token" ]; then
-  curl -sf "https://api.telegram.org/bot\${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
-fi
 pkill -f "openclaw.gateway" || true
 setsid env OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" OPENCLAW_GATEWAY_TOKEN="$gateway_token" AI_GATEWAY_API_KEY="$ai_gateway_api_key" OPENAI_API_KEY="$ai_gateway_api_key" OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1" ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &
 _learning_log=/tmp/shell-commands-for-learning.log
@@ -377,14 +373,12 @@ if [ "\$_ready_start" != "0" ] && [ "\$_ready_end" != "0" ]; then
 fi
 if [ "\$_ready" = "1" ]; then
   printf '{"ready":true,"attempts":%d,"readyMs":%d}\\n' "\$_attempts" "\$_ready_ms"
-  # Deferred post-ready work (fire-and-forget, non-blocking):
-  # - Telegram webhook delete: not needed for gateway boot, can be slow
-  # - Force-pair: skipped entirely — dangerouslyDisableDeviceAuth is true
-  #   and the snapshot already contains paired.json from initial bootstrap
-  tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
-  if [ -n "\$tg_token" ]; then
-    curl -sf --max-time 5 "https://api.telegram.org/bot\${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 &
-  fi
+  # Force-pair: skipped — dangerouslyDisableDeviceAuth is true
+  #   and the snapshot already contains paired.json from initial bootstrap.
+  # Telegram deleteWebhook: removed — the app's webhook route handles
+  #   incoming messages and forwards to the sandbox fast path when running.
+  #   Deleting the webhook here created a deadlock: no webhook → no messages
+  #   → no queue processing → reconciliation never re-registers the URL.
   echo '{"event":"fast_restore.complete"}' >&2
 else
   printf '{"ready":false,"attempts":%d,"readyMs":%d}\\n' "\$_attempts" "\$_ready_ms"
