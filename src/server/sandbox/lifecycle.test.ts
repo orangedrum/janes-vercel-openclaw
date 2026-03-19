@@ -2140,15 +2140,16 @@ test("[failure] restore failure from stopped state (fast-restore script fails)",
   });
 });
 
-test("[failure] restore failure when credential writeFiles fails", async () => {
+test("[failure] credential writeFiles failure does not block restore (env-based tokens)", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
-  // Make writeFiles throw on credential file paths
+  // Make writeFiles throw on credential file paths — this should be
+  // non-fatal because the gateway reads tokens from env vars passed at
+  // sandbox create time.
   let writeFilesCallCount = 0;
   fake.onWriteFiles = (files) => {
     writeFilesCallCount++;
-    // First writeFiles call during restore is the credential write
     if (writeFilesCallCount === 1 && files.some((f) => f.path.includes(".gateway-token"))) {
       throw new Error("writeFiles failed: permission denied");
     }
@@ -2180,8 +2181,9 @@ test("[failure] restore failure when credential writeFiles fails", async () => {
       await (scheduledCallback as () => Promise<void>)();
 
       const meta = await getInitializedMeta();
-      assert.equal(meta.status, "error", "Status should be error after writeFiles failure");
-      assert.ok(meta.lastError?.includes("writeFiles failed"), "lastError should mention writeFiles failure");
+      // Restore should succeed despite credential file write failure —
+      // the gateway uses env-provided tokens.
+      assert.equal(meta.status, "running", "Status should be running (env tokens used)");
     } finally {
       _setAiGatewayTokenOverrideForTesting(null);
       globalThis.fetch = originalFetch;

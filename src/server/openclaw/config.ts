@@ -318,15 +318,19 @@ fi
 export function buildFastRestoreScript(): string {
   return `#!/bin/bash
 set -euo pipefail
-gateway_token="$(cat "${OPENCLAW_GATEWAY_TOKEN_PATH}")"
+if [ -n "\${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+  gateway_token="$OPENCLAW_GATEWAY_TOKEN"
+else
+  gateway_token="$(cat "${OPENCLAW_GATEWAY_TOKEN_PATH}" 2>/dev/null || true)"
+fi
 if [ -z "$gateway_token" ]; then
   echo '{"event":"fast_restore.error","reason":"empty_gateway_token"}' >&2
   exit 1
 fi
-if [ -z "\${AI_GATEWAY_API_KEY:-}" ]; then
-  ai_gateway_api_key="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
-else
+if [ -n "\${AI_GATEWAY_API_KEY:-}" ]; then
   ai_gateway_api_key="$AI_GATEWAY_API_KEY"
+else
+  ai_gateway_api_key="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
 fi
 ai_gateway_base_url="https://ai-gateway.vercel.sh/v1"
 export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"

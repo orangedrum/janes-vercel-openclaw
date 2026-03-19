@@ -1203,6 +1203,21 @@ async function restoreSandboxFromSnapshot(
       meta.lastError = null;
     });
 
+    // Pass credentials via env at create time so the fast-restore script
+    // reads them from env instead of files.  This eliminates a separate
+    // writeFiles/runCommand round-trip (~5-9s) from the restore hot path.
+    const freshApiKey = credential?.token;
+    const latest = await getInitializedMeta();
+
+    const restoreEnv: Record<string, string> = {
+      OPENCLAW_GATEWAY_TOKEN: latest.gatewayToken,
+    };
+    if (freshApiKey) {
+      restoreEnv.AI_GATEWAY_API_KEY = freshApiKey;
+      restoreEnv.OPENAI_API_KEY = freshApiKey;
+      restoreEnv.OPENAI_BASE_URL = "https://ai-gateway.vercel.sh/v1";
+    }
+
     const sandboxCreateStart = Date.now();
     const sandbox = await getSandboxController().create({
       ports: SANDBOX_PORTS,
@@ -1212,7 +1227,7 @@ async function restoreSandboxFromSnapshot(
         type: "snapshot",
         snapshotId: current.snapshotId,
       },
-      ...(await buildRuntimeEnv()),
+      env: restoreEnv,
     });
     const sandboxCreateMs = Date.now() - sandboxCreateStart;
 
@@ -1221,34 +1236,25 @@ async function restoreSandboxFromSnapshot(
       meta.portUrls = resolvePortUrls(sandbox);
     });
 
-    // Write credential files via writeFiles() — a single SDK call that writes
-    // both tokens in one round-trip.  This replaces the prior approach of
-    // runCommand("sh", ...) which was 2-3s per API call.
-    //
-    // OIDC tokens rotate on every restore, so the read-then-compare
-    // optimization rarely helps and costs 2 extra API round-trips (~4-6s).
-    // Just write unconditionally via the batch file API.
+    // Credentials are passed via env at create time — the fast-restore
+    // script reads OPENCLAW_GATEWAY_TOKEN and AI_GATEWAY_API_KEY from env
+    // first, falling back to files.  File writes are only needed to persist
+    // tokens for subsequent startups within the same sandbox session (e.g.
+    // token refresh).  We still write them but overlap with other work below.
     const tokenWriteStart = Date.now();
-    const freshApiKey = credential?.token;
-    const latest = await getInitializedMeta();
-
-    if (freshApiKey) {
-      await sandbox.writeFiles([
+    // Fire-and-forget: write credential files for persistence, but don't
+    // block the restore hot path.  The gateway is already starting with
+    // env-provided tokens.
+    const credentialWritePromise = (async () => {
+      const files = [
         { path: OPENCLAW_GATEWAY_TOKEN_PATH, content: Buffer.from(latest.gatewayToken) },
-        { path: OPENCLAW_AI_GATEWAY_API_KEY_PATH, content: Buffer.from(freshApiKey) },
-      ]);
-    } else {
-      // No fresh API key — only write the gateway token, preserve
-      // whatever AI Gateway key the snapshot already has on disk.
-      logWarn("sandbox.restore.preserving_existing_ai_key", {
-        sandboxId: sandbox.sandboxId,
-        reason: "No fresh AI Gateway credential available",
-      });
-      await sandbox.writeFiles([
-        { path: OPENCLAW_GATEWAY_TOKEN_PATH, content: Buffer.from(latest.gatewayToken) },
-      ]);
-    }
-    const tokenWriteMs = Date.now() - tokenWriteStart;
+      ];
+      if (freshApiKey) {
+        files.push({ path: OPENCLAW_AI_GATEWAY_API_KEY_PATH, content: Buffer.from(freshApiKey) });
+      }
+      await sandbox.writeFiles(files);
+    })();
+    const tokenWriteMs = 0; // env-based — no blocking write on hot path
 
     // Sync restore assets — skip static files when the manifest hash matches.
     const assetSyncStart = Date.now();
@@ -1289,6 +1295,12 @@ async function restoreSandboxFromSnapshot(
     let localReadyMs = 0;
 
     await Promise.all([
+      // Persist credential files (non-blocking — gateway uses env tokens)
+      credentialWritePromise.catch((err) => {
+        logWarn("sandbox.restore.credential_write_failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }),
       (async () => {
         const t0 = Date.now();
         logInfo("sandbox.restore.fast_restore_start", { sandboxId: sandbox.sandboxId });
