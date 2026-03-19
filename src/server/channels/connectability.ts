@@ -10,7 +10,7 @@ import {
   type DeploymentRequirement,
 } from "@/server/deployment-contract";
 import { logInfo } from "@/server/log";
-import { buildPublicUrl } from "@/server/public-url";
+import { buildPublicDisplayUrl } from "@/server/public-url";
 
 const WEBHOOK_PATHS: Record<ChannelName, string> = {
   slack: "/api/channels/slack/webhook",
@@ -164,7 +164,7 @@ export async function buildChannelPrerequisite(
 
   if (!webhookUrl) {
     try {
-      webhookUrl = buildPublicUrl(WEBHOOK_PATHS[channel], request);
+      webhookUrl = buildPublicDisplayUrl(WEBHOOK_PATHS[channel], request);
     } catch {
       if (!hasIssue("public-origin")) {
         addIssue(issues, {

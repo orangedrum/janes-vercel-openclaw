@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { StatusBadge } from "@/components/ui/badge";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import type { StatusPayload, RunAction } from "@/components/admin-types";
@@ -50,17 +50,13 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
   const { confirm: confirmStop, dialogProps: stopDialogProps } = useConfirm();
   const { confirm: confirmSnapshot, dialogProps: snapshotDialogProps } =
     useConfirm();
-  const [optimisticStatus, setOptimisticStatus] = useState<string | null>(null);
-
-  // Clear optimistic override when server status actually changes
-  useEffect(() => {
-    if (optimisticStatus && status.status !== optimisticStatus) {
-      setOptimisticStatus(null);
-    }
-  }, [status.status, optimisticStatus]);
+  const [optimistic, setOptimistic] = useState<{
+    override: string;
+    whenServerWas: string;
+  } | null>(null);
 
   function handleRestart(): void {
-    setOptimisticStatus("restoring");
+    setOptimistic({ override: "restoring", whenServerWas: status.status });
     void runAction("/api/admin/ensure", {
       label: "Restart sandbox",
       method: "POST",
@@ -76,7 +72,7 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
       variant: "danger",
     });
     if (!ok) return;
-    setOptimisticStatus("stopping");
+    setOptimistic({ override: "stopping", whenServerWas: status.status });
     void runAction("/api/admin/stop", {
       label: "Stop sandbox",
       method: "POST",
@@ -91,14 +87,17 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
       confirmLabel: "Take snapshot",
     });
     if (!ok) return;
-    setOptimisticStatus("snapshotting");
+    setOptimistic({ override: "snapshotting", whenServerWas: status.status });
     void runAction("/api/admin/snapshot", {
       label: "Take snapshot",
       method: "POST",
     });
   }
 
-  const displayStatus = optimisticStatus ?? status.status;
+  const displayStatus =
+    optimistic && status.status === optimistic.whenServerWas
+      ? optimistic.override
+      : status.status;
   const showRestart = NEEDS_RESTART.has(displayStatus);
   const showRunningActions = displayStatus === "running";
   const isTransitional = IS_TRANSITIONAL.has(displayStatus);
@@ -137,6 +136,16 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
           <dt>Gateway</dt>
           <dd>{status.gatewayReady ? "Ready" : "Not ready"}</dd>
         </div>
+        <div>
+          <dt>Sleep after</dt>
+          <dd>{Math.round(status.sleepAfterMs / 60_000)}m</dd>
+        </div>
+        {status.timeoutRemainingMs != null && (
+          <div>
+            <dt>Timeout left</dt>
+            <dd>{Math.round(status.timeoutRemainingMs / 1000)}s</dd>
+          </div>
+        )}
         <div>
           <dt>Firewall</dt>
           <dd>{status.firewall.mode}</dd>

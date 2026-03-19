@@ -32,6 +32,9 @@ export type StatusPayload = {
   gatewayReady: boolean;
   gatewayUrl: string;
   lastError: string | null;
+  sleepAfterMs: number;
+  heartbeatIntervalMs: number;
+  timeoutRemainingMs: number | null;
   firewall: {
     mode: "disabled" | "learning" | "enforcing";
     allowlist: string[];

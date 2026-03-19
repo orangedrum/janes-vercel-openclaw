@@ -512,6 +512,27 @@ export function getAdminLaunchVerifyRoute(): LaunchVerifyRouteModule {
   return _adminLaunchVerifyRoute;
 }
 
+let _adminChannelSecretsRoute: SimpleRouteModule | null = null;
+let _authLoginRoute: SimpleRouteModule | null = null;
+
+export function getAdminChannelSecretsRoute(): SimpleRouteModule {
+  if (!_adminChannelSecretsRoute) {
+    patchNextServerAfter();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _adminChannelSecretsRoute = require("@/app/api/admin/channel-secrets/route") as SimpleRouteModule;
+  }
+  return _adminChannelSecretsRoute;
+}
+
+export function getAuthLoginRoute(): SimpleRouteModule {
+  if (!_authLoginRoute) {
+    patchNextServerAfter();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _authLoginRoute = require("@/app/api/auth/login/route") as SimpleRouteModule;
+  }
+  return _authLoginRoute;
+}
+
 let _slackManifestRoute: SimpleRouteModule | null = null;
 let _slackTestRoute: SimpleRouteModule | null = null;
 let _telegramPreviewRoute: SimpleRouteModule | null = null;

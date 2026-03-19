@@ -33,6 +33,7 @@ export type CreateParams = {
 
 export interface SandboxHandle {
   sandboxId: string;
+  readonly timeout: number;
   runCommand(
     command: string,
     args?: string[],
@@ -64,6 +65,9 @@ export interface SandboxController {
 function wrapSandbox(sandbox: Sandbox): SandboxHandle {
   return {
     sandboxId: sandbox.sandboxId,
+    get timeout() {
+      return sandbox.timeout;
+    },
     async runCommand(command, args, opts) {
       const result = await sandbox.runCommand(command, args ?? [], opts);
       return {

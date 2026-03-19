@@ -8,6 +8,7 @@ import {
 import { getInitializedMeta, getStore } from "@/server/store/store";
 import { getPublicChannelState } from "@/server/channels/state";
 import { computeWouldBlock } from "@/server/firewall/state";
+import { getSandboxSleepConfig } from "@/server/sandbox/timeout";
 import type { StatusPayload } from "@/components/admin-types";
 
 async function getInitialStatus(): Promise<StatusPayload | null> {
@@ -35,6 +36,8 @@ async function getInitialStatus(): Promise<StatusPayload | null> {
       },
     });
 
+    const sleepConfig = getSandboxSleepConfig();
+
     return {
       authMode,
       storeBackend: getStore().name,
@@ -45,6 +48,9 @@ async function getInitialStatus(): Promise<StatusPayload | null> {
       gatewayReady: false,
       gatewayUrl: "/gateway",
       lastError: meta.lastError,
+      sleepAfterMs: sleepConfig.sleepAfterMs,
+      heartbeatIntervalMs: sleepConfig.heartbeatIntervalMs,
+      timeoutRemainingMs: null,
       firewall: { ...meta.firewall, wouldBlock: computeWouldBlock(meta.firewall) },
       channels: await getPublicChannelState(syntheticRequest, meta),
       user: { sub: "admin", name: "Admin" },

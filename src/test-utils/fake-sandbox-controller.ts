@@ -14,6 +14,10 @@ import type {
   SandboxHandle,
   SnapshotResult,
 } from "@/server/sandbox/controller";
+import {
+  OPENCLAW_BIN,
+  OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
+} from "@/server/openclaw/config";
 
 // ---------------------------------------------------------------------------
 // Event log types
@@ -64,10 +68,17 @@ export class FakeSandboxHandle implements SandboxHandle {
    */
   responders: CommandResponder[] = [];
 
-  constructor(sandboxId: string, eventLog: SandboxEvent[]) {
+  private timeoutMs: number;
+
+  constructor(sandboxId: string, eventLog: SandboxEvent[], timeoutMs = 5 * 60 * 1000) {
     this.sandboxId = sandboxId;
     this.portDomain = `https://${sandboxId}`;
     this.eventLog = eventLog;
+    this.timeoutMs = timeoutMs;
+  }
+
+  get timeout(): number {
+    return this.timeoutMs;
   }
 
   async runCommand(command: string, args?: string[], _opts?: { signal?: AbortSignal }): Promise<CommandResult> {
@@ -87,6 +98,23 @@ export class FakeSandboxHandle implements SandboxHandle {
       }
     }
 
+    // Default: openclaw --version
+    if (command === OPENCLAW_BIN && args?.[0] === "--version") {
+      return { exitCode: 0, output: async () => "openclaw 1.2.3" };
+    }
+    // Default: fast-restore script with stream-aware output
+    if (command === "bash" && args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
+      const stdoutJson = '{"ready":true,"attempts":3,"readyMs":150}';
+      const stderrEvents = '{"event":"fast_restore.complete"}';
+      return {
+        exitCode: 0,
+        output: async (stream?: "stdout" | "stderr" | "both") => {
+          if (stream === "stdout") return stdoutJson;
+          if (stream === "stderr") return stderrEvents;
+          return `${stdoutJson}\n${stderrEvents}`;
+        },
+      };
+    }
     // Default: recognize the curl readiness probe used by waitForGatewayReady
     if (
       command === "curl" &&
@@ -135,12 +163,13 @@ export class FakeSandboxHandle implements SandboxHandle {
   }
 
   async extendTimeout(duration: number): Promise<void> {
+    this.timeoutMs += duration;
     this.extendedTimeouts.push(duration);
     this.eventLog.push({
       kind: "extend_timeout",
       sandboxId: this.sandboxId,
       timestamp: Date.now(),
-      detail: { duration },
+      detail: { duration, timeoutMs: this.timeoutMs },
     });
   }
 
@@ -168,6 +197,9 @@ export class FakeSandboxController implements SandboxController {
   /** Ordered event log shared across all handles. */
   events: SandboxEvent[] = [];
 
+  /** Default responders copied to every handle created by `create()`. */
+  defaultResponders: CommandResponder[] = [];
+
   private counter = 0;
   private delay: number;
   private _createFailure: Error | null = null;
@@ -193,7 +225,8 @@ export class FakeSandboxController implements SandboxController {
     this.counter += 1;
     const id = `sbx-fake-${this.counter}`;
     const isRestore = params.source?.type === "snapshot";
-    const handle = new FakeSandboxHandle(id, this.events);
+    const handle = new FakeSandboxHandle(id, this.events, params.timeout);
+    handle.responders.push(...this.defaultResponders);
     this.created.push(handle);
     this.handlesByIds.set(id, handle);
     this.events.push({

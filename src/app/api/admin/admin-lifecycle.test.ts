@@ -32,7 +32,6 @@ import {
   buildGetRequest,
   patchNextServerAfter,
   resetAfterCallbacks,
-  drainAfterCallbacks,
   pendingAfterCount,
 } from "@/test-utils/route-caller";
 
@@ -175,6 +174,7 @@ function makeFakeHandle(
   let snapCount = 0;
   return {
     sandboxId,
+    get timeout() { return 1800000; },
     async runCommand() {
       return { exitCode: 0, output: async () => "" };
     },

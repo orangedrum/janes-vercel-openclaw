@@ -35,7 +35,18 @@ import {
   getAdminSnapshotsRoute,
   getAdminLogsRoute,
   getGatewayRoute,
+  getAuthLoginRoute,
+  getAdminChannelSecretsRoute,
+  getFirewallRoute,
+  getFirewallDiagnosticsRoute,
+  getFirewallAllowlistRoute,
+  getFirewallPromoteRoute,
+  getFirewallLearnedRoute,
+  getFirewallReportRoute,
+  getAdminSshRoute,
+  getAdminSnapshotRoute,
 } from "@/test-utils/route-caller";
+import { _resetRateLimitForTesting } from "@/server/auth/rate-limit";
 
 // ---------------------------------------------------------------------------
 // Patch next/server before route modules are loaded
@@ -91,6 +102,7 @@ function withAdminAuthEnv(fn: () => Promise<void>): Promise<void> {
       }
     }
     _resetStoreForTesting();
+    _resetRateLimitForTesting();
     resetAfterCallbacks();
     _setSandboxControllerForTesting(null);
   });
@@ -481,5 +493,196 @@ test("Gateway: corrupted admin cookie returns 401 (not proxied HTML)", async () 
       !text.includes("token-should-not-leak"),
       "Token must not leak with corrupted cookie",
     );
+  });
+});
+
+// ===========================================================================
+// 11. Login rate limiting
+// ===========================================================================
+
+test("auth/login: repeated invalid attempts trigger 429 rate limit", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAuthLoginRoute();
+
+    // Send 11 requests with a deterministic caller key (> default limit of 10)
+    for (let i = 0; i < 10; i++) {
+      const request = buildPostRequest(
+        "/api/auth/login",
+        JSON.stringify({ secret: "wrong-secret" }),
+        { "x-forwarded-for": "10.0.0.99" },
+      );
+      const result = await callRoute(route.POST!, request);
+      // First 10 should be 401 (wrong secret, but within rate limit)
+      assert.equal(
+        result.status,
+        401,
+        `Attempt ${i + 1}: expected 401, got ${result.status}`,
+      );
+    }
+
+    // 11th attempt should be rate-limited
+    const blockedRequest = buildPostRequest(
+      "/api/auth/login",
+      JSON.stringify({ secret: "wrong-secret" }),
+      { "x-forwarded-for": "10.0.0.99" },
+    );
+    const blockedResult = await callRoute(route.POST!, blockedRequest);
+    assert.equal(blockedResult.status, 429, `Expected 429, got ${blockedResult.status}`);
+    const body = blockedResult.json as { error: string; retryAfterMs: number };
+    assert.equal(body.error, "RATE_LIMITED");
+    assert.ok(typeof body.retryAfterMs === "number" && body.retryAfterMs > 0);
+
+    // Verify Retry-After header is set
+    const retryAfter = blockedResult.response.headers.get("Retry-After");
+    assert.ok(retryAfter, "Retry-After header should be present");
+  });
+});
+
+test("auth/login: different caller keys have independent rate limits", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAuthLoginRoute();
+
+    // Exhaust rate limit for IP A
+    for (let i = 0; i < 10; i++) {
+      const request = buildPostRequest(
+        "/api/auth/login",
+        JSON.stringify({ secret: "wrong" }),
+        { "x-forwarded-for": "10.0.0.1" },
+      );
+      await callRoute(route.POST!, request);
+    }
+
+    // IP A should be blocked
+    const blockedA = buildPostRequest(
+      "/api/auth/login",
+      JSON.stringify({ secret: "wrong" }),
+      { "x-forwarded-for": "10.0.0.1" },
+    );
+    const resultA = await callRoute(route.POST!, blockedA);
+    assert.equal(resultA.status, 429);
+
+    // IP B should still be allowed
+    const requestB = buildPostRequest(
+      "/api/auth/login",
+      JSON.stringify({ secret: "wrong" }),
+      { "x-forwarded-for": "10.0.0.2" },
+    );
+    const resultB = await callRoute(route.POST!, requestB);
+    assert.equal(resultB.status, 401, "Different IP should not be rate limited");
+  });
+});
+
+test("auth/login: valid login still works within rate limit", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAuthLoginRoute();
+    const request = buildPostRequest(
+      "/api/auth/login",
+      JSON.stringify({ secret: "test-admin-secret-for-scenarios" }),
+      { "x-forwarded-for": "10.0.0.50" },
+    );
+    const result = await callRoute(route.POST!, request);
+    assert.equal(result.status, 200, `Expected 200, got ${result.status}`);
+    const body = result.json as { ok: boolean };
+    assert.equal(body.ok, true);
+
+    // Check Set-Cookie header
+    const setCookie = result.response.headers.get("Set-Cookie");
+    assert.ok(setCookie, "Should set session cookie on successful login");
+  });
+});
+
+// ===========================================================================
+// 12. Admin and firewall route auth-gate sweep
+// ===========================================================================
+
+test("route auth sweep: all admin and firewall GET routes reject unauthenticated requests", async () => {
+  await withAdminAuthEnv(async () => {
+    const controller = new FakeSandboxController();
+    _setSandboxControllerForTesting(controller);
+
+    type RouteSpec = {
+      name: string;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      getRoute: () => any;
+      method: "GET";
+      path: string;
+    };
+
+    const routes: RouteSpec[] = [
+      { name: "admin/snapshots", getRoute: getAdminSnapshotsRoute, method: "GET", path: "/api/admin/snapshots" },
+      { name: "admin/logs", getRoute: getAdminLogsRoute, method: "GET", path: "/api/admin/logs" },
+      { name: "admin/ssh", getRoute: getAdminSshRoute, method: "GET", path: "/api/admin/ssh" },
+      { name: "status", getRoute: getStatusRoute, method: "GET", path: "/api/status" },
+      { name: "firewall", getRoute: getFirewallRoute, method: "GET", path: "/api/firewall" },
+      { name: "firewall/diagnostics", getRoute: getFirewallDiagnosticsRoute, method: "GET", path: "/api/firewall/diagnostics" },
+      { name: "firewall/allowlist", getRoute: getFirewallAllowlistRoute, method: "GET", path: "/api/firewall/allowlist" },
+      { name: "firewall/learned", getRoute: getFirewallLearnedRoute, method: "GET", path: "/api/firewall/learned" },
+      { name: "firewall/report", getRoute: getFirewallReportRoute, method: "GET", path: "/api/firewall/report" },
+    ];
+
+    for (const spec of routes) {
+      const route = spec.getRoute();
+      if (!route[spec.method]) continue;
+      const request = buildGetRequest(spec.path);
+      const result = await callRoute(route[spec.method]!, request);
+      assert.equal(
+        result.status,
+        401,
+        `${spec.name} ${spec.method}: expected 401, got ${result.status}`,
+      );
+    }
+  });
+});
+
+test("route auth sweep: all admin mutation routes reject unauthenticated requests", async () => {
+  await withAdminAuthEnv(async () => {
+    const controller = new FakeSandboxController();
+    _setSandboxControllerForTesting(controller);
+
+    type MutationSpec = {
+      name: string;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      getRoute: () => any;
+      method: "POST" | "PUT" | "DELETE";
+      path: string;
+    };
+
+    const routes: MutationSpec[] = [
+      { name: "admin/ensure", getRoute: getAdminEnsureRoute, method: "POST", path: "/api/admin/ensure" },
+      { name: "admin/snapshot", getRoute: getAdminSnapshotRoute, method: "POST", path: "/api/admin/snapshot" },
+      { name: "admin/channel-secrets PUT", getRoute: getAdminChannelSecretsRoute, method: "PUT", path: "/api/admin/channel-secrets" },
+      { name: "admin/channel-secrets POST", getRoute: getAdminChannelSecretsRoute, method: "POST", path: "/api/admin/channel-secrets" },
+      { name: "admin/channel-secrets DELETE", getRoute: getAdminChannelSecretsRoute, method: "DELETE", path: "/api/admin/channel-secrets" },
+      { name: "firewall/promote", getRoute: getFirewallPromoteRoute, method: "POST", path: "/api/firewall/promote" },
+    ];
+
+    for (const spec of routes) {
+      const route = spec.getRoute();
+      if (!route[spec.method]) continue;
+
+      // Mutation without bearer — CSRF check fires first → 403
+      let request: Request;
+      if (spec.method === "PUT") {
+        request = new Request(`http://localhost:3000${spec.path}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+      } else if (spec.method === "DELETE") {
+        request = new Request(`http://localhost:3000${spec.path}`, {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+      } else {
+        request = buildPostRequest(spec.path, "{}");
+      }
+
+      const result = await callRoute(route[spec.method]!, request);
+      assert.ok(
+        result.status === 401 || result.status === 403,
+        `${spec.name}: expected 401 or 403, got ${result.status}`,
+      );
+    }
   });
 });

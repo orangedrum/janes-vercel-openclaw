@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "generatedAt": "2026-03-19T03:46:26.059Z",
+  "roots": [
+    "src/app/api/admin",
+    "src/app/api/firewall"
+  ],
+  "routes": [
+    {
+      "method": "DELETE",
+      "path": "/api/admin/channel-secrets"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/firewall/allowlist"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/firewall/learned"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/channels/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/launch-verify"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/preflight"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/snapshots"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/watchdog"
+    },
+    {
+      "method": "GET",
+      "path": "/api/firewall"
+    },
+    {
+      "method": "GET",
+      "path": "/api/firewall/diagnostics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/firewall/report"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/channel-secrets"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/ensure"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/launch-verify"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/snapshots"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/snapshots/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/snapshots/restore"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/ssh"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/watchdog"
+    },
+    {
+      "method": "POST",
+      "path": "/api/firewall/allowlist"
+    },
+    {
+      "method": "POST",
+      "path": "/api/firewall/ingest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/firewall/promote"
+    },
+    {
+      "method": "POST",
+      "path": "/api/firewall/sync"
+    },
+    {
+      "method": "POST",
+      "path": "/api/firewall/test"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/channel-secrets"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/firewall"
+    }
+  ]
+}

@@ -12,7 +12,7 @@ import { buildChannelConnectability } from "@/server/channels/connectability";
 import {
   isPublicUrl,
 } from "@/server/channels/discord/application";
-import { buildPublicUrl } from "@/server/public-url";
+import { buildPublicUrl, buildPublicDisplayUrl } from "@/server/public-url";
 import { getInitializedMeta, mutateMeta } from "@/server/store/store";
 
 export type PublicSlackState = {
@@ -96,34 +96,36 @@ export async function getPublicChannelState(
       getChannelQueueDepth("discord"),
     ]);
 
-  const slackWebhookUrl = buildSlackWebhookUrl(request);
-  const telegramWebhookUrl = buildTelegramWebhookUrl(request);
-  const discordWebhookUrl = buildDiscordPublicWebhookUrl(request);
-  const discordPublic = isPublicUrl(discordWebhookUrl);
+  // Display URLs (without bypass secret) — safe for admin-visible state
+  const slackDisplayUrl = buildPublicDisplayUrl("/api/channels/slack/webhook", request);
+  const telegramDisplayUrl = buildPublicDisplayUrl("/api/channels/telegram/webhook", request);
+  const discordDisplayUrl = buildPublicDisplayUrl("/api/channels/discord/webhook", request);
+
+  const discordPublic = isPublicUrl(discordDisplayUrl);
 
   const [slackConnectability, telegramConnectability, discordConnectability] =
     await Promise.all([
-      buildChannelConnectability("slack", request, slackWebhookUrl),
-      buildChannelConnectability("telegram", request, telegramWebhookUrl),
-      buildChannelConnectability("discord", request, discordWebhookUrl),
+      buildChannelConnectability("slack", request, slackDisplayUrl),
+      buildChannelConnectability("telegram", request, telegramDisplayUrl),
+      buildChannelConnectability("discord", request, discordDisplayUrl),
     ]);
 
   return {
     slack: toPublicSlackState(
       resolvedMeta.channels.slack,
-      slackWebhookUrl,
+      slackDisplayUrl,
       slackQueueDepth,
       slackConnectability,
     ),
     telegram: toPublicTelegramState(
       resolvedMeta.channels.telegram,
-      telegramWebhookUrl,
+      telegramDisplayUrl,
       telegramQueueDepth,
       telegramConnectability,
     ),
     discord: toPublicDiscordState(
       resolvedMeta.channels.discord,
-      discordWebhookUrl,
+      discordDisplayUrl,
       discordQueueDepth,
       discordPublic,
       discordConnectability,

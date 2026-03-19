@@ -388,7 +388,7 @@ Supported modes:
 - `admin-secret` (default)
 - `sign-in-with-vercel` (optional)
 
-The app uses admin-secret auth by default. An admin secret is auto-generated and stored in Upstash (zero-config). The secret is revealed once via `/api/setup` and exchanged for an encrypted session cookie via `/api/auth/login`.
+The app uses admin-secret auth by default. Operators set `ADMIN_SECRET` as an environment variable and exchange it for an encrypted session cookie via `/api/auth/login`. In local development, a secret is auto-generated and stored in the memory store if `ADMIN_SECRET` is not set. The `/api/setup` endpoint is sealed on Vercel deployments (returns 410).
 
 Notes:
 
@@ -455,6 +455,7 @@ These variables are checked by `buildDeploymentContract()` in `src/server/deploy
 | `UPSTASH_REDIS_REST_TOKEN` | All deployments | Required for persistent state. Paired with the URL above. |
 | `OPENCLAW_PACKAGE_SPEC` | All environments | Optional locally, **required on Vercel**. Defaults to `openclaw@latest` when unset in local dev. On Vercel deployments the deployment contract **fails** when unset or unpinned (e.g. `openclaw@latest`); the runtime still falls back to `openclaw@latest` with a warning log. Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox restores. |
 | `OPENCLAW_SANDBOX_VCPUS` | All environments | Optional. vCPU count for sandbox create and snapshot restore (valid: 1, 2, 4, 8; default: 1). Keep this fixed during benchmarks so restore timings stay comparable. |
+| `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | All environments | Optional. How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place; the new value becomes exact on the next create or restore. |
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode | Required for OAuth flow. |
 | `VERCEL_APP_CLIENT_SECRET` | `sign-in-with-vercel` mode | Required for OAuth flow. |
 | `SESSION_SECRET` | `sign-in-with-vercel` on Vercel | Required. Must be explicitly set — do not rely on silent derivation from the Upstash token. |

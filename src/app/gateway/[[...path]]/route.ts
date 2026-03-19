@@ -21,6 +21,7 @@ import {
   reconcileSandboxHealth,
   touchRunningSandbox,
 } from "@/server/sandbox/lifecycle";
+import { getSandboxHeartbeatIntervalMs } from "@/server/sandbox/timeout";
 
 export const maxDuration = 300;
 
@@ -243,6 +244,7 @@ async function handleProxy(request: Request, path: string): Promise<Response> {
     const modifiedHtml = injectWrapperScript(html, {
       sandboxOrigin,
       gatewayToken: meta.gatewayToken,
+      heartbeatIntervalMs: getSandboxHeartbeatIntervalMs(),
     });
 
     return withSetCookie(

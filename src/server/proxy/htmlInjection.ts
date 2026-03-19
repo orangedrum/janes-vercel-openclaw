@@ -3,6 +3,7 @@ import { logDebug } from "@/server/log";
 type WrapperContext = {
   sandboxOrigin: string;
   gatewayToken: string;
+  heartbeatIntervalMs: number;
 };
 
 function escapeForInlineScriptJson(value: unknown): string {
@@ -24,6 +25,7 @@ function buildInterceptorScript(context: WrapperContext): string {
   const encodedContext = escapeForInlineScriptJson({
     sandboxOrigin: context.sandboxOrigin,
     gatewayToken: context.gatewayToken,
+    heartbeatIntervalMs: context.heartbeatIntervalMs,
   });
 
   return `<script>
@@ -32,7 +34,7 @@ function buildInterceptorScript(context: WrapperContext): string {
   var SANDBOX_ORIGIN = CONTEXT.sandboxOrigin;
   var GATEWAY_TOKEN = CONTEXT.gatewayToken;
   var TOUCH_URL = '/api/status';
-  var HEARTBEAT_INTERVAL_MS = 4 * 60 * 1000;
+  var HEARTBEAT_INTERVAL_MS = CONTEXT.heartbeatIntervalMs;
   var openSocketCount = 0;
   var heartbeatIntervalId = null;
   var heartbeatInFlight = false;

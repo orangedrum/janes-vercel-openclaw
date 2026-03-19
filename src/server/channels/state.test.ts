@@ -450,3 +450,113 @@ test("[regression] buildDiscordPublicWebhookUrl includes bypass secret when avai
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// Security: admin-visible channel state never exposes bypass secret
+// ---------------------------------------------------------------------------
+
+test("[security] getPublicChannelState webhook URLs never contain bypass secret", async () => {
+  await withHarness(async (h) => {
+    await withEnv(
+      {
+        VERCEL_AUTOMATION_BYPASS_SECRET: "super-secret-bypass",
+        NEXT_PUBLIC_APP_URL: "https://app.example.com",
+        NEXT_PUBLIC_BASE_DOMAIN: undefined,
+        BASE_DOMAIN: undefined,
+      },
+      async () => {
+        const meta = await h.getMeta();
+        const state = await getPublicChannelState(makeRequest(), meta);
+
+        // No webhook URL in admin state should contain the bypass secret
+        assert.ok(
+          !state.slack.webhookUrl.includes("super-secret-bypass"),
+          "slack webhookUrl must not contain bypass secret",
+        );
+        assert.ok(
+          !state.slack.webhookUrl.includes("x-vercel-protection-bypass"),
+          "slack webhookUrl must not contain bypass param",
+        );
+
+        assert.ok(
+          !state.discord.webhookUrl.includes("super-secret-bypass"),
+          "discord webhookUrl must not contain bypass secret",
+        );
+
+        // Telegram returns null when not configured, check when configured
+        await h.mutateMeta((m) => {
+          m.channels.telegram = {
+            botToken: "tg-bot-token",
+            webhookSecret: "tg-webhook-secret",
+            webhookUrl: "https://app.example.com/api/channels/telegram/webhook",
+            botUsername: "test_bot",
+            configuredAt: Date.now(),
+          };
+        });
+        const meta2 = await h.getMeta();
+        const state2 = await getPublicChannelState(makeRequest(), meta2);
+        assert.ok(state2.telegram.webhookUrl, "telegram should have webhookUrl when configured");
+        assert.ok(
+          !state2.telegram.webhookUrl!.includes("super-secret-bypass"),
+          "telegram webhookUrl must not contain bypass secret",
+        );
+      },
+    );
+  });
+});
+
+test("[security] connectability.webhookUrl never contains bypass secret", async () => {
+  await withHarness(async (h) => {
+    await withEnv(
+      {
+        VERCEL_AUTOMATION_BYPASS_SECRET: "super-secret-bypass",
+        NEXT_PUBLIC_APP_URL: "https://app.example.com",
+        NEXT_PUBLIC_BASE_DOMAIN: undefined,
+        BASE_DOMAIN: undefined,
+      },
+      async () => {
+        const meta = await h.getMeta();
+        const state = await getPublicChannelState(makeRequest(), meta);
+
+        // Connectability webhookUrl must not leak the bypass secret
+        assert.ok(
+          !state.slack.connectability.webhookUrl?.includes("super-secret-bypass"),
+          "slack connectability.webhookUrl must not contain bypass secret",
+        );
+        assert.ok(
+          !state.slack.connectability.webhookUrl?.includes("x-vercel-protection-bypass"),
+          "slack connectability.webhookUrl must not contain bypass param",
+        );
+
+        assert.ok(
+          !state.discord.connectability.webhookUrl?.includes("super-secret-bypass"),
+          "discord connectability.webhookUrl must not contain bypass secret",
+        );
+
+        assert.ok(
+          !state.telegram.connectability.webhookUrl?.includes("super-secret-bypass"),
+          "telegram connectability.webhookUrl must not contain bypass secret",
+        );
+      },
+    );
+  });
+});
+
+test("[security] delivery URLs still contain bypass secret for actual registration", async () => {
+  await withEnv(
+    {
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      NEXT_PUBLIC_BASE_DOMAIN: undefined,
+      BASE_DOMAIN: undefined,
+    },
+    () => {
+      // These builder functions are used for registration/delivery — they should keep the secret
+      const slackUrl = buildSlackWebhookUrl(makeRequest());
+      assert.ok(
+        slackUrl.includes("x-vercel-protection-bypass=bypass-secret"),
+        "delivery URL must still include bypass secret",
+      );
+    },
+  );
+});

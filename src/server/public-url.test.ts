@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPublicUrl, getPublicOrigin } from "@/server/public-url";
+import { buildPublicUrl, buildPublicDisplayUrl, getPublicOrigin } from "@/server/public-url";
 
 function withEnv<T>(
   patch: Record<string, string | undefined>,
@@ -199,6 +199,62 @@ test("getPublicOrigin falls back to x-forwarded-host header", () => {
       });
 
       assert.equal(getPublicOrigin(request), "https://preview.example.com");
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// buildPublicDisplayUrl — never exposes bypass secret
+// ---------------------------------------------------------------------------
+
+test("buildPublicDisplayUrl omits bypass secret even when configured", () => {
+  withEnv(
+    {
+      VERCEL_AUTH_MODE: "admin-secret",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      NEXT_PUBLIC_APP_URL: "https://openclaw.example.com",
+    },
+    () => {
+      const url = buildPublicDisplayUrl("/api/channels/slack/webhook");
+      assert.equal(
+        url,
+        "https://openclaw.example.com/api/channels/slack/webhook",
+      );
+      assert.ok(
+        !url.includes("bypass-secret"),
+        "display URL must not contain the bypass secret",
+      );
+    },
+  );
+});
+
+test("buildPublicDisplayUrl returns same origin as buildPublicUrl", () => {
+  withEnv(
+    {
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      NEXT_PUBLIC_APP_URL: "https://openclaw.example.com",
+    },
+    () => {
+      const display = buildPublicDisplayUrl("/api/channels/slack/webhook");
+      const delivery = buildPublicUrl("/api/channels/slack/webhook");
+      const displayOrigin = new URL(display).origin;
+      const deliveryOrigin = new URL(delivery).origin;
+      assert.equal(displayOrigin, deliveryOrigin);
+    },
+  );
+});
+
+test("buildPublicDisplayUrl works when no bypass secret is set", () => {
+  withEnv(
+    {
+      VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
+      NEXT_PUBLIC_APP_URL: "https://openclaw.example.com",
+    },
+    () => {
+      assert.equal(
+        buildPublicDisplayUrl("/api/channels/discord/webhook"),
+        "https://openclaw.example.com/api/channels/discord/webhook",
+      );
     },
   );
 });

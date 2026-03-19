@@ -27,9 +27,9 @@ That's it. AI Gateway auth is handled automatically via OIDC — no API keys nee
 
 ## First visit
 
-1. Open your new deployment.
-2. Go to `/api/setup` — this reveals a one-time admin secret.
-3. Copy the secret and use it to log in from the main page.
+1. Set `ADMIN_SECRET` in your Vercel project's environment variables (Settings → Environment Variables). Use a strong, random value.
+2. Open your new deployment.
+3. Use that secret to log in from the main page.
 4. The app will create your sandbox automatically on first use.
 
 ## What you can do
@@ -60,6 +60,7 @@ By default the app installs `openclaw@latest`, which is non-deterministic across
 | -------- | ------- |
 | `OPENCLAW_PACKAGE_SPEC` | Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox restores and comparable benchmarks. When unset, the runtime falls back to `openclaw@latest` but the deployment contract fails on Vercel. |
 | `OPENCLAW_SANDBOX_VCPUS` | vCPU count for sandbox create/restore (1, 2, 4, or 8; default: 1). Keep fixed during benchmarks. |
+| `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place; the new value becomes exact on the next create or restore. |
 
 ## Optional: override the public origin
 

@@ -1,6 +1,8 @@
 import {
   getAuthMode,
+  isVercelDeployment,
 } from "@/server/env";
+import { getConfiguredAdminSecret } from "@/server/auth/admin-secret";
 import { isPublicUrl } from "@/server/channels/discord/application";
 import { buildChannelPrerequisiteReport } from "@/server/channels/connectability";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
@@ -30,7 +32,8 @@ export type PreflightCheckId =
   | "ai-gateway"
   | "drain-recovery"
   | "openclaw-package-spec"
-  | "auth-config";
+  | "auth-config"
+  | "bootstrap-exposure";
 
 export type PreflightActionId =
   | "configure-public-origin"
@@ -269,6 +272,53 @@ function buildNextSteps(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Bootstrap exposure check — proves /api/setup is sealed on deployed envs.
+// ---------------------------------------------------------------------------
+
+async function buildBootstrapExposureCheck(): Promise<PreflightCheck & { details: Record<string, unknown> }> {
+  if (isVercelDeployment()) {
+    logInfo("deploy_preflight.bootstrap_exposure", {
+      deployed: true,
+      setupEndpointStatus: 410,
+      setupEndpointError: "SETUP_ENDPOINT_SEALED",
+    });
+    return {
+      id: "bootstrap-exposure",
+      status: "pass",
+      message: "GET /api/setup is sealed on deployed environments.",
+      details: {
+        deployed: true,
+        setupEndpoint: {
+          status: 410,
+          error: "SETUP_ENDPOINT_SEALED",
+        },
+      },
+    };
+  }
+
+  const configured = await getConfiguredAdminSecret();
+  logInfo("deploy_preflight.bootstrap_exposure", {
+    deployed: false,
+    secretSource: configured?.source ?? null,
+  });
+  return {
+    id: "bootstrap-exposure",
+    status: "pass",
+    message:
+      configured?.source === "generated"
+        ? "Local development may reveal a generated admin secret when ADMIN_SECRET is unset."
+        : "Local development uses ADMIN_SECRET from the environment.",
+    details: {
+      deployed: false,
+      setupEndpoint: {
+        status: configured ? 200 : 503,
+        source: configured?.source ?? null,
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Launch-verify blocking helper — canonical source of truth for deciding
 // which preflight failures abort runtime phases.
 // ---------------------------------------------------------------------------
@@ -385,6 +435,8 @@ export async function buildDeployPreflight(
       ? "warn"
       : "pass";
 
+  const bootstrapCheck = await buildBootstrapExposureCheck();
+
   const checks: PreflightCheck[] = [
     // public-origin — derived from contract (warn locally, fail on Vercel)
     {
@@ -451,6 +503,7 @@ export async function buildDeployPreflight(
           },
         ]
       : []),
+    bootstrapCheck,
   ];
 
   const actions = buildActions({

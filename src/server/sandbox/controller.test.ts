@@ -174,6 +174,39 @@ test("controller: FakeSandboxController.eventsOfKind filters correctly", async (
   assert.equal(controller.eventsOfKind("snapshot").length, 1);
 });
 
+test("controller: FakeSandboxHandle preserves create-time timeout", async () => {
+  const events: SandboxEvent[] = [];
+  const handle = new FakeSandboxHandle("sbx-timeout", events, 300_000);
+
+  assert.equal(handle.timeout, 300_000, "initial timeout should match create param");
+});
+
+test("controller: FakeSandboxHandle.extendTimeout is additive", async () => {
+  const events: SandboxEvent[] = [];
+  const handle = new FakeSandboxHandle("sbx-ext", events, 300_000);
+
+  await handle.extendTimeout(60_000);
+  assert.equal(handle.timeout, 360_000, "timeout should increase by extension duration");
+
+  await handle.extendTimeout(30_000);
+  assert.equal(handle.timeout, 390_000, "second extension should be additive");
+  assert.deepEqual(handle.extendedTimeouts, [60_000, 30_000]);
+});
+
+test("controller: FakeSandboxController.create passes timeout to handle", async () => {
+  const controller = new FakeSandboxController();
+  const handle = await controller.create({ timeout: 600_000 });
+
+  assert.equal(handle.timeout, 600_000, "handle should have the timeout from create params");
+});
+
+test("controller: FakeSandboxController.create uses default timeout when unset", async () => {
+  const controller = new FakeSandboxController();
+  const handle = await controller.create({});
+
+  assert.equal(handle.timeout, 5 * 60 * 1000, "default should be 5 minutes");
+});
+
 test("controller: type exports are accessible", () => {
   // Compile-time check — these types should be importable
   const _params: CreateParams = { ports: [3000] };

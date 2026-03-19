@@ -5,7 +5,6 @@ import { getStore } from "@/server/store/store";
 
 const GENERATED_ADMIN_SECRET_BYTES = 32;
 const ADMIN_SECRET_KEY = "openclaw-single:admin-secret";
-const ADMIN_SECRET_REVEALED_KEY = "openclaw-single:admin-secret-revealed";
 
 export type ConfiguredAdminSecret = {
   source: "env" | "generated";
@@ -90,37 +89,6 @@ export async function getConfiguredAdminSecret(): Promise<ConfiguredAdminSecret 
   }
 
   return { source: "generated", secret: generated };
-}
-
-/**
- * Reveal the admin secret exactly once for initial setup.
- * Returns the secret on first call, `{ revealed: true }` on subsequent calls,
- * or null if ADMIN_SECRET env var is set (secret is already known).
- */
-export async function revealAdminSecretOnce(): Promise<
-  | { source: "env" }
-  | { source: "generated"; secret: string }
-  | { source: "generated"; revealed: true }
-  | null
-> {
-  const configured = await getConfiguredAdminSecret();
-  if (!configured) {
-    return null;
-  }
-
-  if (configured.source === "env") {
-    return { source: "env" };
-  }
-
-  const store = getStore();
-  const existing = await store.getValue<string>(ADMIN_SECRET_REVEALED_KEY);
-  if (existing) {
-    return { source: "generated", revealed: true };
-  }
-
-  // Mark as revealed (first caller wins)
-  await store.setValue(ADMIN_SECRET_REVEALED_KEY, "1");
-  return { source: "generated", secret: configured.secret };
 }
 
 export function _resetAdminSecretCacheForTesting(): void {

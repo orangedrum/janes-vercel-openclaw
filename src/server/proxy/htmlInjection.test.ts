@@ -9,6 +9,7 @@ const SIMPLE_HTML = `<!DOCTYPE html>
 const CONTEXT = {
   sandboxOrigin: "https://sbx-123.vercel.run",
   gatewayToken: "gw-token-abc",
+  heartbeatIntervalMs: 240_000,
 };
 
 test("injects script tag into <head>", () => {
@@ -57,6 +58,7 @@ test("escapes < in JSON context to prevent XSS via script breakout", () => {
   const xssContext = {
     sandboxOrigin: "https://example.com",
     gatewayToken: "</script><script>alert(1)</script>",
+    heartbeatIntervalMs: 240_000,
   };
   const result = injectWrapperScript(SIMPLE_HTML, xssContext);
   // The literal </script> must not appear unescaped inside the injected script
@@ -153,6 +155,7 @@ test("unauthenticated context: empty token produces valid script with empty stri
   const emptyTokenContext = {
     sandboxOrigin: "https://sbx-123.vercel.run",
     gatewayToken: "",
+    heartbeatIntervalMs: 240_000,
   };
   const result = injectWrapperScript(SIMPLE_HTML, emptyTokenContext);
   // Script should still be injected (the proxy decides whether to call injection)

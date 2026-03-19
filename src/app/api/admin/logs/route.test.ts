@@ -141,6 +141,7 @@ test("GET /api/admin/logs: sandbox log parsing prefers top-level source over ctx
       async get() {
         return {
           sandboxId: "sandbox-123",
+          get timeout() { return 1800000; },
           async runCommand() {
             return {
               exitCode: 0,

@@ -188,7 +188,7 @@ test("fails with multiple issues when store and OIDC are missing on Vercel", asy
   );
 });
 
-test("webhook URL includes bypass query param when bypass secret is set", async () => {
+test("webhook URL never includes bypass secret even when bypass secret is set", async () => {
   process.env.VERCEL = "1";
   process.env.VERCEL_AUTH_MODE = "admin-secret";
   process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
@@ -210,8 +210,9 @@ test("webhook URL includes bypass query param when bypass secret is set", async 
   assert.equal(webhookUrl.hostname, "openclaw.example");
   assert.equal(webhookUrl.pathname, "/api/channels/telegram/webhook");
   assert.equal(
-    webhookUrl.searchParams.get("x-vercel-protection-bypass"),
-    "bypass-secret",
+    webhookUrl.searchParams.has("x-vercel-protection-bypass"),
+    false,
+    "connectability webhookUrl must never expose the bypass secret",
   );
 });
 

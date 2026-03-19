@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { NetworkPolicy } from "@vercel/sandbox";
 import type { SingleMeta } from "@/shared/types";
 
 import {
@@ -22,11 +21,6 @@ import {
 } from "@/server/sandbox/timeout";
 import {
   _setSandboxControllerForTesting,
-  type CommandResult,
-  type CreateParams,
-  type SandboxController,
-  type SandboxHandle,
-  type SnapshotResult,
 } from "@/server/sandbox/controller";
 import {
   _resetStoreForTesting,
@@ -46,160 +40,14 @@ import {
   OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
 } from "@/server/openclaw/config";
-
-// ---------------------------------------------------------------------------
-// FakeSandboxController
-// ---------------------------------------------------------------------------
-
-type FakeOptions = {
-  /** Delay in ms for create/get/snapshot (default 0) */
-  delay?: number;
-  /** What probeGatewayReady's fetch will see. Null = throw. */
-  gatewayHtml?: string | null;
-};
-
-type CommandHandler = (
-  cmd: string,
-  args?: string[],
-) => { exitCode: number; output: string };
-
-class FakeSandboxHandle implements SandboxHandle {
-  sandboxId: string;
-  commands: Array<{ cmd: string; args?: string[] }> = [];
-  writtenFiles: Array<{ path: string; content: Buffer }> = [];
-  networkPolicies: NetworkPolicy[] = [];
-  extendedTimeouts: number[] = [];
-  snapshotCalled = false;
-  commandHandler: CommandHandler | null = null;
-  private timeoutMs: number;
-
-  constructor(sandboxId: string, timeoutMs = 30 * 60 * 1000) {
-    this.sandboxId = sandboxId;
-    this.timeoutMs = timeoutMs;
-  }
-
-  get timeout(): number {
-    return this.timeoutMs;
-  }
-
-  async runCommand(
-    command: string,
-    args?: string[],
-  ): Promise<CommandResult> {
-    this.commands.push({ cmd: command, args });
-    if (this.commandHandler) {
-      const result = this.commandHandler(command, args);
-      return { exitCode: result.exitCode, output: async () => result.output };
-    }
-    if (command === OPENCLAW_BIN && args?.[0] === "--version") {
-      return { exitCode: 0, output: async () => "openclaw 1.2.3" };
-    }
-    // Fast-restore script now includes readiness polling and outputs JSON
-    // on stdout.  Return stream-aware output so the caller can parse it.
-    if (command === "bash" && args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
-      const stdoutJson = '{"ready":true,"attempts":3,"readyMs":150}';
-      const stderrEvents = '{"event":"fast_restore.complete"}';
-      return {
-        exitCode: 0,
-        output: async (stream?: "stdout" | "stderr" | "both") => {
-          if (stream === "stdout") return stdoutJson;
-          if (stream === "stderr") return stderrEvents;
-          return `${stdoutJson}\n${stderrEvents}`;
-        },
-      };
-    }
-    // Respond to the local curl readiness probe used by waitForGatewayReady
-    if (command === "curl" && args?.some((a) => a.includes("localhost:3000"))) {
-      return {
-        exitCode: 0,
-        output: async () => '<html><body><div id="openclaw-app">ready</div></body></html>',
-      };
-    }
-    return { exitCode: 0, output: async () => "" };
-  }
-
-  async writeFiles(files: { path: string; content: Buffer }[]): Promise<void> {
-    this.writtenFiles.push(...files);
-  }
-
-  async readFileToBuffer(file: { path: string }): Promise<Buffer | null> {
-    // Return the last written content for the requested path, or null.
-    for (let i = this.writtenFiles.length - 1; i >= 0; i--) {
-      if (this.writtenFiles[i].path === file.path) {
-        return this.writtenFiles[i].content;
-      }
-    }
-    return null;
-  }
-
-  domain(port: number): string {
-    return `https://${this.sandboxId}-${port}.fake.vercel.run`;
-  }
-
-  async snapshot(): Promise<SnapshotResult> {
-    this.snapshotCalled = true;
-    return { snapshotId: `snap-${this.sandboxId}` };
-  }
-
-  async extendTimeout(duration: number): Promise<void> {
-    this.timeoutMs += duration;
-    this.extendedTimeouts.push(duration);
-  }
-
-  async updateNetworkPolicy(policy: NetworkPolicy): Promise<NetworkPolicy> {
-    this.networkPolicies.push(policy);
-    return policy;
-  }
-}
-
-class FakeSandboxController implements SandboxController {
-  created: FakeSandboxHandle[] = [];
-  retrieved: string[] = [];
-  handlesByIds = new Map<string, FakeSandboxHandle>();
-  private counter = 0;
-  private delay: number;
-  commandHandler: CommandHandler | null = null;
-
-  constructor(options?: FakeOptions) {
-    this.delay = options?.delay ?? 0;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async create(params: CreateParams): Promise<SandboxHandle> {
-    if (this.delay > 0) {
-      await sleep(this.delay);
-    }
-    this.counter += 1;
-    const id = `sbx-fake-${this.counter}`;
-    const handle = new FakeSandboxHandle(id, params.timeout);
-    if (this.commandHandler) {
-      handle.commandHandler = this.commandHandler;
-    }
-    this.created.push(handle);
-    this.handlesByIds.set(id, handle);
-    return handle;
-  }
-
-  async get(params: { sandboxId: string }): Promise<SandboxHandle> {
-    this.retrieved.push(params.sandboxId);
-    const existing = this.handlesByIds.get(params.sandboxId);
-    if (existing) {
-      return existing;
-    }
-    // Return a fresh handle for the ID (e.g. for sandbox IDs set in meta)
-    const handle = new FakeSandboxHandle(params.sandboxId);
-    this.handlesByIds.set(params.sandboxId, handle);
-    return handle;
-  }
-}
+import {
+  FakeSandboxController,
+  FakeSandboxHandle,
+} from "@/test-utils/fake-sandbox-controller";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 const ENV_OVERRIDES: Record<string, string | undefined> = {
   NODE_ENV: "test",
@@ -770,7 +618,6 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
 
       // Override the controller to return a handle pre-populated with the manifest
       const secondFake = new FakeSandboxController();
-      secondFake.commandHandler = fake.commandHandler;
       _setSandboxControllerForTesting(secondFake);
 
       const { handle: secondHandle } = await triggerRestore(secondFake, {
@@ -790,19 +637,12 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
 
       // Now test the actual skip path: manually seed a handle with the manifest
       // and trigger a restore that reads it back.
-      const seededHandle = new FakeSandboxHandle("sbx-seeded");
+      const seededHandle = new FakeSandboxHandle("sbx-seeded", []);
       // Write the manifest so readFileToBuffer will find it
       seededHandle.writtenFiles.push(manifestFile);
 
       // Create a controller that returns the seeded handle
       const seededFake = new FakeSandboxController();
-      seededFake.commandHandler = (cmd, args) => {
-        // Handle the local curl readiness probe used by waitForGatewayReady
-        if (cmd === "curl" && args?.some((a) => a.includes("localhost:3000"))) {
-          return { exitCode: 0, output: '<html><body><div id="openclaw-app">ready</div></body></html>' };
-        }
-        return { exitCode: 0, output: "" };
-      };
       // Override create to return the seeded handle
       const origCreate = seededFake.create.bind(seededFake);
       seededFake.create = async (params) => {
@@ -1072,12 +912,12 @@ test("restoreSandboxFromSnapshot with fast-restore script exit code != 0 throws 
   const originalFetch = globalThis.fetch;
 
   // Make the fast-restore script command fail
-  fake.commandHandler = (cmd, args) => {
+  fake.defaultResponders.push((cmd, args) => {
     if (cmd === "bash" && args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
-      return { exitCode: 1, output: "fast-restore script failed: missing config" };
+      return { exitCode: 1, output: async () => "fast-restore script failed: missing config" };
     }
-    return { exitCode: 0, output: "" };
-  };
+    return undefined;
+  });
 
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
@@ -1259,14 +1099,6 @@ test("ensureSandboxRunning full error recovery: error → create → running", a
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
-  // Make curl readiness probe succeed (used by setupOpenClaw's waitForGatewayReady)
-  fake.commandHandler = (cmd) => {
-    if (cmd === "curl") {
-      return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
-    }
-    return { exitCode: 0, output: "" };
-  };
-
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
       meta.status = "error";
@@ -1308,15 +1140,12 @@ test("ensureSandboxRunning create path stores openclaw version (no auto-snapshot
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
-  fake.commandHandler = (cmd, args) => {
+  fake.defaultResponders.push((cmd, args) => {
     if (cmd === OPENCLAW_BIN && args?.[0] === "--version") {
-      return { exitCode: 0, output: "openclaw 9.9.9" };
+      return { exitCode: 0, output: async () => "openclaw 9.9.9" };
     }
-    if (cmd === "curl") {
-      return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
-    }
-    return { exitCode: 0, output: "" };
-  };
+    return undefined;
+  });
 
   await withTestEnv(fake, async () => {
     globalThis.fetch = async () =>
@@ -1560,14 +1389,6 @@ test("restoreSandboxFromSnapshot falls back to createAndBootstrapSandbox when sn
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
-  // Make curl return the openclaw-app marker so waitForGatewayReady succeeds quickly
-  fake.commandHandler = (cmd) => {
-    if (cmd === "curl") {
-      return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
-    }
-    return { exitCode: 0, output: "" };
-  };
-
   await withTestEnv(fake, async () => {
     // Set status to stopped but with NO snapshotId — should fall back to create
     await mutateMeta((meta) => {
@@ -1756,7 +1577,7 @@ test("[lifecycle] touchRunningSandbox extend timeout throws -> marks sandbox una
 
     // Make the extendTimeout throw — use a low timeout so the top-up logic
     // actually attempts an extension (target - remaining > 0).
-    const handle = new FakeSandboxHandle("sbx-extend-error", 60_000);
+    const handle = new FakeSandboxHandle("sbx-extend-error", fake.events, 60_000);
     handle.extendTimeout = async () => {
       throw new Error("some network error");
     };
@@ -1783,7 +1604,7 @@ test("[lifecycle] touchRunningSandbox sandbox_timeout_invalid error -> silently 
       meta.lastAccessedAt = null;
     });
 
-    const handle = new FakeSandboxHandle("sbx-timeout-invalid", 60_000);
+    const handle = new FakeSandboxHandle("sbx-timeout-invalid", fake.events, 60_000);
     handle.extendTimeout = async () => {
       throw new Error("sandbox_timeout_invalid");
     };
@@ -1950,13 +1771,13 @@ test("[lifecycle] ensureFreshGatewayToken: restart failure does not corrupt meta
       });
 
       // Pre-create the handle with a failing startup script
-      const handle = new FakeSandboxHandle("sbx-restart-fail");
-      handle.commandHandler = (cmd, args) => {
-        if (cmd === "bash" && args?.[0] === OPENCLAW_STARTUP_SCRIPT_PATH) {
-          return { exitCode: 255, output: "gateway restart failed" };
+      const handle = new FakeSandboxHandle("sbx-restart-fail", fake.events);
+      handle.responders.push((cmd, args) => {
+        if (cmd === "env" && args?.includes("bash") && args?.includes(OPENCLAW_STARTUP_SCRIPT_PATH)) {
+          return { exitCode: 255, output: async () => "gateway restart failed" };
         }
-        return { exitCode: 0, output: "" };
-      };
+        return undefined;
+      });
       fake.handlesByIds.set("sbx-restart-fail", handle);
 
       await ensureFreshGatewayToken();
@@ -2049,7 +1870,7 @@ test("[lifecycle] ensureFreshGatewayToken: skips restart when token on disk matc
 
     try {
       // Pre-create the handle with the same token already on disk
-      const handle = new FakeSandboxHandle("sbx-same-token");
+      const handle = new FakeSandboxHandle("sbx-same-token", fake.events);
       handle.writtenFiles.push({
         path: OPENCLAW_AI_GATEWAY_API_KEY_PATH,
         content: Buffer.from("same-token"),
@@ -2210,12 +2031,12 @@ test("[failure] bootstrap (setupOpenClaw) failure sets status to error", async (
   const fake = new FakeSandboxController();
 
   // Make npm install fail (simulating bootstrap failure)
-  fake.commandHandler = (cmd) => {
+  fake.defaultResponders.push((cmd) => {
     if (cmd === "npm") {
       throw new Error("npm install crashed");
     }
-    return { exitCode: 0, output: "" };
-  };
+    return undefined;
+  });
 
   await withTestEnv(fake, async () => {
     let scheduledCallback: (() => Promise<void> | void) | null = null;
@@ -2247,7 +2068,7 @@ test("[failure] snapshot failure during stop propagates error", async () => {
     });
 
     // Override the handle's snapshot() to throw
-    const handle = new FakeSandboxHandle("sbx-snap-fail");
+    const handle = new FakeSandboxHandle("sbx-snap-fail", fake.events);
     handle.snapshot = async () => {
       throw new Error("snapshot storage unavailable");
     };
@@ -2269,12 +2090,12 @@ test("[failure] restore failure from stopped state (fast-restore script fails)",
   const originalFetch = globalThis.fetch;
 
   // Make bash fast-restore-script command return non-zero exit code
-  fake.commandHandler = (cmd, args) => {
+  fake.defaultResponders.push((cmd, args) => {
     if (cmd === "bash" && args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
-      return { exitCode: 1, output: "fast-restore script failed" };
+      return { exitCode: 1, output: async () => "fast-restore script failed" };
     }
-    return { exitCode: 0, output: "" };
-  };
+    return undefined;
+  });
 
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
@@ -2314,12 +2135,12 @@ test("[failure] restore failure when token write command fails", async () => {
   const originalFetch = globalThis.fetch;
 
   // Make the token-write sh command return non-zero exit code
-  fake.commandHandler = (cmd, args) => {
+  fake.defaultResponders.push((cmd, args) => {
     if (cmd === "sh" && args?.includes("-c")) {
-      return { exitCode: 1, output: "permission denied: /root/.openclaw" };
+      return { exitCode: 1, output: async () => "permission denied: /root/.openclaw" };
     }
-    return { exitCode: 0, output: "" };
-  };
+    return undefined;
+  });
 
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
@@ -2359,14 +2180,6 @@ test("[failure] restore failure when token write command fails", async () => {
 test("[failure] concurrent ensureSandboxRunning from error status creates only one sandbox", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
-
-  // Make curl readiness probe succeed
-  fake.commandHandler = (cmd) => {
-    if (cmd === "curl") {
-      return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
-    }
-    return { exitCode: 0, output: "" };
-  };
 
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
@@ -2646,7 +2459,7 @@ test("touchRunningSandbox tops up by difference when remaining < target (300000 
     });
 
     // Pre-create handle with 120000ms remaining
-    const handle = new FakeSandboxHandle("sbx-topup-math", 120_000);
+    const handle = new FakeSandboxHandle("sbx-topup-math", fake.events, 120_000);
     fake.handlesByIds.set("sbx-topup-math", handle);
 
     const result = await touchRunningSandbox();
@@ -2669,7 +2482,7 @@ test("touchRunningSandbox does not extend when remaining >= target (300000 targe
     });
 
     // Pre-create handle with 420000ms remaining (above target)
-    const handle = new FakeSandboxHandle("sbx-topup-skip", 420_000);
+    const handle = new FakeSandboxHandle("sbx-topup-skip", fake.events, 420_000);
     fake.handlesByIds.set("sbx-topup-skip", handle);
 
     const result = await touchRunningSandbox();
@@ -2690,7 +2503,7 @@ test("touchRunningSandbox does not extend when remaining == target exactly", asy
       meta.lastAccessedAt = null;
     });
 
-    const handle = new FakeSandboxHandle("sbx-topup-exact", 300_000);
+    const handle = new FakeSandboxHandle("sbx-topup-exact", fake.events, 300_000);
     fake.handlesByIds.set("sbx-topup-exact", handle);
 
     const result = await touchRunningSandbox();
@@ -2724,13 +2537,6 @@ test("touchRunningSandbox marks sandbox unavailable when controller.get() fails"
 test("create flow passes configured sleepAfterMs as timeout to controller.create()", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
-
-  fake.commandHandler = (cmd) => {
-    if (cmd === "curl") {
-      return { exitCode: 0, output: '<div id="openclaw-app"></div>' };
-    }
-    return { exitCode: 0, output: "" };
-  };
 
   await withTestEnv(fake, async () => {
     process.env.OPENCLAW_SANDBOX_SLEEP_AFTER_MS = "300000";
@@ -2811,7 +2617,7 @@ test("getRunningSandboxTimeoutRemainingMs returns remaining ms for running sandb
       meta.sandboxId = "sbx-remaining";
     });
 
-    const handle = new FakeSandboxHandle("sbx-remaining", 250_000);
+    const handle = new FakeSandboxHandle("sbx-remaining", fake.events, 250_000);
     fake.handlesByIds.set("sbx-remaining", handle);
 
     const remaining = await getRunningSandboxTimeoutRemainingMs();

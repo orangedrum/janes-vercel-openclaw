@@ -81,6 +81,7 @@ function installFailingSandboxSync(): {
     async get() {
       return {
         sandboxId: "sandbox-123",
+        get timeout() { return 1800000; },
         async runCommand() {
           return { exitCode: 0, output: async () => "" };
         },
@@ -245,6 +246,7 @@ function installSucceedingSandboxController(opts?: {
     async get() {
       return {
         sandboxId: "sandbox-123",
+        get timeout() { return 1800000; },
         async runCommand(_cmd: string, args?: string[]) {
           const cmdStr = [_cmd, ...(args ?? [])].join(" ");
           // If reading the learning log, return the configured content

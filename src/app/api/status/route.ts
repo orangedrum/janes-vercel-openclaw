@@ -3,7 +3,12 @@ import { getPublicChannelState } from "@/server/channels/state";
 import { getAuthMode } from "@/server/env";
 import { computeWouldBlock } from "@/server/firewall/state";
 import { extractRequestId, logError } from "@/server/log";
-import { probeGatewayReady, touchRunningSandbox } from "@/server/sandbox/lifecycle";
+import {
+  getRunningSandboxTimeoutRemainingMs,
+  probeGatewayReady,
+  touchRunningSandbox,
+} from "@/server/sandbox/lifecycle";
+import { getSandboxSleepConfig } from "@/server/sandbox/timeout";
 import { getStore, getInitializedMeta } from "@/server/store/store";
 import { jsonError } from "@/shared/http";
 
@@ -28,6 +33,12 @@ export async function GET(request: Request): Promise<Response> {
           ? (await probeGatewayReady()).ready
           : false;
 
+    const sleepConfig = getSandboxSleepConfig();
+    const timeoutRemainingMs =
+      includeHealth || meta.status === "running"
+        ? await getRunningSandboxTimeoutRemainingMs()
+        : null;
+
     const response = Response.json({
       authMode: getAuthMode(),
       storeBackend: getStore().name,
@@ -38,6 +49,9 @@ export async function GET(request: Request): Promise<Response> {
       gatewayReady,
       gatewayUrl: "/gateway",
       lastError: meta.lastError,
+      sleepAfterMs: sleepConfig.sleepAfterMs,
+      heartbeatIntervalMs: sleepConfig.heartbeatIntervalMs,
+      timeoutRemainingMs,
       firewall: { ...meta.firewall, wouldBlock: computeWouldBlock(meta.firewall) },
       channels: await getPublicChannelState(request, meta),
       user: { sub: "admin", name: "Admin" },

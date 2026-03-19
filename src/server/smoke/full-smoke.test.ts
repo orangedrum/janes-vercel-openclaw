@@ -168,6 +168,7 @@ test("full-smoke: complete lifecycle with channels, firewall, and proxy", async 
       const injected = injectWrapperScript(rawHtml, {
         sandboxOrigin,
         gatewayToken,
+        heartbeatIntervalMs: 240_000,
       });
 
       // Verify script injection

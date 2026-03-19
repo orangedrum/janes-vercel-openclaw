@@ -264,7 +264,23 @@ async function runPreflightCheck() {
       ? payload.channels
       : {};
 
+  // --- Validate bootstrap-exposure check ---
+  const bootstrapCheck = checks.find((c) => c && c.id === "bootstrap-exposure");
+  if (bootstrapCheck) {
+    log(`bootstrap-exposure: ${JSON.stringify(bootstrapCheck)}`);
+  } else {
+    log("bootstrap-exposure: MISSING from preflight checks");
+  }
+
   const failures = [];
+
+  if (!bootstrapCheck) {
+    failures.push("bootstrap-exposure check missing from preflight");
+  } else if (bootstrapCheck.status !== "pass") {
+    failures.push(
+      `bootstrap-exposure status=${bootstrapCheck.status}, expected=pass`,
+    );
+  }
 
   if (values["expect-ok"] && payload.ok !== true) {
     failures.push("payload.ok !== true");
@@ -310,6 +326,7 @@ async function runPreflightCheck() {
     requiredActions: actions.filter(
       (action) => action && action.status === "required",
     ),
+    bootstrapExposure: bootstrapCheck ?? null,
     channelStatuses: Object.fromEntries(
       Object.entries(channels).map(([name, info]) => [
         name,

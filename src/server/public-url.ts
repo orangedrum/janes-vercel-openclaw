@@ -265,6 +265,32 @@ export function buildPublicUrl(path: string, request?: Request): string {
 }
 
 /**
+ * Build a public URL suitable for admin-visible surfaces (status JSON, UI).
+ *
+ * Identical to `buildPublicUrl` but **never** includes the bypass secret in
+ * the returned URL.  Diagnostics still indicate whether bypass is enabled.
+ */
+export function buildPublicDisplayUrl(path: string, request?: Request): string {
+  const resolution = resolvePublicOrigin(request);
+  const url = new URL(path, `${resolution.origin}/`);
+
+  const bypassEnabled = Boolean(getProtectionBypassSecret());
+
+  const diagnostics: BuiltPublicUrlDiagnostics = {
+    path,
+    url: url.toString(),
+    source: resolution.source,
+    authMode: resolution.authMode,
+    bypassEnabled,
+    bypassApplied: false,
+  };
+
+  logInfo("public_display_url.built", diagnostics);
+
+  return url.toString();
+}
+
+/**
  * Resolve the canonical public origin from a raw origin hint string.
  *
  * This is intended for background jobs and queue consumers that receive an
