@@ -348,13 +348,8 @@ if [ -n "$ai_gateway_api_key" ]; then
   export OPENAI_API_KEY="$ai_gateway_api_key"
   export OPENAI_BASE_URL="$ai_gateway_base_url"
 fi
-tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
-if [ -n "$tg_token" ]; then
-  echo '{"event":"fast_restore.delete_telegram_webhook"}' >&2
-  curl -sf "https://api.telegram.org/bot\${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
-fi
-echo '{"event":"fast_restore.kill_old_gateway"}' >&2
-pkill -f "openclaw.gateway" 2>/dev/null || true
+# Start gateway immediately — no pkill needed (snapshots have no running
+# processes) and no Telegram webhook delete needed before boot.
 echo '{"event":"fast_restore.start_gateway"}' >&2
 if [ -x "${BUN_BIN}" ]; then
   setsid ${BUN_BIN} ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &
@@ -381,9 +376,15 @@ if [ "\$_ready_start" != "0" ] && [ "\$_ready_end" != "0" ]; then
   _ready_ms=\$(( (_ready_end - _ready_start) / 1000000 ))
 fi
 if [ "\$_ready" = "1" ]; then
-  echo '{"event":"fast_restore.force_pair_inline"}' >&2
-  node ${OPENCLAW_FORCE_PAIR_SCRIPT_PATH} ${OPENCLAW_STATE_DIR} >> ${OPENCLAW_LOG_FILE} 2>&1 || echo '{"event":"fast_restore.force_pair_failed"}' >&2
   printf '{"ready":true,"attempts":%d,"readyMs":%d}\\n' "\$_attempts" "\$_ready_ms"
+  # Deferred post-ready work (fire-and-forget, non-blocking):
+  # - Telegram webhook delete: not needed for gateway boot, can be slow
+  # - Force-pair: skipped entirely — dangerouslyDisableDeviceAuth is true
+  #   and the snapshot already contains paired.json from initial bootstrap
+  tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
+  if [ -n "\$tg_token" ]; then
+    curl -sf --max-time 5 "https://api.telegram.org/bot\${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 &
+  fi
   echo '{"event":"fast_restore.complete"}' >&2
 else
   printf '{"ready":false,"attempts":%d,"readyMs":%d}\\n' "\$_attempts" "\$_ready_ms"
