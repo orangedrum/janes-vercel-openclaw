@@ -261,7 +261,7 @@ if [ -n "$ai_gateway_api_key" ]; then
 fi
 tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
 if [ -n "$tg_token" ]; then
-  curl -sf "https://api.telegram.org/bot${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
+  curl -sf "https://api.telegram.org/bot\${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
 fi
 pkill -f "openclaw.gateway" || true
 setsid env OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" OPENCLAW_GATEWAY_TOKEN="$gateway_token" AI_GATEWAY_API_KEY="$ai_gateway_api_key" OPENAI_API_KEY="$ai_gateway_api_key" OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1" ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &
@@ -316,7 +316,7 @@ fi
 tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
 if [ -n "$tg_token" ]; then
   echo '{"event":"fast_restore.delete_telegram_webhook"}' >&2
-  curl -sf "https://api.telegram.org/bot${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
+  curl -sf "https://api.telegram.org/bot\${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
 fi
 echo '{"event":"fast_restore.kill_old_gateway"}' >&2
 pkill -f "openclaw.gateway" || true
