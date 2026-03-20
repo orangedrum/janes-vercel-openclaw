@@ -136,6 +136,7 @@ export async function callGatewayWithAuthRecovery<T>(
   // Read body for auth-failure detection
   const bodyText = await response.text().catch(() => "");
   const status = response.status;
+  const firstResponseStatus = status;
 
   if (!isGatewayAuthFailure(status, bodyText)) {
     // Not an auth failure.  5xx is inherently transient — always retryable
@@ -173,6 +174,7 @@ export async function callGatewayWithAuthRecovery<T>(
       ok: false,
       error: `auth_refresh_failed: ${message}`,
       retryable: true,
+      status: firstResponseStatus,
     };
   }
 
@@ -185,6 +187,7 @@ export async function callGatewayWithAuthRecovery<T>(
       ok: false,
       error: "auth_refresh_unavailable",
       retryable: true,
+      status: firstResponseStatus,
     };
   }
 
@@ -204,7 +207,12 @@ export async function callGatewayWithAuthRecovery<T>(
       sandboxId,
       error: message,
     });
-    return { ok: false, error: `retry_failed: ${message}`, retryable: true };
+    return {
+      ok: false,
+      error: `retry_failed: ${message}`,
+      retryable: true,
+      status: firstResponseStatus,
+    };
   }
 
   if (retryResponse.ok) {
@@ -234,5 +242,10 @@ export async function callGatewayWithAuthRecovery<T>(
     bodySnippet: retryBody.slice(0, 200),
   });
 
-  return { ok: false, error: retryErrorMsg, retryable: true, status: retryResponse.status };
+  return {
+    ok: false,
+    error: retryErrorMsg,
+    retryable: true,
+    status: retryResponse.status || firstResponseStatus,
+  };
 }
