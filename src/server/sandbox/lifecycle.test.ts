@@ -811,6 +811,93 @@ test("restoreSandboxFromSnapshot overlaps firewall sync with local readiness and
   });
 });
 
+test("restoreSandboxFromSnapshot records successful firewall sync before running", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-firewall-success";
+      meta.gatewayToken = "test-gw-token";
+      meta.firewall.mode = "enforcing";
+      meta.firewall.allowlist = ["api.openai.com", "registry.npmjs.org"];
+    });
+
+    // networkPolicyHandler returns success after a small delay so firewallSyncMs > 0
+    fake.onNetworkPolicy = async (policy) => {
+      await new Promise((r) => setTimeout(r, 2));
+      return policy;
+    };
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle, meta } = await triggerRestore(fake, {
+        tokenOverride: "test-ai-key",
+      });
+
+      assert.equal(meta.status, "running");
+      assert.equal(handle.networkPolicies.length, 1);
+      assert.deepEqual(handle.networkPolicies[0], {
+        allow: ["api.openai.com", "registry.npmjs.org"],
+      });
+      assert.equal(meta.firewall.lastSyncReason, "restore-policy-applied");
+      assert.ok(meta.firewall.lastSyncAppliedAt);
+      assert.equal(meta.firewall.lastSyncOutcome?.applied, true);
+      assert.equal(meta.firewall.lastSyncOutcome?.reason, "restore-policy-applied");
+      assert.ok(
+        (meta.lastRestoreMetrics?.firewallSyncMs ?? 0) > 0,
+        "firewallSyncMs should be recorded and positive",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("restoreSandboxFromSnapshot fails closed when enforcing firewall sync fails", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-firewall-fail";
+      meta.gatewayToken = "test-gw-token";
+      meta.firewall.mode = "enforcing";
+      meta.firewall.allowlist = ["api.openai.com"];
+    });
+
+    fake.onNetworkPolicy = async () => {
+      throw new Error("simulated network policy failure");
+    };
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle, meta } = await triggerRestore(fake, {
+        tokenOverride: "test-ai-key",
+      });
+
+      assert.equal(meta.status, "error");
+      assert.equal(meta.sandboxId, null);
+      assert.ok(
+        meta.lastError?.includes("Firewall sync failed during restore"),
+        `expected firewall restore error, got: ${meta.lastError}`,
+      );
+      assert.equal(meta.firewall.lastSyncReason, "restore-policy-failed");
+      assert.ok(meta.firewall.lastSyncFailedAt);
+      assert.equal(meta.firewall.lastSyncOutcome?.applied, false);
+      assert.equal(handle.stopCalled, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("restoreSandboxFromSnapshot passes credentials and config via env to fast-restore script", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;

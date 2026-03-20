@@ -1345,13 +1345,61 @@ async function restoreSandboxFromSnapshot(
     let startupScriptMs = 0;
     let localReadyMs = 0;
 
+    // Pre-compute firewall policy hash for structured outcome reporting.
+    const requestedFirewallPolicy = toNetworkPolicy(
+      next.firewall.mode,
+      next.firewall.allowlist,
+    );
+    const requestedFirewallPolicyHash = createHash("sha256")
+      .update(JSON.stringify(requestedFirewallPolicy))
+      .digest("hex");
+
     // Firewall policy applied post-create (networkPolicy on snapshot restore
     // returns 400).  Runs concurrently with the fast-restore script below.
-    const firewallPromise = applyFirewallPolicyToSandbox(sandbox, next).catch((err) => {
-      logWarn("sandbox.restore.firewall_sync_failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    // Returns a structured result so enforcing mode can gate readiness.
+    const firewallPromise = (async () => {
+      const startedAt = Date.now();
+      try {
+        await applyFirewallPolicyToSandbox(sandbox, next);
+        const completedAt = Date.now();
+        return {
+          ok: true as const,
+          completedAt,
+          durationMs: completedAt - startedAt,
+          error: null,
+          outcome: {
+            timestamp: completedAt,
+            durationMs: completedAt - startedAt,
+            allowlistCount: next.firewall.allowlist.length,
+            policyHash: requestedFirewallPolicyHash,
+            applied: true,
+            reason: "restore-policy-applied",
+          } satisfies import("@/shared/types").FirewallSyncOutcome,
+        };
+      } catch (err) {
+        const completedAt = Date.now();
+        const error = err instanceof Error ? err.message : String(err);
+        logWarn("sandbox.restore.firewall_sync_failed", {
+          sandboxId: sandbox.sandboxId,
+          mode: next.firewall.mode,
+          error,
+        });
+        return {
+          ok: false as const,
+          completedAt,
+          durationMs: completedAt - startedAt,
+          error,
+          outcome: {
+            timestamp: completedAt,
+            durationMs: completedAt - startedAt,
+            allowlistCount: next.firewall.allowlist.length,
+            policyHash: requestedFirewallPolicyHash,
+            applied: false,
+            reason: "restore-policy-failed",
+          } satisfies import("@/shared/types").FirewallSyncOutcome,
+        };
+      }
+    })();
 
     {
       const t0 = Date.now();
@@ -1389,19 +1437,59 @@ async function restoreSandboxFromSnapshot(
         });
     }
 
+    // Await firewall sync result — overlapped with boot above.
+    const firewallResult = await firewallPromise;
+    firewallSyncMs = firewallResult.durationMs;
     const bootOverlapMs = Date.now() - bootOverlapStart;
+
+    // Record firewall sync outcome in metadata regardless of success/failure.
+    await mutateMeta((meta) => {
+      meta.firewall.lastSyncReason = firewallResult.outcome.reason;
+      meta.firewall.lastSyncOutcome = firewallResult.outcome;
+      if (firewallResult.ok) {
+        meta.firewall.lastSyncAppliedAt = firewallResult.completedAt;
+      } else {
+        meta.firewall.lastSyncFailedAt = firewallResult.completedAt;
+      }
+    });
+
     logInfo("sandbox.restore.boot_overlap_complete", {
       bootOverlapMs,
       firewallSyncMs,
       localReadyMs,
       sandboxId: sandbox.sandboxId,
+      firewallApplied: firewallResult.ok,
     });
 
-    // Gateway is locally healthy — mark as running so callers that poll
-    // metadata (channel drains, waitForSandboxReady) see the correct state.
-    // This is set before the optional public probe because locally-healthy is
-    // the authoritative signal; the public probe below is best-effort and its
-    // failure does not invalidate the sandbox (it will converge on its own).
+    // In enforcing mode, firewall sync failure is a hard blocker — the
+    // sandbox must not become available without its network policy applied.
+    if (!firewallResult.ok && next.firewall.mode === "enforcing") {
+      logError("sandbox.restore.firewall_sync_blocked_restore", {
+        sandboxId: sandbox.sandboxId,
+        error: firewallResult.error,
+      });
+
+      try {
+        await sandbox.stop({ blocking: true });
+      } catch (stopError) {
+        logWarn("sandbox.restore.firewall_sync_cleanup_failed", {
+          sandboxId: sandbox.sandboxId,
+          error: stopError instanceof Error ? stopError.message : String(stopError),
+        });
+      }
+
+      await mutateMeta((meta) => {
+        meta.status = "error";
+        meta.lastError = `Firewall sync failed during restore: ${firewallResult.error}`;
+        meta.sandboxId = null;
+        meta.portUrls = null;
+      });
+
+      return getInitializedMeta();
+    }
+
+    // Gateway is locally healthy and firewall is confirmed (or not enforcing)
+    // — mark as running so callers that poll metadata see the correct state.
     await mutateMeta((meta) => {
       meta.status = "running";
       meta.lastError = null;

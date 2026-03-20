@@ -1,16 +1,22 @@
 ---
 name: vercel-openclaw-testing
-description: Testing guide for the vercel-openclaw project (single Next.js 16 app at vercel-labs/vercel-openclaw). Covers the scenario harness, fake sandbox controller, fake fetch, route callers, auth fixtures, webhook builders, assertion helpers, full smoke test patterns, mock patterns for each subsystem, and the complete verification protocol. Use when writing tests, debugging failures, or verifying work in the vercel-openclaw repo.
+description: Testing, debugging, and issue-finding guide for the vercel-openclaw project (single Next.js 16 app at vercel-labs/vercel-openclaw). Covers production debugging playbooks, known failure patterns, remote diagnostic workflows, debug routes, admin endpoints, benchmarking scripts, the scenario harness, fake sandbox controller, fake fetch, route callers, auth fixtures, webhook builders, assertion helpers, full smoke test patterns, mock patterns for each subsystem, and the complete verification protocol. Use when writing tests, debugging failures, investigating production issues, profiling performance, or verifying work in the vercel-openclaw repo.
 metadata:
   filePattern:
     - "**/vercel-openclaw/**/*.test.ts"
     - "**/vercel-openclaw/**/*.test.tsx"
     - "**/vercel-openclaw/src/server/**"
     - "**/vercel-openclaw/src/test-utils/**"
+    - "**/vercel-openclaw/scripts/**"
   bashPattern:
     - "npm test"
     - "npm run test:watch"
     - "node scripts/verify.mjs"
+    - "npm run smoke:remote"
+    - "node scripts/check-deploy-readiness.mjs"
+    - "node scripts/benchmark-restore.mjs"
+    - "node scripts/bench-sandbox-direct.mjs"
+    - "node scripts/reset-meta.mjs"
 ---
 
 # vercel-openclaw Testing
@@ -31,24 +37,72 @@ node scripts/verify.mjs --steps=test,typecheck              # multiple steps
 # Direct npm shortcuts (convenience only — prefer verify.mjs for automation)
 npm test                                                    # all tests
 npm run test:watch                                          # watch mode
+
+# Remote diagnostics (all secrets from env vars — never hardcode)
+node scripts/check-deploy-readiness.mjs --base-url "$OPENCLAW_BASE_URL" --admin-secret "$ADMIN_SECRET"
+node scripts/check-deploy-readiness.mjs --base-url "$OPENCLAW_BASE_URL" --admin-secret "$ADMIN_SECRET" --mode destructive
+npm run smoke:remote -- --base-url "$OPENCLAW_BASE_URL" --destructive --timeout 180
+
+# Ad-hoc endpoint checks
+vercel curl /api/health --deployment "$OPENCLAW_BASE_URL"
+vercel curl /api/status --deployment "$OPENCLAW_BASE_URL"
+vercel curl /api/admin/preflight --deployment "$OPENCLAW_BASE_URL"
+vercel curl /api/admin/logs?level=error --deployment "$OPENCLAW_BASE_URL"
+vercel curl /api/admin/channels/health --deployment "$OPENCLAW_BASE_URL"
+
+# Benchmarking
+node scripts/benchmark-restore.mjs --base-url "$OPENCLAW_BASE_URL" --cycles 5 --vcpus 1,2,4
+node scripts/bench-sandbox-direct.mjs --cycles 5 --vcpus 1,2,4
+
+# Operational
+node scripts/reset-meta.mjs                                 # reset Upstash metadata to uninitialized
+node scripts/check-queue-consumers.mjs                      # verify vercel.json queue consumer routes
+node scripts/audit-verifier-surface.mjs                     # audit protected route manifest
 ```
 
 ## Remote Deployment Readiness Gate
 
-Before connecting Slack, Telegram, or Discord, verify the deployment meets the launch contract. The readiness verifier checks `/api/admin/preflight` and fails unless `ok=true`, `storeBackend=upstash`, and `aiGatewayAuth=oidc`.
+Before connecting Slack, Telegram, or Discord, verify the deployment meets the launch contract.
 
 ```bash
-# Readiness check (reads secrets from env — never hardcode them)
-OPENCLAW_BASE_URL="$OPENCLAW_BASE_URL" \
-VERCEL_AUTOMATION_BYPASS_SECRET="$VERCEL_AUTOMATION_BYPASS_SECRET" \
-node scripts/check-deploy-readiness.mjs --json-only
+# Full launch verification (default): preflight + queue probe + sandbox ensure + chat completions + wake-from-sleep
+node scripts/check-deploy-readiness.mjs \
+  --base-url "$OPENCLAW_BASE_URL" \
+  --admin-secret "$ADMIN_SECRET" \
+  --json-only
 
-# With explicit flags
+# Destructive mode: includes sandbox lifecycle operations
+node scripts/check-deploy-readiness.mjs \
+  --base-url "$OPENCLAW_BASE_URL" \
+  --admin-secret "$ADMIN_SECRET" \
+  --mode destructive \
+  --json-only
+
+# Lightweight config-only check (no runtime behavior)
+node scripts/check-deploy-readiness.mjs \
+  --base-url "$OPENCLAW_BASE_URL" \
+  --admin-secret "$ADMIN_SECRET" \
+  --preflight-only \
+  --json-only
+
+# With deployment protection bypass instead of admin secret
 node scripts/check-deploy-readiness.mjs \
   --base-url "$OPENCLAW_BASE_URL" \
   --protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET" \
   --json-only
 ```
+
+**Flags:**
+- `--base-url` (required) — deployed app URL
+- `--admin-secret` — bearer token auth (mutually exclusive with `--auth-cookie`)
+- `--auth-cookie` — session cookie auth (mutually exclusive with `--admin-secret`)
+- `--protection-bypass` — Vercel deployment protection bypass secret
+- `--mode safe|destructive` — `safe` (default) or `destructive` (includes sandbox lifecycle)
+- `--preflight-only` — skip launch-verify, only check `/api/admin/preflight`
+- `--expect-store upstash` — expected store backend (default: `upstash`)
+- `--expect-ai-gateway-auth oidc` — expected auth mode (default: `oidc`)
+- `--timeout-ms` — overall timeout in ms (default: 180000)
+- `--json-only` — suppress stderr, JSON to stdout only
 
 **Exit codes:** 0=pass, 1=contract-fail, 2=bad-args, 3=fetch-fail, 4=bad-response.
 
@@ -64,7 +118,7 @@ npm run smoke:remote -- \
   --base-url "$OPENCLAW_BASE_URL" \
   --protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET"
 
-# Destructive smoke test (includes ensure, snapshot, restore — use with caution)
+# Destructive smoke test (includes ensure, snapshot, restore, self-heal — use with caution)
 npm run smoke:remote -- \
   --base-url "$OPENCLAW_BASE_URL" \
   --protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET" \
@@ -82,11 +136,246 @@ npm run smoke:remote -- \
 - `--auth-cookie` — reads from flag or `SMOKE_AUTH_COOKIE` env var
 - **Never commit or hardcode secrets in docs, code samples, or tests**
 
-**Ad-hoc endpoint checks with `vercel curl`:**
+### Remote Smoke Phases
+
+**Safe phases (always run):**
+
+| Phase | Endpoint | What it verifies |
+|-------|----------|-----------------|
+| `health` | `GET /api/health` | Basic 200 + `ok: true` |
+| `status` | `GET /api/status` | Status field, authMode, storeBackend present |
+| `gatewayProbe` | `GET /gateway` | 200 with `openclaw-app` marker OR 202 waiting page |
+| `firewallRead` | `GET /api/firewall` | Mode and allowlist fields present |
+| `channelsSummary` | `GET /api/channels/summary` | Channel connectivity info |
+| `sshEcho` | `POST /api/admin/ssh` | Runs `echo smoke-ok`, validates output |
+| `chatCompletions` | `POST /gateway/v1/chat/completions` | LLM roundtrip (60s timeout) |
+| `channelRoundTrip` | `POST /api/admin/channel-secrets` | Server-signed synthetic webhooks for Slack/Telegram/Discord, polls for queue drain |
+
+**Destructive phases (opt-in with `--destructive`):**
+
+| Phase | Endpoint | What it verifies |
+|-------|----------|-----------------|
+| `ensureRunning` | `POST /api/admin/ensure` | Sandbox create or restore, polls until running |
+| `channelWakeFromSleep` | `POST /api/admin/snapshot` + webhook | Stops sandbox, sends webhook, verifies wake-up recovery + queue drain |
+| `selfHealTokenRefresh` | `POST /api/admin/ssh` + completions | Corrupts gateway token via SSH, sends channel webhook, verifies self-healing recovery |
+
+---
+
+## Production Debugging Playbook
+
+### Debug Routes (gated by `ENABLE_DEBUG_ROUTES=1`)
+
+All debug routes require the `ENABLE_DEBUG_ROUTES` env var to be set. They return 404 in production unless explicitly enabled. All are `POST` endpoints.
+
+| Route | Purpose | When to use |
+|-------|---------|-------------|
+| `/api/debug/restore-waterfall` | Full restore profiling with per-phase waterfall timings (stop, metadata, credentials, config, create, assets, readiness, snapshot) | Investigating slow restores — shows exactly which phase is the bottleneck |
+| `/api/debug/pre-create-timing` | Measures config/policy building time before sandbox creation (gateway config, asset manifest, network policy) | Investigating whether pre-create overhead is contributing to restore latency |
+| `/api/debug/sandbox-timing` | Direct `@vercel/sandbox` SDK timing (create, echo, sh-exit, sh-sleep, snapshot). Requires `snapshotId` query param or `DEBUG_SANDBOX_SNAPSHOT_ID` env | Isolating platform-level latency from app-level overhead |
+| `/api/debug/cold-start` | Detects cold start vs warm start, measures module-to-handler time | Investigating intermittent slowness that could be cold start related |
+| `/api/debug/upstash-timing` | Measures Upstash Redis read/write latency | Investigating store-related slowness (metadata reads, queue operations) |
+| `/api/debug/oidc-timing` | Measures AI Gateway OIDC token acquisition time | Investigating gateway auth latency or token fetch failures |
+| `/api/debug/lock-timing` | Tests distributed lock acquisition/release latency | Investigating queue drain contention or concurrent lifecycle operations |
+| `/api/debug/sdk-import-timing` | Measures `import("@vercel/sandbox")` time | Investigating cold start — SDK import is a significant contributor |
+| `/api/debug/after-timing` | Tests `after()` scheduler latency | Investigating delayed lifecycle transitions (ensure/stop scheduled via `after()`) |
+
+### Admin Diagnostic Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/admin/preflight` | GET | Deployment readiness config check — authMode, publicOrigin, storeBackend, aiGatewayAuth, channel connectability, webhook diagnostics |
+| `/api/admin/launch-verify` | POST | Full launch verification — preflight + queue probe + sandbox ensure + chat completions + wake-from-sleep + self-heal token refresh |
+| `/api/admin/logs` | GET | Server logs from ring buffer + sandbox OpenClaw logs (up to 200 lines). Filter with `?level=error&source=lifecycle&search=token` |
+| `/api/admin/watchdog` | GET/POST | Sandbox health monitoring — GET reads cached report, POST runs fresh check (readiness, gateway, timeout validation) |
+| `/api/admin/ssh` | POST | Execute shell commands in the running sandbox. Body: `{ "command": "ps aux" }` |
+| `/api/admin/channels/health` | GET | Channel queue health — queue depth, failed counts, last errors for all channels |
+| `/api/channels/summary` | GET | Channel delivery state — queue depths, config status, connectivity |
+| `/api/firewall/diagnostics` | GET | Detailed firewall state — learning logs, extracted domains, inferred vs configured allowlist |
+| `/api/status` | GET | Full metadata snapshot. Add `?health=1` for live gateway probe |
+
+### SSH Sandbox Inspection Recipes
+
+Use `/api/admin/ssh` (POST with `{ "command": "..." }`) for interactive debugging:
+
 ```bash
-vercel curl /api/health --deployment "$OPENCLAW_BASE_URL"
-vercel curl /api/status --deployment "$OPENCLAW_BASE_URL"
+# Check if gateway process is running (note: argv rewrites to "openclaw-gateway" with hyphen)
+ps aux | grep openclaw
+
+# Read the current gateway token file
+cat /root/.openclaw/gateway-token
+
+# Read the AI Gateway key file
+cat /root/.openclaw/ai-gateway-key
+
+# Check OpenClaw logs
+tail -100 /root/.openclaw/logs/openclaw.log
+
+# Check what ports are listening
+ss -tlnp
+
+# Inspect environment variables (look for stale baked-in tokens)
+env | grep -i gateway
+
+# Check if the startup script is present and correct
+cat /root/.openclaw/startup.sh
+
+# Test gateway health from inside the sandbox
+curl -s http://localhost:3000/ | head -20
+
+# Check disk space (large npm installs can fill the sandbox)
+df -h
 ```
+
+### Operational Scripts
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `scripts/verify.mjs` | Master verification harness — runs contract, lint, test, typecheck, build gates | `node scripts/verify.mjs --steps=test,typecheck` |
+| `scripts/check-deploy-readiness.mjs` | Machine-readable deployment readiness gate | See [Remote Deployment Readiness Gate](#remote-deployment-readiness-gate) |
+| `scripts/benchmark-restore.mjs` | Repeated snapshot/stop → ensure cycles with per-phase waterfall timings | `node scripts/benchmark-restore.mjs --base-url "$URL" --cycles 5 --vcpus 1,2,4` |
+| `scripts/bench-sandbox-direct.mjs` | Direct `@vercel/sandbox` SDK benchmark (no HTTP layer) — create → install → snapshot → restore loop | `node scripts/bench-sandbox-direct.mjs --cycles 5 --vcpus 1,2,4` |
+| `scripts/reset-meta.mjs` | Reset Upstash metadata to `uninitialized` — clears sandboxId, snapshotId, status, lastError, portUrls | `node scripts/reset-meta.mjs` (reads `.env.local` for Upstash creds) |
+| `scripts/check-queue-consumers.mjs` | Verify Vercel Queue consumer routes are declared in `vercel.json` | `node scripts/check-queue-consumers.mjs` |
+| `scripts/audit-verifier-surface.mjs` | Audit that protected route manifest is consistent | `node scripts/audit-verifier-surface.mjs` |
+| `scripts/check-verifier-contract.mjs` | Ensure deployment contract env vars are documented in README, CLAUDE.md, CONTRIBUTING.md, .env.example | `node scripts/check-verifier-contract.mjs` |
+
+---
+
+## Known Failure Patterns
+
+These patterns are distilled from 100+ commits of production fixes. When investigating an issue, check if it matches one of these categories first.
+
+### 1. OIDC Token Expiry (Gateway Auth Failures)
+
+**Symptoms:** Gateway returns 401/403 after running for ~12 hours. Channel messages fail silently. Chat completions through `/gateway/v1/chat/completions` return auth errors.
+
+**Root causes found historically:**
+- Gateway proxy never called `ensureFreshGatewayToken()` — only the channel driver path had refresh logic. Direct chat UI requests failed after token expired.
+- `pkill` pattern used `"openclaw gateway"` with a space, but the binary rewrites its argv to `"openclaw-gateway"` with a hyphen — process never restarted. **Fix:** use regex `"openclaw.gateway"` to match both.
+- Sandbox environment bakes `AI_GATEWAY_API_KEY` immutably at create time. Writing a new token file is insufficient if the startup script's env var check takes precedence. **Fix:** use `env -u AI_GATEWAY_API_KEY` before restart.
+- After startup script restarts gateway during token refresh, app immediately tried to call gateway before it finished booting → 500 errors. **Fix:** poll for local readiness (`curl localhost:3000`) before returning from refresh.
+- Token refresh was restarting gateway every 5 minutes even when token hadn't changed, causing Telegram messages to hit a dead gateway mid-restart. **Fix:** read current token from sandbox before restarting; skip if unchanged.
+
+**Key files:** `src/server/gateway/auth-recovery.ts`, `src/server/openclaw/bootstrap.ts`
+
+**How to test for this:** The remote smoke `selfHealTokenRefresh` phase corrupts the gateway token via SSH and verifies self-healing recovery. Locally, `drain-auth-decay.test.ts` tests auth token expiry during drain.
+
+### 2. Telegram Webhook Deadlocks
+
+**Symptoms:** Telegram messages stop being delivered. `setWebhook` succeeds but messages never arrive. Queue depth grows but never drains.
+
+**Root causes found historically:**
+- Startup scripts called `deleteWebhook` on every sandbox boot, clearing the webhook URL. Old snapshots contained these scripts, and new scripts weren't synced fast enough after restore. **Fix:** remove `deleteWebhook` from startup scripts entirely.
+- Telegram's `setWebhook` API silently rejects URLs containing `x-vercel-protection-bypass` query parameter. **Fix:** use separate `buildPublicDisplayUrl` without bypass param for Telegram.
+- Queue publish failures on webhook route returned 500 to Telegram, which then exponentially backed off webhook deliveries (Telegram reduces delivery frequency on repeated failures). **Fix:** always return 200 from webhook route, even on internal errors.
+- Reconnecting Telegram created backlogged failed updates that prevented new webhook delivery. **Fix:** pass `drop_pending_updates: true` to `setWebhook`.
+
+**Key files:** `src/server/channels/telegram/bot-api.ts`, `src/server/channels/state.ts`, `src/server/openclaw/bootstrap.ts`
+
+**How to test for this:** Check `/api/admin/channels/health` for Telegram queue depth. Use `/api/admin/ssh` to verify webhook URL with `curl` to Telegram API. The `channelRoundTrip` smoke phase verifies end-to-end delivery.
+
+### 3. Sandbox API Asymmetries (Create vs Restore)
+
+**Symptoms:** Sandbox operations return 400 errors. Sandbox stuck in `restoring` or `error` status. Works on fresh create but fails on snapshot restore.
+
+**Root causes found historically:**
+- `networkPolicy` parameter accepted on `create()` but rejected on snapshot `restore()` with 400. **Fix:** apply firewall policy post-create via `updateNetworkPolicy()` instead of at create time.
+- Base64-encoded content in sandbox environment variables triggers 400 from the API. **Fix:** use `writeFiles` for config delivery instead of env vars.
+- OpenClaw now validates that `dmPolicy="open"` has matching `allowFrom: ["*"]`. Without it, gateway refuses to start. **Fix:** always include both fields in config.
+
+**Key files:** `src/server/sandbox/lifecycle.ts`, `src/server/firewall/policy.ts`, `src/server/openclaw/config.ts`
+
+**How to test for this:** The `restore-waterfall` debug route isolates each phase. Check `lastRestoreMetrics` in `/api/status` response for per-phase timing. The full smoke test Phase 6 exercises channel-triggered restore.
+
+### 4. Restore Hot Path Timing Races
+
+**Symptoms:** Intermittent restore failures. Gateway not ready after restore completes. Restore metrics show inconsistent timing.
+
+**Root causes found historically:**
+- Host-side HTTP probes and sandbox-side `runCommand("curl")` probes have different failure modes. Host-side probes can fail due to DNS/proxy issues even when sandbox is ready internally.
+- Overlapping `after()` callbacks from concurrent requests can trigger multiple restores simultaneously.
+- Gateway process hasn't finished booting when first request arrives after restore.
+
+**Key files:** `src/server/sandbox/lifecycle.ts`, `src/server/openclaw/restore-assets.ts`
+
+**How to test for this:** Run `scripts/benchmark-restore.mjs` with multiple cycles. Use the `restore-waterfall` debug route for per-phase breakdown. `concurrency-smoke.test.ts` tests simultaneous restore attempts.
+
+### 5. Template/Shell Script Escaping
+
+**Symptoms:** Build failures, sandbox bootstrap failures, `SyntaxError` in startup scripts.
+
+**Root causes found historically:**
+- TypeScript template literals interpret `${tg_token}` as JS template interpolation instead of shell variable reference — breaks the build. **Fix:** escape with backslash: `\${tg_token}`.
+- Shell `pkill` pattern matching is fragile when binaries rewrite their argv (e.g., `openclaw gateway` → `openclaw-gateway`). **Fix:** use regex patterns.
+
+**Key files:** `src/server/openclaw/bootstrap.ts` (startup script generation), `src/server/openclaw/restore-assets.ts`
+
+**How to test for this:** The build gate (`npm run build`) catches template literal issues. Bootstrap tests in `bootstrap.test.ts` verify generated script content.
+
+### 6. Gateway Configuration Drift
+
+**Symptoms:** Gateway refuses to start after config changes. Device auth prompts appear in proxied UI. Gateway ignores new tokens.
+
+**Root causes found historically:**
+- `dangerouslyDisableDeviceAuth` was re-enabled in config, causing device-level auth prompts that conflict with proxy auth. **Fix:** always set `dangerouslyDisableDeviceAuth: true`.
+- Gateway token was passed as query params (`?token=xxx`) but OpenClaw reads from URL hash fragment (`#token=xxx`). **Fix:** use hash fragment delivery.
+- Injected script stripped token from URL too early (on `DOMContentLoaded`), before React app's `useEffect` could read it asynchronously. **Fix:** poll localStorage for app settings key to detect consumption, then strip.
+
+**Key files:** `src/server/openclaw/config.ts`, `src/server/proxy/htmlInjection.ts`
+
+**How to test for this:** `config.test.ts` verifies config generation. `htmlInjection.test.ts` verifies injection markers and timing. Smoke test Phase 3 checks proxy verification end-to-end.
+
+---
+
+## Remote Debugging Workflows
+
+Step-by-step investigation playbooks for common production issues.
+
+### "Channel messages aren't being delivered"
+
+1. **Check channel health:** `GET /api/admin/channels/health` — look for non-zero `failedCount` or `lastError`
+2. **Check queue depth:** `GET /api/channels/summary` — non-zero `queueDepth` means messages are stuck
+3. **Check logs:** `GET /api/admin/logs?level=error&source=channels` — look for gateway auth failures or platform API errors
+4. **Check gateway token:** SSH `cat /root/.openclaw/gateway-token` — compare with OIDC token from `/api/debug/oidc-timing`
+5. **Check webhook URL:** For Telegram, verify the registered URL doesn't contain `x-vercel-protection-bypass` (Telegram silently rejects it)
+6. **Trigger self-heal:** Run destructive smoke with `selfHealTokenRefresh` phase, or run `POST /api/admin/launch-verify` with destructive mode
+
+### "Sandbox stuck in restoring/error"
+
+1. **Check status:** `GET /api/status` — look at `status`, `lastError`, `lastRestoreMetrics`
+2. **Check lifecycle logs:** `GET /api/admin/logs?source=lifecycle&level=error` — look for API errors, timeout messages
+3. **Run restore waterfall:** `POST /api/debug/restore-waterfall` — identifies which phase is failing/slow
+4. **Inspect via SSH:** `POST /api/admin/ssh` — check process list, logs, disk space
+5. **Check for API asymmetries:** If restoring from snapshot, try fresh create (`POST /api/admin/ensure`) — if create works but restore doesn't, it's likely a create-vs-restore API difference
+6. **Reset metadata:** If stuck, use `scripts/reset-meta.mjs` to clear state and retry
+
+### "Gateway returning 401/403"
+
+1. **Check OIDC timing:** `POST /api/debug/oidc-timing` — if slow or failing, OIDC provider may be down
+2. **Inspect token file:** SSH `cat /root/.openclaw/ai-gateway-key` — check if token looks fresh
+3. **Check auth-recovery logs:** `GET /api/admin/logs?search=auth-recovery` — shows refresh attempts and failures
+4. **Check env immutability:** SSH `env | grep -i gateway` — if baked-in env var differs from token file, the startup script may be overriding
+5. **Trigger launch-verify:** `POST /api/admin/launch-verify` — its `selfHealTokenRefresh` phase tests the full refresh cycle
+6. **Manual refresh:** If needed, stop and ensure to force fresh bootstrap: `POST /api/admin/stop` → `POST /api/admin/ensure`
+
+### "Slow restores"
+
+1. **Run benchmark:** `node scripts/benchmark-restore.mjs --base-url "$URL" --cycles 3 --vcpus 1,2,4` — compare across vCPU configurations
+2. **Check waterfall:** `POST /api/debug/restore-waterfall` — per-phase timing breakdown shows the bottleneck
+3. **Check asset sync:** Look at `lastRestoreMetrics.skippedStaticAssetSync` in `/api/status` — if `false`, static assets are being redundantly rewritten
+4. **Check cold start:** `POST /api/debug/cold-start` — cold start adds SDK import + module load overhead
+5. **Compare SDK overhead:** `POST /api/debug/sdk-import-timing` — measures raw SDK import cost
+6. **Direct SDK benchmark:** `node scripts/bench-sandbox-direct.mjs --cycles 5` — isolates platform latency from app overhead
+
+### "Firewall learning not working"
+
+1. **Check firewall state:** `GET /api/firewall` — verify mode is `learning`
+2. **Check diagnostics:** `GET /api/firewall/diagnostics` — shows extracted domains, inferred vs configured allowlist
+3. **Check learning log:** SSH `cat /tmp/shell-commands-for-learning.log` — verify commands are being captured
+4. **Inspect sandbox:** SSH `ps aux` — verify shell hook is installed that writes to the learning log
+5. **Check startup script:** SSH `cat /root/.openclaw/startup.sh` — verify learning hooks are present
+
+---
 
 ## Test Framework
 

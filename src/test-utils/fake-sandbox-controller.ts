@@ -27,6 +27,7 @@ export type SandboxEventKind =
   | "create"
   | "snapshot"
   | "restore"
+  | "stop"
   | "command"
   | "write_files"
   | "extend_timeout"
@@ -59,6 +60,7 @@ export class FakeSandboxHandle implements SandboxHandle {
   networkPolicies: NetworkPolicy[] = [];
   extendedTimeouts: number[] = [];
   snapshotCalled = false;
+  stopCalled = false;
   createTimeNetworkPolicy?: import("@vercel/sandbox").NetworkPolicy;
   private portDomain: string;
   private eventLog: SandboxEvent[];
@@ -71,6 +73,9 @@ export class FakeSandboxHandle implements SandboxHandle {
 
   /** Optional hook called before writeFiles completes.  Throw to simulate failure. */
   writeFilesHook?: (files: { path: string; content: Buffer }[]) => void;
+
+  /** Optional hook to override `updateNetworkPolicy` behavior (e.g. to simulate failure). */
+  networkPolicyHandler?: (policy: NetworkPolicy) => Promise<NetworkPolicy> | NetworkPolicy;
 
   private timeoutMs: number;
 
@@ -172,6 +177,15 @@ export class FakeSandboxHandle implements SandboxHandle {
     return { snapshotId: `snap-${this.sandboxId}` };
   }
 
+  async stop(_options?: { blocking?: boolean }): Promise<void> {
+    this.stopCalled = true;
+    this.eventLog.push({
+      kind: "stop",
+      sandboxId: this.sandboxId,
+      timestamp: Date.now(),
+    });
+  }
+
   async extendTimeout(duration: number): Promise<void> {
     this.timeoutMs += duration;
     this.extendedTimeouts.push(duration);
@@ -191,6 +205,9 @@ export class FakeSandboxHandle implements SandboxHandle {
       timestamp: Date.now(),
       detail: { policy },
     });
+    if (this.networkPolicyHandler) {
+      return await this.networkPolicyHandler(policy);
+    }
     return policy;
   }
 }
@@ -212,6 +229,9 @@ export class FakeSandboxController implements SandboxController {
 
   /** Optional hook called before writeFiles completes.  Throw to simulate failure. */
   onWriteFiles?: (files: { path: string; content: Buffer }[]) => void;
+
+  /** Optional hook to override `updateNetworkPolicy` on newly created handles. */
+  onNetworkPolicy?: (policy: NetworkPolicy) => Promise<NetworkPolicy> | NetworkPolicy;
 
   private counter = 0;
   private delay: number;
@@ -245,6 +265,9 @@ export class FakeSandboxController implements SandboxController {
     }
     if (this.onWriteFiles) {
       handle.writeFilesHook = this.onWriteFiles;
+    }
+    if (this.onNetworkPolicy) {
+      handle.networkPolicyHandler = this.onNetworkPolicy;
     }
     this.created.push(handle);
     this.handlesByIds.set(id, handle);

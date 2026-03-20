@@ -53,6 +53,7 @@ export interface SandboxHandle {
   readFileToBuffer(file: { path: string; cwd?: string }): Promise<Buffer | null>;
   domain(port: number): string;
   snapshot(): Promise<SnapshotResult>;
+  stop(options?: { blocking?: boolean }): Promise<void>;
   extendTimeout(duration: number): Promise<void>;
   updateNetworkPolicy(policy: NetworkPolicy): Promise<NetworkPolicy>;
 }
@@ -115,6 +116,9 @@ function wrapSandbox(sandbox: Sandbox): SandboxHandle {
     async snapshot() {
       const snap = await sandbox.snapshot();
       return { snapshotId: snap.snapshotId };
+    },
+    async stop(options) {
+      await sandbox.stop(options);
     },
     async extendTimeout(duration) {
       await sandbox.extendTimeout(duration);

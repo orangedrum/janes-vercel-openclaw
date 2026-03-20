@@ -227,7 +227,88 @@ export async function POST(request: Request): Promise<Response> {
 
     const exitCode = restoreResult.exitCode;
 
-    // Phase 13: Mark running
+    // Phase 13: Firewall sync — must succeed before marking running in enforcing mode
+    const firewallPolicyHash = createHash("sha256")
+      .update(JSON.stringify(firewallPolicy))
+      .digest("hex");
+
+    const firewallResult = await step("firewallSync", async () => {
+      try {
+        await sandbox.updateNetworkPolicy(firewallPolicy);
+        return { applied: true, error: null as string | null };
+      } catch (error) {
+        return {
+          applied: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+
+    await step("recordFirewallSync", async () => {
+      const timestamp = Date.now();
+      await mutateMeta((m) => {
+        m.firewall.lastSyncReason = firewallResult.applied
+          ? "restore-waterfall-policy-applied"
+          : "restore-waterfall-policy-failed";
+        m.firewall.lastSyncOutcome = {
+          timestamp,
+          durationMs: waterfall.find((w) => w.step === "firewallSync")?.deltaMs ?? 0,
+          allowlistCount: latest.firewall.allowlist.length,
+          policyHash: firewallPolicyHash,
+          applied: firewallResult.applied,
+          reason: firewallResult.applied
+            ? "restore-waterfall-policy-applied"
+            : "restore-waterfall-policy-failed",
+        };
+        if (firewallResult.applied) {
+          m.firewall.lastSyncAppliedAt = timestamp;
+        } else {
+          m.firewall.lastSyncFailedAt = timestamp;
+        }
+      });
+    });
+
+    // Fail-closed: if firewall sync failed in enforcing mode, do not mark running.
+    if (!firewallResult.applied && latest.firewall.mode === "enforcing") {
+      await step("stopSandbox_firewall_failure", async () => {
+        try {
+          await sandbox.stop({ blocking: true });
+        } catch {
+          // Best-effort cleanup for the temporary debug sandbox.
+        }
+      });
+
+      await step("mutateMeta_firewall_error", async () =>
+        mutateMeta((m) => {
+          m.status = "error";
+          m.lastError = `Firewall sync failed during restore-waterfall: ${firewallResult.error}`;
+          m.sandboxId = null;
+        }),
+      );
+
+      return jsonOk({
+        waterfall,
+        totalMs: Date.now() - t0,
+        summary: {
+          stopMs: waterfall.find((w) => w.step === "stopSandbox")?.deltaMs ?? null,
+          credentialMs: waterfall.find((w) => w.step === "resolveCredential")?.deltaMs ?? null,
+          createMs: waterfall.find((w) => w.step === "Sandbox.create")?.deltaMs ?? null,
+          runCommandMs: waterfall.find((w) => w.step === "runCommand_fastRestore")?.deltaMs ?? null,
+          firewallSyncMs: waterfall.find((w) => w.step === "firewallSync")?.deltaMs ?? null,
+          firewallApplied: false,
+          scriptReadyMs: parsedReadyMs,
+          configWriteSkipped: skippedConfigWrite,
+        },
+        scriptOutput: scriptOutput.trim(),
+        scriptExitCode: exitCode,
+        vcpus,
+        snapshotId: meta.snapshotId,
+        sandboxId: sandbox.sandboxId,
+        error: firewallResult.error,
+      });
+    }
+
+    // Phase 14: Mark running
     await step("mutateMeta_running", () =>
       mutateMeta((m) => {
         m.status = "running";
@@ -240,7 +321,7 @@ export async function POST(request: Request): Promise<Response> {
       }),
     );
 
-    // Phase 14: Snapshot for cleanup (re-snapshot so we can restore again)
+    // Phase 15: Snapshot for cleanup (re-snapshot so we can restore again)
     await step("snapshot_cleanup", () => sandbox.snapshot());
 
     const totalMs = Date.now() - t0;
@@ -253,6 +334,8 @@ export async function POST(request: Request): Promise<Response> {
         credentialMs: waterfall.find((w) => w.step === "resolveCredential")?.deltaMs ?? null,
         createMs: waterfall.find((w) => w.step === "Sandbox.create")?.deltaMs ?? null,
         runCommandMs: waterfall.find((w) => w.step === "runCommand_fastRestore")?.deltaMs ?? null,
+        firewallSyncMs: waterfall.find((w) => w.step === "firewallSync")?.deltaMs ?? null,
+        firewallApplied: firewallResult.applied,
         snapshotMs: waterfall.find((w) => w.step === "snapshot_cleanup")?.deltaMs ?? null,
         scriptReadyMs: parsedReadyMs,
         configWriteSkipped: skippedConfigWrite,
