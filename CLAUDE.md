@@ -467,3 +467,17 @@ These variables are checked by `buildDeploymentContract()` in `src/server/deploy
 - The memory store is not safe for production persistence.
 - Firewall learning is based on shell command observation, not full traffic inspection.
 - Channel webhook durability depends on the store backend. Use Upstash when channels matter.
+
+## Design Context
+
+See `.impeccable.md` for the full design reference. Key principles:
+
+1. **Signal over decoration** — Every visual element must carry information. No ornamental gradients, shadows, or illustrations. Color is reserved for status and brand.
+2. **Density with clarity** — Pack information tight but keep it scannable. Use Geist Mono eyebrow labels, consistent spacing scales, and strong typographic hierarchy.
+3. **Quiet confidence** — Subtle transitions (150ms ease), restrained animations, no jarring motion. Status communicates through color and text.
+4. **Vercel-native feel** — Geist fonts, monochrome palette, 1px borders, pill badges, same component vocabulary as Vercel Dashboard.
+5. **Operator-first** — Optimize for someone who already knows what everything means. Concise labels, direct controls, CLI-copy patterns are first-class.
+
+**Aesthetic**: Dark-only, technical, minimal. References: Vercel Dashboard, Linear. Anti-references: colorful dashboards, playful/consumer UI.
+**Users**: Solo developers managing their own OpenClaw sandbox.
+**Accessibility**: WCAG AA.

@@ -133,11 +133,13 @@ export async function setWebhook(
   botToken: string,
   url: string,
   secretToken: string,
+  options?: { dropPendingUpdates?: boolean },
 ): Promise<void> {
   await callTelegramApi(botToken, "setWebhook", {
     url,
     secret_token: secretToken,
     allowed_updates: ["message", "edited_message", "callback_query"],
+    drop_pending_updates: options?.dropPendingUpdates ?? true,
   });
 }
 

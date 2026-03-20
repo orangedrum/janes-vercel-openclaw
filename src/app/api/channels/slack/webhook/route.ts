@@ -1,7 +1,8 @@
+import { start } from "workflow/api";
+
 import { getPublicOrigin } from "@/server/public-url";
-import { enqueueChannelJob } from "@/server/channels/driver";
 import { channelDedupKey } from "@/server/channels/keys";
-import { publishToChannelQueue } from "@/server/channels/queue";
+import { drainChannelWorkflow } from "@/server/workflows/channels/drain-channel-workflow";
 import {
   getSlackUrlVerificationChallenge,
   isValidSlackSignature,
@@ -154,18 +155,14 @@ export async function POST(request: Request): Promise<Response> {
     // Fall through to queue-based path
   }
 
-  const job = {
-    payload,
-    receivedAt: Date.now(),
-    origin: getPublicOrigin(request),
-    opId: op.opId,
-    requestId: requestId ?? null,
-  };
-
-  const { queued } = await publishToChannelQueue("slack", job);
-  if (!queued) {
-    await enqueueChannelJob("slack", job);
-    logInfo("channels.slack_webhook_fallback_enqueue", withOperationContext(op, { receivedAt: job.receivedAt }));
+  try {
+    const origin = getPublicOrigin(request);
+    await start(drainChannelWorkflow, ["slack", payload, origin, requestId ?? null]);
+    logInfo("channels.slack_workflow_started", withOperationContext(op));
+  } catch (error) {
+    logWarn("channels.slack_workflow_start_failed", withOperationContext(op, {
+      error: error instanceof Error ? error.message : String(error),
+    }));
   }
 
   return Response.json({ ok: true });

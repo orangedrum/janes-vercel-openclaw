@@ -77,7 +77,7 @@ export function isTelegramWebhookSecretValid(
   );
 }
 
-function extractTelegramChatId(update: unknown): string | null {
+export function extractTelegramChatId(update: unknown): string | null {
   if (!update || typeof update !== "object") {
     return null;
   }

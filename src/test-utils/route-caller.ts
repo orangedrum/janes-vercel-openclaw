@@ -322,7 +322,6 @@ let _firewallAllowlistRoute: SimpleRouteModule | null = null;
 let _firewallPromoteRoute: SimpleRouteModule | null = null;
 let _firewallLearnedRoute: SimpleRouteModule | null = null;
 let _firewallReportRoute: SimpleRouteModule | null = null;
-let _cronDrainRoute: SimpleRouteModule | null = null;
 let _channelsSummaryRoute: SimpleRouteModule | null = null;
 let _authAuthorizeRoute: SimpleRouteModule | null = null;
 let _authCallbackRoute: SimpleRouteModule | null = null;
@@ -407,15 +406,6 @@ export function getFirewallTestRoute(): SimpleRouteModule {
     _firewallTestRoute = require("@/app/api/firewall/test/route") as SimpleRouteModule;
   }
   return _firewallTestRoute;
-}
-
-export function getCronDrainRoute(): SimpleRouteModule {
-  if (!_cronDrainRoute) {
-    patchNextServerAfter();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _cronDrainRoute = require("@/app/api/cron/drain-channels/route") as SimpleRouteModule;
-  }
-  return _cronDrainRoute;
 }
 
 export function getChannelsSummaryRoute(): SimpleRouteModule {

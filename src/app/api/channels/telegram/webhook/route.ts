@@ -1,8 +1,10 @@
+import { start } from "workflow/api";
+
 import { getPublicOrigin } from "@/server/public-url";
-import { enqueueChannelJob } from "@/server/channels/driver";
 import { channelDedupKey } from "@/server/channels/keys";
-import { publishToChannelQueue } from "@/server/channels/queue";
-import { isTelegramWebhookSecretValid } from "@/server/channels/telegram/adapter";
+import { drainChannelWorkflow } from "@/server/workflows/channels/drain-channel-workflow";
+import { extractTelegramChatId, isTelegramWebhookSecretValid } from "@/server/channels/telegram/adapter";
+import { sendMessage } from "@/server/channels/telegram/bot-api";
 import { extractRequestId, logError, logInfo, logWarn } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { OPENCLAW_TELEGRAM_WEBHOOK_PORT } from "@/server/openclaw/config";
@@ -102,18 +104,32 @@ export async function POST(request: Request): Promise<Response> {
       // Fall through to queue-based path
     }
 
-    const job = {
-      payload,
-      receivedAt: Date.now(),
-      origin: getPublicOrigin(request),
-      opId: op.opId,
-      requestId: requestId ?? null,
-    };
+    // Send "Starting up" boot message from the webhook route (before workflow)
+    // so the user gets immediate feedback. The message ID is passed to the
+    // workflow so the step can edit/delete it during processing.
+    let bootMessageId: number | null = null;
+    const chatId = extractTelegramChatId(payload);
+    if (meta.status !== "running" && chatId) {
+      try {
+        const result = await sendMessage(config.botToken, Number(chatId), "Starting up\u2026 I'll respond in a moment.");
+        bootMessageId = result.message_id;
+        logInfo("channels.telegram_boot_message_sent", withOperationContext(op, { chatId, bootMessageId }));
+      } catch (err) {
+        logWarn("channels.telegram_boot_message_failed", withOperationContext(op, {
+          chatId,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+      }
+    }
 
-    const { queued } = await publishToChannelQueue("telegram", job);
-    if (!queued) {
-      await enqueueChannelJob("telegram", job);
-      logInfo("channels.telegram_webhook_fallback_enqueue", withOperationContext(op, { receivedAt: job.receivedAt }));
+    try {
+      const origin = getPublicOrigin(request);
+      await start(drainChannelWorkflow, ["telegram", payload, origin, requestId ?? null, bootMessageId]);
+      logInfo("channels.telegram_workflow_started", withOperationContext(op));
+    } catch (error) {
+      logWarn("channels.telegram_workflow_start_failed", withOperationContext(op, {
+        error: error instanceof Error ? error.message : String(error),
+      }));
     }
   } catch (error) {
     logError("channels.telegram_webhook_enqueue_failed", {

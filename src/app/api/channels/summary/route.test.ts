@@ -85,20 +85,15 @@ test("GET /api/channels/summary: returns summary for all three channels", async 
 
     assert.equal(result.status, 200);
     const body = result.json as {
-      slack: { connected: boolean; queueDepth: number; failedCount: number };
-      telegram: { connected: boolean; queueDepth: number; failedCount: number };
-      discord: { connected: boolean; queueDepth: number; failedCount: number };
+      slack: { connected: boolean; lastError: string | null };
+      telegram: { connected: boolean; lastError: string | null };
+      discord: { connected: boolean; lastError: string | null };
     };
 
     // All channels disconnected by default
     assert.equal(body.slack.connected, false);
     assert.equal(body.telegram.connected, false);
     assert.equal(body.discord.connected, false);
-
-    // Queue depths should be 0 with empty store
-    assert.equal(body.slack.queueDepth, 0);
-    assert.equal(body.telegram.queueDepth, 0);
-    assert.equal(body.discord.queueDepth, 0);
   });
 });
 

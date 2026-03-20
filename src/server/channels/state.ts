@@ -7,7 +7,6 @@ import type {
 } from "@/shared/channels";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
 import type { SingleMeta } from "@/shared/types";
-import { getChannelQueueDepth } from "@/server/channels/driver";
 import { buildChannelConnectability } from "@/server/channels/connectability";
 import {
   isPublicUrl,
@@ -92,12 +91,11 @@ export async function getPublicChannelState(
   meta?: SingleMeta,
 ): Promise<PublicChannelState> {
   const resolvedMeta = meta ?? (await getInitializedMeta());
-  const [slackQueueDepth, telegramQueueDepth, discordQueueDepth] =
-    await Promise.all([
-      getChannelQueueDepth("slack"),
-      getChannelQueueDepth("telegram"),
-      getChannelQueueDepth("discord"),
-    ]);
+  // Queue depth is no longer tracked — channel processing uses Workflow DevKit,
+  // which handles retries and delivery internally.
+  const slackQueueDepth = 0;
+  const telegramQueueDepth = 0;
+  const discordQueueDepth = 0;
 
   // Display URLs (without bypass secret) — safe for admin-visible state
   const slackDisplayUrl = buildPublicDisplayUrl("/api/channels/slack/webhook", request);

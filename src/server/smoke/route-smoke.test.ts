@@ -65,7 +65,6 @@ import {
   getTelegramWebhookRoute,
   getDiscordWebhookRoute,
   getChannelsSummaryRoute,
-  getCronDrainRoute,
   getAuthAuthorizeRoute,
   getAuthCallbackRoute,
   getAuthSignoutRoute,
@@ -985,29 +984,6 @@ test("route-smoke: POST /api/admin/stop without CSRF returns 403", async (t) => 
 
 // ===========================================================================
 // 10. Cron drain endpoint
-// ===========================================================================
-
-test("route-smoke: GET /api/cron/drain-channels works without CRON_SECRET in test", async (t) => {
-  const h = createScenarioHarness();
-  h.installDefaultGatewayHandlers();
-  const origFetch = globalThis.fetch;
-  globalThis.fetch = h.fakeFetch.fetch;
-  try {
-    const route = getCronDrainRoute();
-    const result = await callRoute(route.GET!, buildGetRequest("/api/cron/drain-channels"));
-    assert.equal(result.status, 200);
-    const body = result.json as { ok: boolean };
-    assert.equal(body.ok, true);
-  } catch (err) {
-    await dumpDiagnostics(t, h);
-    throw err;
-  } finally {
-    globalThis.fetch = origFetch;
-    resetAfterCallbacks();
-    h.teardown();
-  }
-});
-
 // ===========================================================================
 // 11. Gateway proxy route
 // ===========================================================================

@@ -8,33 +8,6 @@
     "src/app/api/admin/ssh/route.ts": {
       "maxDuration": 60
     },
-    "src/app/api/queues/channels/slack/route.ts": {
-      "maxDuration": 300,
-      "experimentalTriggers": [
-        {
-          "type": "queue/v2beta",
-          "topic": "channel-slack"
-        }
-      ]
-    },
-    "src/app/api/queues/channels/telegram/route.ts": {
-      "maxDuration": 300,
-      "experimentalTriggers": [
-        {
-          "type": "queue/v2beta",
-          "topic": "channel-telegram"
-        }
-      ]
-    },
-    "src/app/api/queues/channels/discord/route.ts": {
-      "maxDuration": 300,
-      "experimentalTriggers": [
-        {
-          "type": "queue/v2beta",
-          "topic": "channel-discord"
-        }
-      ]
-    },
     "src/app/api/queues/launch-verify/route.ts": {
       "maxDuration": 300,
       "experimentalTriggers": [

@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
-
 import type { ChannelName } from "@/shared/channels";
-import type { OperationContext, QueueStateSnapshot, SingleMeta } from "@/shared/types";
+import type { OperationContext, SingleMeta } from "@/shared/types";
 import {
   createOperationContext,
   withOperationContext,
@@ -17,17 +15,9 @@ import type {
 } from "@/server/channels/core/types";
 import { appendSessionHistory, readSessionHistory } from "@/server/channels/history";
 import {
-  channelFailedKey,
-  channelDedupKey,
-  channelDrainLockKey,
-  channelProcessingKey,
-  channelQueueKey,
-} from "@/server/channels/keys";
-import {
   callGatewayWithAuthRecovery,
 } from "@/server/gateway/auth-recovery";
-import { logError, logInfo, logWarn } from "@/server/log";
-import { logStateSnapshot } from "@/server/observability/state-snapshot";
+import { logInfo, logWarn } from "@/server/log";
 import { getPublicOriginFromHint } from "@/server/public-url";
 import { getSandboxController } from "@/server/sandbox/controller";
 import type { TokenRefreshResult } from "@/server/sandbox/lifecycle";
@@ -38,16 +28,9 @@ import {
   reconcileSandboxHealth,
   touchRunningSandbox,
 } from "@/server/sandbox/lifecycle";
-import { getInitializedMeta, getStore } from "@/server/store/store";
+import { getInitializedMeta } from "@/server/store/store";
 
 const CHANNEL_PROCESSING_INDICATOR_DELAY_MS = 800;
-const DRAIN_LOCK_TTL_SECONDS = 10 * 60;
-const CHANNEL_DEDUP_TTL_SECONDS = 5 * 60;
-const CHANNEL_VISIBILITY_TIMEOUT_SECONDS = 20 * 60;
-const MAX_RETRY_COUNT = 8;
-const RETRY_BACKOFF_BASE_MS = 1_000;
-const RETRY_BACKOFF_MAX_MS = 5 * 60 * 1000;
-const CHANNEL_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 export const DEFAULT_CHANNEL_SANDBOX_READY_TIMEOUT_MS = 25_000;
 export const DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS = 90_000;
 const DEFAULT_CHANNEL_WAKE_RETRY_AFTER_SECONDS = 15;
@@ -69,19 +52,6 @@ export type QueuedChannelJob<TPayload = unknown> = {
   requestId?: string | null;
 };
 
-type FailedEntry = {
-  failedAt: number;
-  error: string;
-  channel: ChannelName;
-  job: QueuedChannelJob<unknown>;
-};
-
-type LeasedChannelQueueEntry = {
-  job: string;
-  leasedAt: number;
-  visibilityTimeoutAt: number;
-};
-
 export type ChannelJobOptions<
   TConfig,
   TPayload,
@@ -95,295 +65,6 @@ export type ChannelJobOptions<
   /** Override gateway request timeout (ms). Defaults to DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS. */
   requestTimeoutMs?: number;
 };
-
-type DrainChannelQueueOptions<
-  TConfig,
-  TPayload,
-  TMessage extends ExtractedChannelMessage,
-> = ChannelJobOptions<TConfig, TPayload, TMessage>;
-
-export async function enqueueChannelJob<TPayload>(
-  channel: ChannelName,
-  job: QueuedChannelJob<TPayload>,
-): Promise<void> {
-  const store = getStore();
-  const queueKey = channelQueueKey(channel);
-  const rawJob = JSON.stringify(job);
-  const isRetry = (job.retryCount ?? 0) > 0 || typeof job.nextAttemptAt === "number";
-
-  const correlationCtx = {
-    ...(job.opId ? { opId: job.opId } : {}),
-    ...(job.parentOpId ? { parentOpId: job.parentOpId } : {}),
-    ...(job.requestId ? { requestId: job.requestId } : {}),
-  };
-
-  if (isRetry) {
-    await store.enqueueFront(queueKey, rawJob);
-    logInfo("channels.job_enqueued", {
-      channel,
-      receivedAt: job.receivedAt,
-      retryCount: job.retryCount ?? 0,
-      deduped: false,
-      ...correlationCtx,
-    });
-    return;
-  }
-
-  const dedupId = resolveJobDedupId(channel, job);
-  const dedupResult = await store.enqueueUnique(
-    queueKey,
-    channelDedupKey(channel, dedupId),
-    CHANNEL_DEDUP_TTL_SECONDS,
-    rawJob,
-  );
-
-  if (!dedupResult.enqueued) {
-    logInfo("channels.job_deduped", {
-      channel,
-      dedupId,
-      receivedAt: job.receivedAt,
-      ...correlationCtx,
-    });
-    return;
-  }
-
-  logInfo("channels.job_enqueued", {
-    channel,
-    receivedAt: job.receivedAt,
-    retryCount: job.retryCount ?? 0,
-    deduped: false,
-    ...correlationCtx,
-  });
-}
-
-export async function getChannelQueueDepth(channel: ChannelName): Promise<number> {
-  const snapshot = await getChannelQueueSnapshot(channel);
-  return snapshot.queued + snapshot.processing;
-}
-
-export async function getChannelQueueSnapshot(
-  channel: ChannelName,
-): Promise<QueueStateSnapshot> {
-  const store = getStore();
-  const [queued, processing] = await Promise.all([
-    store.getQueueLength(channelQueueKey(channel)),
-    store.getQueueLength(channelProcessingKey(channel)),
-  ]);
-
-  return { queued, processing };
-}
-
-export async function drainChannelQueue<
-  TConfig,
-  TPayload,
-  TMessage extends ExtractedChannelMessage,
->(
-  options: DrainChannelQueueOptions<TConfig, TPayload, TMessage>,
-): Promise<void> {
-  const store = getStore();
-  const queueKey = channelQueueKey(options.channel);
-  const processingKey = channelProcessingKey(options.channel);
-  const lockKey = channelDrainLockKey(options.channel);
-  const lockToken = await store.acquireLock(lockKey, DRAIN_LOCK_TTL_SECONDS);
-  if (!lockToken) {
-    return;
-  }
-
-  try {
-    const snapshotQueue = async (): Promise<{ queued: number; processing: number }> => {
-      const [queued, processing] = await Promise.all([
-        store.getQueueLength(queueKey),
-        store.getQueueLength(processingKey),
-      ]);
-      return { queued, processing };
-    };
-
-    const recovered = await store.requeueExpiredLeases(
-      queueKey,
-      processingKey,
-      Date.now(),
-    );
-    if (recovered > 0) {
-      logWarn("channels.processing_recovered", {
-        channel: options.channel,
-        recovered,
-      });
-    }
-
-    for (;;) {
-      const leasedValue = await store.leaseQueueItem(
-        queueKey,
-        processingKey,
-        Date.now(),
-        CHANNEL_VISIBILITY_TIMEOUT_SECONDS,
-      );
-      if (!leasedValue) {
-        break;
-      }
-
-      const leasedEntry = parseLeasedChannelQueueEntry(leasedValue);
-      let job: QueuedChannelJob<TPayload>;
-      try {
-        job = JSON.parse(leasedEntry.job) as QueuedChannelJob<TPayload>;
-      } catch (error) {
-        await store.ackQueueItem(processingKey, leasedValue);
-        await writeFailed(options.channel, {
-          failedAt: Date.now(),
-          error: formatError(error),
-          channel: options.channel,
-          job: {
-            payload: leasedEntry.job,
-            origin: process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "unknown",
-            receivedAt: Date.now(),
-          },
-        });
-        continue;
-      }
-
-      // --- Snapshot: job leased ---
-      {
-        const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
-        logStateSnapshot({
-          event: "channels.job_leased",
-          meta,
-          channel: options.channel,
-          queue,
-          extra: {
-            receivedAt: job.receivedAt,
-            retryCount: job.retryCount ?? 0,
-            nextAttemptAt: job.nextAttemptAt ?? null,
-            leasedAt: leasedEntry.leasedAt,
-            visibilityTimeoutAt: leasedEntry.visibilityTimeoutAt,
-            opId: job.opId ?? null,
-            requestId: job.requestId ?? null,
-          },
-        });
-      }
-
-      const now = Date.now();
-      if (
-        typeof job.nextAttemptAt === "number" &&
-        Number.isFinite(job.nextAttemptAt) &&
-        job.nextAttemptAt > now
-      ) {
-        const parkedLease = serializeLeasedChannelQueueEntry(
-          leasedEntry.job,
-          job.nextAttemptAt,
-        );
-        const parked = await store.updateQueueLease(
-          processingKey,
-          leasedValue,
-          parkedLease,
-        );
-
-        // --- Snapshot: job parked or park failed ---
-        {
-          const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
-          logStateSnapshot({
-            event: parked ? "channels.job_parked" : "channels.job_park_failed",
-            level: parked ? "info" : "warn",
-            meta,
-            channel: options.channel,
-            queue,
-            extra: {
-              retryCount: job.retryCount ?? 0,
-              nextAttemptAt: job.nextAttemptAt,
-              opId: job.opId ?? null,
-            },
-          });
-        }
-
-        continue;
-      }
-
-      try {
-        await processChannelJob(options, job);
-        const acknowledged = await store.ackQueueItem(processingKey, leasedValue);
-
-        // --- Snapshot: job acked or ack missing ---
-        {
-          const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
-          logStateSnapshot({
-            event: acknowledged ? "channels.job_acked" : "channels.job_ack_missing",
-            level: acknowledged ? "info" : "warn",
-            meta,
-            channel: options.channel,
-            queue,
-            extra: {
-              receivedAt: job.receivedAt,
-              retryCount: job.retryCount ?? 0,
-              opId: job.opId ?? null,
-            },
-          });
-        }
-      } catch (error) {
-        if (isRetryable(error)) {
-          const retryJob = withRetry(job, error);
-          if (retryJob) {
-            const retryLease = serializeLeasedChannelQueueEntry(
-              JSON.stringify(retryJob),
-              retryJob.nextAttemptAt ??
-                Date.now() + CHANNEL_VISIBILITY_TIMEOUT_SECONDS * 1000,
-            );
-            const updated = await store.updateQueueLease(
-              processingKey,
-              leasedValue,
-              retryLease,
-            );
-
-            // --- Snapshot: retry parked or retry park failed ---
-            {
-              const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
-              logStateSnapshot({
-                event: updated ? "channels.job_retry_parked" : "channels.job_retry_park_failed",
-                level: "warn",
-                meta,
-                channel: options.channel,
-                queue,
-                extra: {
-                  error: formatError(error),
-                  retryCount: retryJob.retryCount ?? 0,
-                  nextAttemptAt: retryJob.nextAttemptAt ?? null,
-                  lastError: retryJob.lastError ?? null,
-                  opId: retryJob.opId ?? null,
-                },
-              });
-            }
-
-            continue;
-          }
-
-          logError("channels.job_retry_exhausted", {
-            channel: options.channel,
-            error: formatError(error),
-          });
-          await writeFailed(options.channel, {
-            failedAt: Date.now(),
-            error: formatError(error),
-            channel: options.channel,
-            job,
-          });
-          await store.ackQueueItem(processingKey, leasedValue);
-          continue;
-        }
-
-        logError("channels.job_failed", {
-          channel: options.channel,
-          error: formatError(error),
-        });
-        await writeFailed(options.channel, {
-          failedAt: Date.now(),
-          error: formatError(error),
-          channel: options.channel,
-          job,
-        });
-        await store.ackQueueItem(processingKey, leasedValue);
-      }
-    }
-  } finally {
-    await store.releaseLock(lockKey, lockToken);
-  }
-}
 
 export async function runWithProcessingIndicator<
   TMessage extends ExtractedChannelMessage,
@@ -748,69 +429,6 @@ class RetryableChannelError extends Error {
   }
 }
 
-function resolveJobDedupId<TPayload>(
-  channel: ChannelName,
-  job: QueuedChannelJob<TPayload>,
-): string {
-  const explicitDedupId = job.dedupId?.trim();
-  if (explicitDedupId) {
-    return explicitDedupId;
-  }
-
-  try {
-    return createHash("sha256")
-      .update(channel)
-      .update(":")
-      .update(JSON.stringify(job.payload))
-      .digest("hex");
-  } catch {
-    return createHash("sha256")
-      .update(channel)
-      .update(":")
-      .update(String(job.receivedAt))
-      .update(":")
-      .update(job.origin)
-      .digest("hex");
-  }
-}
-
-function parseLeasedChannelQueueEntry(raw: string): LeasedChannelQueueEntry {
-  try {
-    const parsed = JSON.parse(raw) as Partial<LeasedChannelQueueEntry>;
-    if (typeof parsed.job === "string") {
-      return {
-        job: parsed.job,
-        leasedAt: typeof parsed.leasedAt === "number" ? parsed.leasedAt : 0,
-        visibilityTimeoutAt:
-          typeof parsed.visibilityTimeoutAt === "number"
-            ? parsed.visibilityTimeoutAt
-            : 0,
-      };
-    }
-  } catch {
-    // Fall through to legacy/raw-entry handling.
-  }
-
-  return {
-    job: raw,
-    leasedAt: 0,
-    visibilityTimeoutAt: 0,
-  };
-}
-
-function serializeLeasedChannelQueueEntry(
-  rawJob: string,
-  visibilityTimeoutAt: number,
-): string {
-  const envelope: LeasedChannelQueueEntry = {
-    job: rawJob,
-    leasedAt: Date.now(),
-    visibilityTimeoutAt,
-  };
-
-  return JSON.stringify(envelope);
-}
-
 function shouldRetryGatewayRequestAfterRefresh(
   refreshResult: TokenRefreshResult,
 ): boolean {
@@ -869,81 +487,6 @@ function toRetryableErrorIfNeeded(error: unknown): Error {
   }
 
   return error instanceof Error ? error : new Error(String(error));
-}
-
-function withRetry<TPayload>(
-  job: QueuedChannelJob<TPayload>,
-  error: unknown,
-): QueuedChannelJob<TPayload> | null {
-  const retryCount = (job.retryCount ?? 0) + 1;
-  if (retryCount > MAX_RETRY_COUNT) {
-    return null;
-  }
-
-  const retryAfterSeconds = getRetryAfterSeconds(error);
-  const retryDelayMs = computeRetryDelayMs(retryCount - 1, retryAfterSeconds);
-  return {
-    ...job,
-    retryCount,
-    nextAttemptAt: Date.now() + retryDelayMs,
-    lastRetryAt: Date.now(),
-    lastError: formatError(error),
-  };
-}
-
-function getRetryAfterSeconds(error: unknown): number | undefined {
-  if (error instanceof RetryableChannelError) {
-    return error.retryAfterSeconds;
-  }
-
-  const maybeRetryAfter = (error as { retryAfterSeconds?: unknown }).retryAfterSeconds;
-  if (
-    typeof maybeRetryAfter === "number" &&
-    Number.isFinite(maybeRetryAfter) &&
-    maybeRetryAfter > 0
-  ) {
-    return maybeRetryAfter;
-  }
-
-  return undefined;
-}
-
-function computeRetryDelayMs(
-  previousRetryCount: number,
-  retryAfterSeconds?: number,
-): number {
-  const exponentialDelayMs = Math.min(
-    RETRY_BACKOFF_MAX_MS,
-    RETRY_BACKOFF_BASE_MS * (2 ** Math.max(0, previousRetryCount)),
-  );
-
-  const retryAfterDelayMs =
-    typeof retryAfterSeconds === "number" &&
-    Number.isFinite(retryAfterSeconds) &&
-    retryAfterSeconds > 0
-      ? Math.min(RETRY_BACKOFF_MAX_MS, Math.ceil(retryAfterSeconds * 1000))
-      : 0;
-
-  return Math.max(exponentialDelayMs, retryAfterDelayMs);
-}
-
-function parseRetryAfterSeconds(headerValue: string | null): number | undefined {
-  if (!headerValue) {
-    return undefined;
-  }
-
-  const numeric = Number(headerValue);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return Math.ceil(numeric);
-  }
-
-  const timestamp = Date.parse(headerValue);
-  if (!Number.isFinite(timestamp)) {
-    return undefined;
-  }
-
-  const waitSeconds = Math.ceil((timestamp - Date.now()) / 1000);
-  return waitSeconds > 0 ? waitSeconds : undefined;
 }
 
 const SANDBOX_HOME_DIR = "/home/vercel-sandbox";
@@ -1089,13 +632,6 @@ async function resolveSandboxImages(
 
 function resolveAppOrigin(origin: string | null | undefined): string {
   return getPublicOriginFromHint(origin);
-}
-
-async function writeFailed(
-  channel: ChannelName,
-  entry: FailedEntry,
-): Promise<void> {
-  await getStore().enqueue(channelFailedKey(channel), JSON.stringify(entry));
 }
 
 function formatError(error: unknown): string {

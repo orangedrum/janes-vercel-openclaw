@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
 
+// Channel queue consumers replaced by Workflow DevKit (drainChannelWorkflow).
+// Only launch-verify still uses @vercel/queue.
 const required = [
-  "src/app/api/queues/channels/slack/route.ts",
-  "src/app/api/queues/channels/telegram/route.ts",
-  "src/app/api/queues/channels/discord/route.ts",
   "src/app/api/queues/launch-verify/route.ts",
 ];
 

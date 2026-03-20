@@ -272,17 +272,12 @@ test("[state] createTelegramWebhookSecret -> returns base64url string of suffici
 // Edge-branch: queueDepth from actual queued items
 // ---------------------------------------------------------------------------
 
-test("[state] getPublicChannelState -> queueDepth reflects enqueued items", async () => {
+test("[state] getPublicChannelState -> queueDepth is always 0 (workflows handle processing)", async () => {
   await withHarness(async (h) => {
-    const store = h.getStore();
-    // Enqueue a couple of items directly
-    await store.enqueue("openclaw-single:channels:slack:queue", "job-1");
-    await store.enqueue("openclaw-single:channels:slack:queue", "job-2");
-
     const meta = await h.getMeta();
     const state = await getPublicChannelState(makeRequest(), meta);
 
-    assert.equal(state.slack.queueDepth, 2);
+    assert.equal(state.slack.queueDepth, 0);
     assert.equal(state.telegram.queueDepth, 0);
     assert.equal(state.discord.queueDepth, 0);
   });

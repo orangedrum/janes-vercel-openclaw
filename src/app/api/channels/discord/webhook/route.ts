@@ -1,9 +1,10 @@
+import { start } from "workflow/api";
+
 import { getPublicOrigin } from "@/server/public-url";
-import { enqueueChannelJob } from "@/server/channels/driver";
 import { verifyDiscordRequestSignature } from "@/server/channels/discord/adapter";
 import { channelDedupKey } from "@/server/channels/keys";
-import { publishToChannelQueue } from "@/server/channels/queue";
-import { extractRequestId, logInfo } from "@/server/log";
+import { drainChannelWorkflow } from "@/server/workflows/channels/drain-channel-workflow";
+import { extractRequestId, logInfo, logWarn } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
@@ -76,18 +77,14 @@ export async function POST(request: Request): Promise<Response> {
 
   logInfo("channels.discord_webhook_accepted", withOperationContext(op));
 
-  const job = {
-    payload,
-    receivedAt: Date.now(),
-    origin: getPublicOrigin(request),
-    opId: op.opId,
-    requestId: requestId ?? null,
-  };
-
-  const { queued } = await publishToChannelQueue("discord", job);
-  if (!queued) {
-    await enqueueChannelJob("discord", job);
-    logInfo("channels.discord_webhook_fallback_enqueue", withOperationContext(op, { receivedAt: job.receivedAt }));
+  try {
+    const origin = getPublicOrigin(request);
+    await start(drainChannelWorkflow, ["discord", payload, origin, requestId ?? null]);
+    logInfo("channels.discord_workflow_started", withOperationContext(op));
+  } catch (error) {
+    logWarn("channels.discord_workflow_start_failed", withOperationContext(op, {
+      error: error instanceof Error ? error.message : String(error),
+    }));
   }
 
   return Response.json({ type: 5 });

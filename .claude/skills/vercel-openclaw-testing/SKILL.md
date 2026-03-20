@@ -23,6 +23,32 @@ metadata:
 
 Full testing playbook for `vercel-openclaw` — a single Next.js 16 App Router project deployed to Vercel.
 
+## Agent Environment File (`.env.agent`)
+
+The file `.env.agent` in the repo root contains non-secret configuration for remote testing. It is gitignored (`.env*` pattern) and intentionally separate from `.env.local` (which has real production secrets like Upstash tokens).
+
+**Read this file before running any remote commands.** It provides:
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENCLAW_BASE_URL` | The deployed app URL (e.g. `https://vercel-openclaw.labs.vercel.dev`) |
+| `ADMIN_SECRET` | The admin secret for bearer token auth |
+
+Usage: source the file or read the values before running remote scripts:
+
+```bash
+# Source it
+source .env.agent
+
+# Then use in commands
+node scripts/check-deploy-readiness.mjs --base-url "$OPENCLAW_BASE_URL" --admin-secret "$ADMIN_SECRET"
+npm run smoke:remote -- --base-url "$OPENCLAW_BASE_URL" --destructive
+```
+
+**Important:** `.env.agent` should only contain values safe for AI agents to read. Never put Upstash tokens, OIDC secrets, session secrets, or channel signing keys here — those belong in `.env.local`.
+
+---
+
 ## Quick Reference
 
 ```bash
@@ -38,7 +64,8 @@ node scripts/verify.mjs --steps=test,typecheck              # multiple steps
 npm test                                                    # all tests
 npm run test:watch                                          # watch mode
 
-# Remote diagnostics (all secrets from env vars — never hardcode)
+# Remote diagnostics (read .env.agent first for OPENCLAW_BASE_URL and ADMIN_SECRET)
+# source .env.agent
 node scripts/check-deploy-readiness.mjs --base-url "$OPENCLAW_BASE_URL" --admin-secret "$ADMIN_SECRET"
 node scripts/check-deploy-readiness.mjs --base-url "$OPENCLAW_BASE_URL" --admin-secret "$ADMIN_SECRET" --mode destructive
 npm run smoke:remote -- --base-url "$OPENCLAW_BASE_URL" --destructive --timeout 180
@@ -185,13 +212,128 @@ All debug routes require the `ENABLE_DEBUG_ROUTES` env var to be set. They retur
 |----------|--------|---------|
 | `/api/admin/preflight` | GET | Deployment readiness config check — authMode, publicOrigin, storeBackend, aiGatewayAuth, channel connectability, webhook diagnostics |
 | `/api/admin/launch-verify` | POST | Full launch verification — preflight + queue probe + sandbox ensure + chat completions + wake-from-sleep + self-heal token refresh |
-| `/api/admin/logs` | GET | Server logs from ring buffer + sandbox OpenClaw logs (up to 200 lines). Filter with `?level=error&source=lifecycle&search=token` |
+| `/api/admin/logs` | GET | Server logs + sandbox logs with correlation filters (see below) |
 | `/api/admin/watchdog` | GET/POST | Sandbox health monitoring — GET reads cached report, POST runs fresh check (readiness, gateway, timeout validation) |
 | `/api/admin/ssh` | POST | Execute shell commands in the running sandbox. Body: `{ "command": "ps aux" }` |
 | `/api/admin/channels/health` | GET | Channel queue health — queue depth, failed counts, last errors for all channels |
 | `/api/channels/summary` | GET | Channel delivery state — queue depths, config status, connectivity |
 | `/api/firewall/diagnostics` | GET | Detailed firewall state — learning logs, extracted domains, inferred vs configured allowlist |
-| `/api/status` | GET | Full metadata snapshot. Add `?health=1` for live gateway probe |
+| `/api/status` | GET | Full metadata snapshot including `lifecycle` block (see below). Add `?health=1` for live gateway probe |
+
+### Log Endpoint Filters (`GET /api/admin/logs`)
+
+The logs endpoint merges server ring buffer logs with sandbox OpenClaw logs (read from `setup`, `booting`, `restoring`, and `running` states — NOT `stopped`). All filters use AND logic when combined.
+
+| Query Param | Purpose | Example |
+|-------------|---------|---------|
+| `?level=` | Filter by log level | `?level=error` |
+| `?source=` | Filter by source module | `?source=lifecycle`, `?source=channels`, `?source=auth` |
+| `?search=` | Free-text search in message | `?search=token` |
+| `?opId=` | Filter by operation ID (matches both `opId` and `parentOpId`) | `?opId=op_abc123` |
+| `?requestId=` | Filter by Vercel request ID (`x-vercel-id`) | `?requestId=iad1::xxxxx` |
+| `?channel=` | Filter by channel (slack/telegram/discord) | `?channel=slack` |
+| `?sandboxId=` | Filter by sandbox ID | `?sandboxId=sbx-abc` |
+| `?messageId=` | Filter by message ID | `?messageId=msg_123` |
+
+The response includes a `diagnostics` block reporting sandbox log collection status:
+
+```json
+{
+  "logs": [...],
+  "diagnostics": {
+    "serverLogCount": 42,
+    "sandboxLogCount": 15,
+    "totalLogCount": 57,
+    "sandbox": {
+      "attempted": true,
+      "included": true,
+      "status": "running",
+      "sandboxId": "sbx-abc",
+      "tailError": null,
+      "parsedLineCount": 200,
+      "matchedLineCount": 15
+    },
+    "filters": { "level": "error", "source": "channels" }
+  }
+}
+```
+
+### Status Endpoint Lifecycle Block (`GET /api/status`)
+
+The status response includes a `lifecycle` block with token refresh and restore metrics:
+
+```json
+{
+  "status": "running",
+  "lifecycle": {
+    "lastRestoreMetrics": {
+      "sandboxCreateMs": 1200,
+      "tokenWriteMs": 50,
+      "assetSyncMs": 300,
+      "startupScriptMs": 800,
+      "localReadyMs": 2000,
+      "publicReadyMs": 500,
+      "totalMs": 5200,
+      "skippedStaticAssetSync": true,
+      "vcpus": 2
+    },
+    "restoreHistory": [{ "totalMs": 5200, "recordedAt": 1710000000 }],
+    "lastTokenRefreshAt": 1710000000,
+    "lastTokenSource": "oidc",
+    "lastTokenExpiresAt": 1710043200,
+    "lastTokenRefreshError": null,
+    "consecutiveTokenRefreshFailures": 0,
+    "breakerOpenUntil": null
+  }
+}
+```
+
+Use `lifecycle.consecutiveTokenRefreshFailures > 0` or `lifecycle.breakerOpenUntil != null` to detect token refresh circuit breaker activation.
+
+### Observability Infrastructure
+
+The project uses structured operation contexts for end-to-end request tracing across webhook ingress → queue → processing → gateway → platform reply.
+
+**Operation Context** (`src/server/observability/operation-context.ts`):
+- `createOperationContext()` — creates unique `opId` for tracing through logs
+- Every log entry can include: `opId`, `parentOpId`, `requestId`, `channel`, `sandboxId`, `messageId`
+- Webhook routes extract `requestId` from `x-vercel-id` / `x-request-id` headers and thread it through queue jobs
+- Queue consumers link to webhook via `parentOpId = job.opId`
+
+**State Snapshots** (`src/server/observability/state-snapshot.ts`):
+- `logStateSnapshot()` — captures structured state at key transitions
+- Includes: status, sandboxId, snapshotId, lastError, queue depths (queued vs processing)
+
+**Key Log Events by Subsystem:**
+
+| Subsystem | Log Event | What It Tells You |
+|-----------|-----------|-------------------|
+| **Channel Webhooks** | `channels.slack_webhook_accepted` | Webhook received and validated |
+| | `channels.*_fast_path_ok` | Queue publish succeeded via Vercel Queues |
+| | `channels.*_fast_path_failed` | Queue publish failed — fell back to store-based queue |
+| | `channels.*_webhook_fallback_enqueue` | Fallback enqueue to store-based queue |
+| **Channel Queue** | `channels.job_leased` | Job taken from queue (includes queue depth) |
+| | `channels.job_acked` | Job processed successfully |
+| | `channels.job_ack_missing` | Ack failed — job may be reprocessed |
+| | `channels.job_parked` | Job deferred for later processing (includes `nextAttemptAt`) |
+| | `channels.job_retry_parked` | Retryable error — job rescheduled |
+| | `channels.job_retry_park_failed` | Failed to reschedule — job may be lost |
+| **Sandbox Lifecycle** | `sandbox.status_transition` | Status changed (e.g., creating → setup → running) |
+| | `sandbox.restore.fast_restore_result` | Startup script completed (exitCode, stdout/stderr head, timing) |
+| | `sandbox.restore.fast_restore_failed` | Startup script errored (exitCode, stderr head) |
+| | `sandbox.restore.local_ready_report` | Parsed readiness JSON (ready, attempts, readyMs) |
+| | `sandbox.create.complete` | Create/restore finished with operation context |
+| | `sandbox.mark_unavailable_skipped_stale` | Stale worker tried to clear state — safely skipped |
+| **Auth Recovery** | `gateway.auth_failure_detected` | 401/403/410 from gateway |
+| | `gateway.auth_refresh_attempted` | Token refresh cycle started |
+| | `gateway.auth_refresh_succeeded` | New token acquired and written |
+| | `gateway.auth_retry_result` | Result of retried request after refresh |
+
+**Tracing a channel message end-to-end:**
+1. Filter by `?requestId=<x-vercel-id>` to find the webhook ingress log
+2. Get the `opId` from that log entry
+3. Filter by `?opId=<opId>` to see all logs for that operation (including queue consumer via `parentOpId`)
+4. If the message hit the gateway, the `channels.job_acked` log will include the gateway response status
 
 ### SSH Sandbox Inspection Recipes
 
@@ -238,6 +380,7 @@ df -h
 | `scripts/check-queue-consumers.mjs` | Verify Vercel Queue consumer routes are declared in `vercel.json` | `node scripts/check-queue-consumers.mjs` |
 | `scripts/audit-verifier-surface.mjs` | Audit that protected route manifest is consistent | `node scripts/audit-verifier-surface.mjs` |
 | `scripts/check-verifier-contract.mjs` | Ensure deployment contract env vars are documented in README, CLAUDE.md, CONTRIBUTING.md, .env.example | `node scripts/check-verifier-contract.mjs` |
+| `scripts/generate-protected-route-manifest.mjs` | Security audit: detects `MISSING_AUTH_GATE` and `MISSING_DEBUG_GUARD` violations. Use `--check` for CI validation | `node scripts/generate-protected-route-manifest.mjs --check` |
 
 ---
 
@@ -335,28 +478,35 @@ Step-by-step investigation playbooks for common production issues.
 
 1. **Check channel health:** `GET /api/admin/channels/health` — look for non-zero `failedCount` or `lastError`
 2. **Check queue depth:** `GET /api/channels/summary` — non-zero `queueDepth` means messages are stuck
-3. **Check logs:** `GET /api/admin/logs?level=error&source=channels` — look for gateway auth failures or platform API errors
-4. **Check gateway token:** SSH `cat /root/.openclaw/gateway-token` — compare with OIDC token from `/api/debug/oidc-timing`
-5. **Check webhook URL:** For Telegram, verify the registered URL doesn't contain `x-vercel-protection-bypass` (Telegram silently rejects it)
-6. **Trigger self-heal:** Run destructive smoke with `selfHealTokenRefresh` phase, or run `POST /api/admin/launch-verify` with destructive mode
+3. **Check queue processing:** `GET /api/admin/logs?channel=slack` (or telegram/discord) — filter logs to the specific channel
+4. **Trace a specific message:** If you have the `x-vercel-id` from the webhook request, use `GET /api/admin/logs?requestId=<id>` to find the webhook ingress, then use the `opId` from that log to trace the full pipeline: `GET /api/admin/logs?opId=<opId>`
+5. **Check for fast-path failures:** Search for `fast_path_failed` — this means Vercel Queues rejected the publish and the system fell back to store-based queuing
+6. **Check for job parking:** Search for `job_parked` or `job_retry_parked` — these indicate deferred or retrying jobs with `nextAttemptAt` timestamps
+7. **Check gateway token:** `GET /api/status` — look at `lifecycle.consecutiveTokenRefreshFailures` and `lifecycle.breakerOpenUntil` for token refresh circuit breaker state
+8. **Check webhook URL:** For Telegram, verify the registered URL doesn't contain `x-vercel-protection-bypass` (Telegram silently rejects it)
+9. **Trigger self-heal:** Run destructive smoke with `selfHealTokenRefresh` phase, or `POST /api/admin/launch-verify` with destructive mode
 
 ### "Sandbox stuck in restoring/error"
 
-1. **Check status:** `GET /api/status` — look at `status`, `lastError`, `lastRestoreMetrics`
-2. **Check lifecycle logs:** `GET /api/admin/logs?source=lifecycle&level=error` — look for API errors, timeout messages
-3. **Run restore waterfall:** `POST /api/debug/restore-waterfall` — identifies which phase is failing/slow
-4. **Inspect via SSH:** `POST /api/admin/ssh` — check process list, logs, disk space
-5. **Check for API asymmetries:** If restoring from snapshot, try fresh create (`POST /api/admin/ensure`) — if create works but restore doesn't, it's likely a create-vs-restore API difference
-6. **Reset metadata:** If stuck, use `scripts/reset-meta.mjs` to clear state and retry
+1. **Check status:** `GET /api/status` — look at `status`, `lastError`, `lifecycle.lastRestoreMetrics` for per-phase timing
+2. **Check lifecycle logs:** `GET /api/admin/logs?source=lifecycle&level=error` — look for `sandbox.status_transition`, `sandbox.restore.fast_restore_failed`, `sandbox.restore.local_ready_report`
+3. **Check restore script output:** Search logs for `sandbox.restore.fast_restore_result` — includes `exitCode`, `stdoutHead` (500 chars), `stderrHead` (500 chars), and `startupScriptMs` timing
+4. **Check for stale worker interference:** Search for `sandbox.mark_unavailable_skipped_stale` — this means a late worker tried to clear state after another worker already replaced it (concurrency-safe, but indicates contention)
+5. **Run restore waterfall:** `POST /api/debug/restore-waterfall` — per-phase timing breakdown shows the exact bottleneck
+6. **Inspect via SSH:** `POST /api/admin/ssh` — check process list, logs, disk space. Note: sandbox logs are also available via `GET /api/admin/logs` for `setup`, `booting`, and `restoring` states (not just `running`)
+7. **Check for API asymmetries:** If restoring from snapshot, try fresh create (`POST /api/admin/ensure`) — if create works but restore doesn't, it's likely a create-vs-restore API difference
+8. **Reset metadata:** If stuck, use `scripts/reset-meta.mjs` to clear state and retry
 
 ### "Gateway returning 401/403"
 
-1. **Check OIDC timing:** `POST /api/debug/oidc-timing` — if slow or failing, OIDC provider may be down
-2. **Inspect token file:** SSH `cat /root/.openclaw/ai-gateway-key` — check if token looks fresh
-3. **Check auth-recovery logs:** `GET /api/admin/logs?search=auth-recovery` — shows refresh attempts and failures
-4. **Check env immutability:** SSH `env | grep -i gateway` — if baked-in env var differs from token file, the startup script may be overriding
-5. **Trigger launch-verify:** `POST /api/admin/launch-verify` — its `selfHealTokenRefresh` phase tests the full refresh cycle
-6. **Manual refresh:** If needed, stop and ensure to force fresh bootstrap: `POST /api/admin/stop` → `POST /api/admin/ensure`
+1. **Check token refresh state:** `GET /api/status` — look at `lifecycle.lastTokenRefreshAt`, `lifecycle.lastTokenRefreshError`, `lifecycle.consecutiveTokenRefreshFailures`, `lifecycle.breakerOpenUntil`
+2. **Check OIDC timing:** `POST /api/debug/oidc-timing` — if slow or failing, OIDC provider may be down
+3. **Trace auth recovery logs:** `GET /api/admin/logs?search=auth_failure` — look for `gateway.auth_failure_detected`, `gateway.auth_refresh_attempted`, `gateway.auth_refresh_succeeded`, `gateway.auth_retry_result`
+4. **Inspect token file:** SSH `cat /root/.openclaw/ai-gateway-key` — check if token looks fresh
+5. **Check env immutability:** SSH `env | grep -i gateway` — if baked-in env var differs from token file, the startup script may be overriding
+6. **Check for 410 preservation:** Auth recovery now preserves the original HTTP status code (401/403/410) when refresh fails — look for `firstResponseStatus` in logs to distinguish "never had a valid token" from "token expired mid-session"
+7. **Trigger launch-verify:** `POST /api/admin/launch-verify` — its `selfHealTokenRefresh` phase tests the full refresh cycle
+8. **Manual refresh:** If needed, stop and ensure to force fresh bootstrap: `POST /api/admin/stop` → `POST /api/admin/ensure`
 
 ### "Slow restores"
 
@@ -1677,10 +1827,24 @@ npm build
 - **`snapshot()` is DESTRUCTIVE** — calling snapshot stops the sandbox; never use as diagnostic
 - **Store defaults to memory** — without `UPSTASH_REDIS_REST_URL`, data is lost on redeploy
 - **No `export const runtime`** — explicit runtime exports break the Next.js 16 build with `cacheComponents: true`
-- **`globalThis.fetch` swap** — when tests need fetch interception, save/restore in try/finally
+- **`globalThis.fetch` swap** — the harness installs fakeFetch as `globalThis.fetch` for its full lifetime with default-deny on unmatched requests, restored in teardown
 - **Command responders** — return `undefined` to fall through to default behavior; first non-undefined wins
 - **Smoke test is sequential** — phases depend on each other; don't reorder without understanding the state flow
 - **`npm test` is the canonical runner** — never use `bun test` (different resolver, different globals, will produce false failures)
+
+### Test Isolation Guards (`NODE_ENV=test`)
+
+The following subsystems fail closed in test mode to prevent accidental production side effects:
+
+| Subsystem | Guard behavior | What would go wrong without it |
+|-----------|---------------|-------------------------------|
+| **Sandbox controller** | `getSandboxController()` throws unless `_setSandboxControllerForTesting()` was called | Tests would create real Vercel Sandbox VMs |
+| **Upstash store** | Skips Upstash initialization even if `UPSTASH_REDIS_REST_URL` is set | Fake sandbox IDs (`sbx-fake-*`) would corrupt production metadata |
+| **Vercel Queues** | `publishToChannelQueue` skips `@vercel/queue` import, uses in-memory fallback | Tests would publish to live Vercel Queues |
+| **OIDC token** | `resolveAiGatewayCredentialOptional()` skips real OIDC fetch, falls back to API key or undefined | Tests would call Vercel's OIDC provider |
+| **Vercel markers** | Harness clears `VERCEL_ENV`, `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL`, `VERCEL` | `isVercelDeployment()` would return true, triggering Vercel-only code paths |
+
+The harness sets these env overrides automatically. If you're writing a test that doesn't use the harness, set `NODE_ENV=test` explicitly and clear Vercel env vars.
 
 ---
 
