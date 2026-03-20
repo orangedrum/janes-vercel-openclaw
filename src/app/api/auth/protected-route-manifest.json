@@ -1,11 +1,12 @@
 {
   "version": 2,
-  "generatedAt": "2026-03-19T06:03:46.712Z",
+  "generatedAt": "2026-03-20T06:03:18.495Z",
   "roots": [
     "src/app/api/admin",
-    "src/app/api/firewall"
+    "src/app/api/firewall",
+    "src/app/api/debug"
   ],
-  "discoveredRouteCount": 29,
+  "discoveredRouteCount": 38,
   "unauthenticatedRouteCount": 0,
   "routes": [
     {
@@ -43,6 +44,18 @@
     {
       "method": "GET",
       "path": "/api/admin/watchdog"
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/after-timing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/lock-timing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/upstash-timing"
     },
     {
       "method": "GET",
@@ -95,6 +108,30 @@
     {
       "method": "POST",
       "path": "/api/admin/watchdog"
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/cold-start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/oidc-timing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/pre-create-timing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/restore-waterfall"
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/sandbox-timing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/sdk-import-timing"
     },
     {
       "method": "POST",

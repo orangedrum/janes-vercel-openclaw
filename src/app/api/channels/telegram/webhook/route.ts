@@ -4,6 +4,7 @@ import { channelDedupKey } from "@/server/channels/keys";
 import { publishToChannelQueue } from "@/server/channels/queue";
 import { isTelegramWebhookSecretValid } from "@/server/channels/telegram/adapter";
 import { logError, logInfo, logWarn } from "@/server/log";
+import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { OPENCLAW_TELEGRAM_WEBHOOK_PORT } from "@/server/openclaw/config";
 import { getSandboxDomain } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta, getStore } from "@/server/store/store";
@@ -53,6 +54,18 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
+    const op = createOperationContext({
+      trigger: "channel.telegram.webhook",
+      reason: "incoming telegram webhook",
+      channel: "telegram",
+      dedupId: updateId ?? null,
+      sandboxId: meta.sandboxId ?? null,
+      snapshotId: meta.snapshotId ?? null,
+      status: meta.status,
+    });
+
+    logInfo("channels.telegram_webhook_accepted", withOperationContext(op));
+
     // --- Fast path: forward raw update to OpenClaw's native Telegram handler ---
     // When the sandbox is running, OpenClaw handles the full Telegram lifecycle
     // natively (images, replies, Bot API calls) on port 8787.  This avoids the
@@ -71,18 +84,18 @@ export async function POST(request: Request): Promise<Response> {
           signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
         });
         if (forwardResponse.ok) {
-          logInfo("channels.telegram_fast_path_ok", { sandboxId: meta.sandboxId });
+          logInfo("channels.telegram_fast_path_ok", withOperationContext(op, { sandboxId: meta.sandboxId }));
           return Response.json({ ok: true });
         }
-        logWarn("channels.telegram_fast_path_non_ok", {
+        logWarn("channels.telegram_fast_path_non_ok", withOperationContext(op, {
           status: forwardResponse.status,
           sandboxId: meta.sandboxId,
-        });
+        }));
       } catch (error) {
-        logWarn("channels.telegram_fast_path_failed", {
+        logWarn("channels.telegram_fast_path_failed", withOperationContext(op, {
           error: error instanceof Error ? error.message : String(error),
           sandboxId: meta.sandboxId,
-        });
+        }));
       }
       // Fall through to queue-based path
     }
@@ -91,12 +104,13 @@ export async function POST(request: Request): Promise<Response> {
       payload,
       receivedAt: Date.now(),
       origin: getPublicOrigin(request),
+      opId: op.opId,
     };
 
     const { queued } = await publishToChannelQueue("telegram", job);
     if (!queued) {
       await enqueueChannelJob("telegram", job);
-      logInfo("channels.telegram_webhook_fallback_enqueue", { receivedAt: job.receivedAt });
+      logInfo("channels.telegram_webhook_fallback_enqueue", withOperationContext(op, { receivedAt: job.receivedAt }));
     }
   } catch (error) {
     logError("channels.telegram_webhook_enqueue_failed", {

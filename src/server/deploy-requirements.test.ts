@@ -41,7 +41,7 @@ test("bypass is not required in sign-in-with-vercel mode", () => {
   });
   assert.equal(
     getWebhookBypassStatusMessage(requirement),
-    "Webhook bypass is not required — the app handles auth via admin secret.",
+    "Protection bypass is not configured. That is fine only when Deployment Protection is disabled; otherwise third-party webhooks may never reach the app.",
   );
 });
 
@@ -58,7 +58,7 @@ test("bypass is not required in admin-secret mode", () => {
   });
   assert.equal(
     getWebhookBypassStatusMessage(requirement),
-    "Webhook bypass is not required — the app handles auth via admin secret.",
+    "Protection bypass is not configured. That is fine only when Deployment Protection is disabled; otherwise third-party webhooks may never reach the app.",
   );
 });
 
@@ -75,7 +75,7 @@ test("bypass is not required on Vercel in admin-secret mode", () => {
   });
   assert.equal(
     getWebhookBypassStatusMessage(requirement),
-    "Webhook bypass is not required — the app handles auth via admin secret.",
+    "Protection bypass is not configured. That is fine only when Deployment Protection is disabled; otherwise third-party webhooks may never reach the app.",
   );
 });
 
@@ -92,6 +92,6 @@ test("bypass is not required but configured when secret is present", () => {
   });
   assert.equal(
     getWebhookBypassStatusMessage(requirement),
-    "Webhook URLs will include x-vercel-protection-bypass (opportunistic).",
+    "Protection bypass is configured for protected deployment webhook flows.",
   );
 });

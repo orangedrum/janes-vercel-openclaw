@@ -7,6 +7,7 @@ import {
   isValidSlackSignature,
 } from "@/server/channels/slack/adapter";
 import { logInfo, logWarn } from "@/server/log";
+import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { getSandboxDomain } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
@@ -95,6 +96,18 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
+  const op = createOperationContext({
+    trigger: "channel.slack.webhook",
+    reason: "incoming slack webhook",
+    channel: "slack",
+    dedupId: dedupId ?? null,
+    sandboxId: meta.sandboxId ?? null,
+    snapshotId: meta.snapshotId ?? null,
+    status: meta.status,
+  });
+
+  logInfo("channels.slack_webhook_accepted", withOperationContext(op));
+
   // --- Fast path: forward raw event to OpenClaw's native Slack HTTP handler ---
   // OpenClaw in HTTP mode handles Slack events, slash commands, and interactivity
   // natively on the main gateway port at /slack/events.  Forward the raw body
@@ -117,7 +130,7 @@ export async function POST(request: Request): Promise<Response> {
         signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
       });
       if (resp.ok) {
-        logInfo("channels.slack_fast_path_ok", { sandboxId: meta.sandboxId });
+        logInfo("channels.slack_fast_path_ok", withOperationContext(op, { sandboxId: meta.sandboxId }));
         // Proxy the response — Slack slash commands and interactivity expect
         // response bodies from the webhook endpoint.
         const respBody = await resp.text();
@@ -126,15 +139,15 @@ export async function POST(request: Request): Promise<Response> {
           headers: { "content-type": resp.headers.get("content-type") ?? "application/json" },
         });
       }
-      logWarn("channels.slack_fast_path_non_ok", {
+      logWarn("channels.slack_fast_path_non_ok", withOperationContext(op, {
         status: resp.status,
         sandboxId: meta.sandboxId,
-      });
+      }));
     } catch (error) {
-      logWarn("channels.slack_fast_path_failed", {
+      logWarn("channels.slack_fast_path_failed", withOperationContext(op, {
         error: error instanceof Error ? error.message : String(error),
         sandboxId: meta.sandboxId,
-      });
+      }));
     }
     // Fall through to queue-based path
   }
@@ -143,12 +156,13 @@ export async function POST(request: Request): Promise<Response> {
     payload,
     receivedAt: Date.now(),
     origin: getPublicOrigin(request),
+    opId: op.opId,
   };
 
   const { queued } = await publishToChannelQueue("slack", job);
   if (!queued) {
     await enqueueChannelJob("slack", job);
-    logInfo("channels.slack_webhook_fallback_enqueue", { receivedAt: job.receivedAt });
+    logInfo("channels.slack_webhook_fallback_enqueue", withOperationContext(op, { receivedAt: job.receivedAt }));
   }
 
   return Response.json({ ok: true });

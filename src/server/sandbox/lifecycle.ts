@@ -2,8 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { pollUntil } from "@/server/async/poll";
 import { ApiError } from "@/shared/http";
-import type { RestorePhaseMetrics, SingleMeta } from "@/shared/types";
+import type { OperationContext, RestorePhaseMetrics, SingleMeta } from "@/shared/types";
 import { MAX_RESTORE_HISTORY } from "@/shared/types";
+import {
+  withOperationContext,
+} from "@/server/observability/operation-context";
 import {
   getAiGatewayBearerTokenOptional,
   resolveAiGatewayCredentialOptional,
@@ -112,9 +115,15 @@ export async function ensureSandboxRunning(options: {
   origin: string;
   reason: string;
   schedule?: BackgroundScheduler;
+  op?: OperationContext;
 }): Promise<{ state: "running" | "waiting"; meta: SingleMeta }> {
   const meta = await getInitializedMeta();
-  logInfo("sandbox.ensure_running", { reason: options.reason, status: meta.status });
+  const opCtx = options.op ? withOperationContext(options.op, {
+    sandboxId: meta.sandboxId,
+    snapshotId: meta.snapshotId,
+    status: meta.status,
+  }) : { reason: options.reason, status: meta.status };
+  logInfo("sandbox.ensure_running", opCtx);
 
   if (meta.status === "running" && meta.sandboxId) {
     return { state: "running", meta };
@@ -122,10 +131,27 @@ export async function ensureSandboxRunning(options: {
 
   if (isBusyStatus(meta.status)) {
     if (isOperationStale(meta)) {
-      logWarn("sandbox.stale_operation", { status: meta.status, updatedAt: meta.updatedAt });
+      logWarn("sandbox.stale_operation", options.op
+        ? withOperationContext(options.op, { status: meta.status, updatedAt: meta.updatedAt })
+        : { status: meta.status, updatedAt: meta.updatedAt });
       await scheduleLifecycleWork({ ...options, meta });
+    } else if (options.op) {
+      logInfo("sandbox.ensure_running.busy_waiting", withOperationContext(options.op, {
+        status: meta.status,
+        action: "waiting",
+      }));
     }
     return { state: "waiting", meta };
+  }
+
+  const action = meta.snapshotId && meta.status !== "uninitialized" ? "restore" : "create";
+  if (options.op) {
+    logInfo("sandbox.ensure_running.scheduling", withOperationContext(options.op, {
+      action,
+      statusBefore: meta.status,
+      sandboxId: meta.sandboxId,
+      snapshotId: meta.snapshotId,
+    }));
   }
 
   await scheduleLifecycleWork({ ...options, meta });
@@ -143,6 +169,7 @@ export type WaitForSandboxReadyOptions = {
   timeoutMs?: number;
   pollIntervalMs?: number;
   reconcile?: boolean;
+  op?: OperationContext;
 };
 
 export type WaitForSandboxReadyResult = {
@@ -173,6 +200,7 @@ export async function waitForSandboxReady(
     const health = await reconcileSandboxHealth({
       origin: options.origin,
       reason: options.reason,
+      op: options.op,
     });
 
     recoveredStaleRunning = health.repaired;
@@ -202,6 +230,7 @@ export async function waitForSandboxReady(
       const result = await ensureSandboxRunning({
         origin: options.origin,
         reason: options.reason,
+        op: options.op,
       });
 
       if (result.meta.status === "error") {
@@ -242,6 +271,7 @@ export async function ensureSandboxReady(options: {
   reason: string;
   timeoutMs?: number;
   pollIntervalMs?: number;
+  op?: OperationContext;
 }): Promise<SingleMeta> {
   const result = await waitForSandboxReady({ ...options, reconcile: true });
   return result.meta;
@@ -953,11 +983,18 @@ export async function reconcileSandboxHealth(options: {
   origin: string;
   reason: string;
   schedule?: BackgroundScheduler;
+  op?: OperationContext;
 }): Promise<SandboxHealthResult> {
   const meta = await getInitializedMeta();
 
   // Not supposed to be running — just ensure.
   if (meta.status !== "running" || !meta.sandboxId) {
+    if (options.op) {
+      logInfo("sandbox.reconcile.not_running", withOperationContext(options.op, {
+        status: meta.status,
+        action: "ensure",
+      }));
+    }
     const result = await ensureSandboxRunning(options);
     return {
       status: result.state === "running" ? "ready" : "recovering",
@@ -973,21 +1010,34 @@ export async function reconcileSandboxHealth(options: {
   }
 
   // Stale running state detected — repair.
-  logWarn("sandbox.health_reconcile", {
-    reason: options.reason,
-    probeError: probe.error,
-    statusCode: probe.statusCode,
-    sandboxId: meta.sandboxId,
-  });
+  const reconcileCtx = options.op
+    ? withOperationContext(options.op, {
+        probeError: probe.error,
+        statusCode: probe.statusCode,
+        sandboxId: meta.sandboxId,
+      })
+    : {
+        reason: options.reason,
+        probeError: probe.error,
+        statusCode: probe.statusCode,
+        sandboxId: meta.sandboxId,
+      };
+  logWarn("sandbox.health_reconcile", reconcileCtx);
   await markSandboxUnavailable(
     `Health reconciliation: gateway unreachable (${options.reason})`,
   );
   const ensureResult = await ensureSandboxRunning(options);
-  logInfo("sandbox.health_reconcile_recovery_scheduled", {
-    reason: options.reason,
-    newStatus: ensureResult.meta.status,
-    repaired: true,
-  });
+  const recoveryCtx = options.op
+    ? withOperationContext(options.op, {
+        newStatus: ensureResult.meta.status,
+        repaired: true,
+      })
+    : {
+        reason: options.reason,
+        newStatus: ensureResult.meta.status,
+        repaired: true,
+      };
+  logInfo("sandbox.health_reconcile_recovery_scheduled", recoveryCtx);
 
   return {
     status: "recovering",
@@ -1005,11 +1055,15 @@ async function scheduleLifecycleWork(options: {
   reason: string;
   meta: SingleMeta;
   schedule?: BackgroundScheduler;
+  op?: OperationContext;
 }): Promise<void> {
   const store = getStore();
   const startToken = await store.acquireLock(START_LOCK_KEY, START_LOCK_TTL_SECONDS);
   if (!startToken) {
-    logInfo("sandbox.start_lock_contended", { reason: options.reason });
+    const lockCtx = options.op
+      ? withOperationContext(options.op, { lock: "start", contention: true })
+      : { reason: options.reason };
+    logInfo("sandbox.start_lock_contended", lockCtx);
     return;
   }
 
@@ -1028,6 +1082,15 @@ async function scheduleLifecycleWork(options: {
     latest.snapshotId && latest.status !== "uninitialized"
       ? "restoring"
       : "creating";
+
+  if (options.op) {
+    logInfo("sandbox.lifecycle.action_chosen", withOperationContext(options.op, {
+      action: nextStatus,
+      statusBefore: latest.status,
+      sandboxId: latest.sandboxId,
+      snapshotId: latest.snapshotId,
+    }));
+  }
 
   await mutateMeta((meta) => {
     if (meta.status === "running" && meta.sandboxId) {
@@ -1053,25 +1116,28 @@ async function scheduleLifecycleWork(options: {
             // reachability poll via waitForSandboxReady / probeGatewayReady.
             await restoreSandboxFromSnapshot(options.origin, {
               skipPublicReady: true,
+              op: options.op,
             });
           } else {
-            await createAndBootstrapSandbox(options.origin);
+            await createAndBootstrapSandbox(options.origin, { op: options.op });
           }
         } catch (error) {
           if (error instanceof LifecycleLockUnavailableError) {
-            logInfo("sandbox.lifecycle_lock_contended", {
-              reason: options.reason,
-            });
+            const lockCtx = options.op
+              ? withOperationContext(options.op, { lock: "lifecycle", contention: true })
+              : { reason: options.reason };
+            logInfo("sandbox.lifecycle_lock_contended", lockCtx);
             return;
           }
 
-          logError("sandbox.lifecycle_failed", {
-            reason: options.reason,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          const errMsg = error instanceof Error ? error.message : String(error);
+          const errCtx = options.op
+            ? withOperationContext(options.op, { error: errMsg })
+            : { reason: options.reason, error: errMsg };
+          logError("sandbox.lifecycle_failed", errCtx);
           await mutateMeta((meta) => {
             meta.status = "error";
-            meta.lastError = error instanceof Error ? error.message : String(error);
+            meta.lastError = errMsg;
           });
         }
       },
@@ -1089,7 +1155,10 @@ async function scheduleLifecycleWork(options: {
 // Sandbox create and restore
 // ---------------------------------------------------------------------------
 
-async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
+async function createAndBootstrapSandbox(
+  origin: string,
+  options?: { op?: OperationContext },
+): Promise<SingleMeta> {
   return withLifecycleLock(async () => {
     const current = await getInitializedMeta();
     if (current.status === "running" && current.sandboxId) {
@@ -1146,8 +1215,8 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
       slackCredentials: slackCfg ? { botToken: slackCfg.botToken, signingSecret: slackCfg.signingSecret } : undefined,
     });
 
-    const next = await mutateMeta((meta) => {
-      meta.status = "running";
+    const pending = await mutateMeta((meta) => {
+      meta.status = "setup";
       meta.sandboxId = sandbox.sandboxId;
       meta.portUrls = resolvePortUrls(sandbox);
       meta.lastAccessedAt = Date.now();
@@ -1162,20 +1231,104 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
       }
     });
 
-    await applyFirewallPolicyToSandbox(sandbox, next);
+    // Apply firewall policy and record structured outcome before marking running.
+    const firewallPolicy = toNetworkPolicy(
+      pending.firewall.mode,
+      pending.firewall.allowlist,
+    );
+    const firewallPolicyHash = createHash("sha256")
+      .update(JSON.stringify(firewallPolicy))
+      .digest("hex");
+
+    let firewallApplied = false;
+    let firewallError: string | null = null;
+    const firewallStartedAt = Date.now();
+    try {
+      await applyFirewallPolicyToSandbox(sandbox, pending);
+      firewallApplied = true;
+    } catch (err) {
+      firewallError = err instanceof Error ? err.message : String(err);
+      logWarn("sandbox.create.firewall_sync_failed", {
+        sandboxId: sandbox.sandboxId,
+        mode: pending.firewall.mode,
+        error: firewallError,
+      });
+    }
+    const firewallCompletedAt = Date.now();
+    const firewallDurationMs = firewallCompletedAt - firewallStartedAt;
+
+    // Record firewall sync outcome in metadata.
+    await mutateMeta((meta) => {
+      const outcome: import("@/shared/types").FirewallSyncOutcome = {
+        timestamp: firewallCompletedAt,
+        durationMs: firewallDurationMs,
+        allowlistCount: pending.firewall.allowlist.length,
+        policyHash: firewallPolicyHash,
+        applied: firewallApplied,
+        reason: firewallApplied ? "create-policy-applied" : "create-policy-failed",
+      };
+      meta.firewall.lastSyncReason = outcome.reason;
+      meta.firewall.lastSyncOutcome = outcome;
+      if (firewallApplied) {
+        meta.firewall.lastSyncAppliedAt = firewallCompletedAt;
+      } else {
+        meta.firewall.lastSyncFailedAt = firewallCompletedAt;
+      }
+    });
+
+    // In enforcing mode, firewall sync failure is a hard blocker — the
+    // sandbox must not become available without its network policy applied.
+    if (!firewallApplied && pending.firewall.mode === "enforcing") {
+      logError("sandbox.create.firewall_sync_blocked_create", {
+        sandboxId: sandbox.sandboxId,
+        error: firewallError,
+      });
+
+      try {
+        await sandbox.stop({ blocking: true });
+      } catch (stopError) {
+        logWarn("sandbox.create.firewall_sync_cleanup_failed", {
+          sandboxId: sandbox.sandboxId,
+          error: stopError instanceof Error ? stopError.message : String(stopError),
+        });
+      }
+
+      await mutateMeta((meta) => {
+        meta.status = "error";
+        meta.lastError = `Firewall sync failed during create: ${firewallError}`;
+        meta.sandboxId = null;
+        meta.portUrls = null;
+      });
+
+      return getInitializedMeta();
+    }
+
+    logInfo("sandbox.status_transition", {
+      from: "setup",
+      to: "running",
+      sandboxId: sandbox.sandboxId,
+    });
+
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.lastError = null;
+    });
+
     logInfo("sandbox.create.complete", {
       sandboxId: sandbox.sandboxId,
       openclawVersion: setupResult.openclawVersion,
+      firewallApplied,
     });
-    return next;
+    return getInitializedMeta();
   });
 }
 
 async function restoreSandboxFromSnapshot(
   origin: string,
-  options?: { skipPublicReady?: boolean },
+  options?: { skipPublicReady?: boolean; op?: OperationContext },
 ): Promise<SingleMeta> {
   return withLifecycleLock(async () => {
+    const op = options?.op;
     const phaseTimings: Record<string, number> = {};
     const markPhase = (label: string) => { phaseTimings[label] = Date.now(); };
     const elapsedSince = (label: string) => {
@@ -1187,9 +1340,19 @@ async function restoreSandboxFromSnapshot(
       return Date.now() - start;
     };
 
+    /** Emit a restore-phase log with operation context when available. */
+    const logPhase = (phase: string, extra?: Record<string, unknown>) => {
+      const baseExtra = { phase, ...extra };
+      if (op) {
+        logInfo("sandbox.restore.phase_complete", withOperationContext(op, baseExtra));
+      } else {
+        logInfo("sandbox.restore.timing", baseExtra);
+      }
+    };
+
     markPhase("getMeta1");
     const current = await getInitializedMeta();
-    logInfo("sandbox.restore.timing", { phase: "getMeta1", ms: elapsedSince("getMeta1") });
+    logPhase("getMeta1", { ms: elapsedSince("getMeta1") });
     if (current.status === "running" && current.sandboxId) {
       return current;
     }
@@ -1200,7 +1363,7 @@ async function restoreSandboxFromSnapshot(
     // Auth-required boot: on Vercel, require a usable AI Gateway credential.
     markPhase("oidc");
     const credential = await resolveAiGatewayCredentialOptional();
-    logInfo("sandbox.restore.timing", { phase: "oidc", ms: elapsedSince("oidc") });
+    logPhase("oidc", { ms: elapsedSince("oidc") });
     if (isVercelDeployment() && !credential) {
       logError("sandbox.restore.no_ai_gateway_credential", {
         message: "Cannot restore sandbox on Vercel without AI Gateway credential. OIDC may be temporarily unavailable.",
@@ -1219,13 +1382,19 @@ async function restoreSandboxFromSnapshot(
     const vcpus = getSandboxVcpus();
     const sleepAfterMs = getSandboxSleepAfterMs();
 
-    logInfo("sandbox.status_transition", { from: current.status, to: "restoring", snapshotId: current.snapshotId, sleepAfterMs });
+    if (op) {
+      logInfo("sandbox.status_transition", withOperationContext(op, {
+        from: current.status, to: "restoring", snapshotId: current.snapshotId, sleepAfterMs,
+      }));
+    } else {
+      logInfo("sandbox.status_transition", { from: current.status, to: "restoring", snapshotId: current.snapshotId, sleepAfterMs });
+    }
     markPhase("mutateMeta1");
     await mutateMeta((meta) => {
       meta.status = "restoring";
       meta.lastError = null;
     });
-    logInfo("sandbox.restore.timing", { phase: "mutateMeta_restoring", ms: elapsedSince("mutateMeta1") });
+    logPhase("mutateMeta_restoring", { ms: elapsedSince("mutateMeta1") });
 
     // Build all payloads before Sandbox.create.  Config, credentials, and
     // firewall policy are resolved here so zero writeFiles() calls are
@@ -1285,14 +1454,14 @@ async function restoreSandboxFromSnapshot(
       // networkPolicy on snapshot restore returns 400 — apply post-create
     });
     const sandboxCreateMs = Date.now() - sandboxCreateStart;
-    logInfo("sandbox.restore.timing", { phase: "sandboxCreate", ms: sandboxCreateMs });
+    logPhase("sandboxCreate", { ms: sandboxCreateMs, sandboxId: sandbox.sandboxId, snapshotId: current.snapshotId });
 
     markPhase("mutateMeta2");
     await mutateMeta((meta) => {
       meta.sandboxId = sandbox.sandboxId;
       meta.portUrls = resolvePortUrls(sandbox);
     });
-    logInfo("sandbox.restore.timing", { phase: "mutateMeta_sandboxId", ms: elapsedSince("mutateMeta2") });
+    logPhase("mutateMeta_sandboxId", { ms: elapsedSince("mutateMeta2") });
 
     // Credentials go via env. Config file (openclaw.json) is skipped when
     // the snapshot's config hash matches (same channels, same deploy).
@@ -1334,7 +1503,7 @@ async function restoreSandboxFromSnapshot(
       meta.lastAccessedAt = Date.now();
       meta.lastError = null;
     });
-    logInfo("sandbox.restore.timing", { phase: "mutateMeta_booting", ms: elapsedSince("mutateMeta3") });
+    logPhase("mutateMeta_booting", { ms: elapsedSince("mutateMeta3"), sandboxId: sandbox.sandboxId, status: "booting" });
 
     // Config, credentials, and firewall policy are all passed via create-time
     // env.  The fast-restore script reads them from env and writes locally.
@@ -1430,10 +1599,11 @@ async function restoreSandboxFromSnapshot(
           localReadyMs = startupScriptMs;
         }
 
-        logInfo("sandbox.restore.fast_restore_complete", {
+        logPhase("local_ready", {
           startupScriptMs,
           localReadyMs,
           sandboxId: sandbox.sandboxId,
+          status: "booting",
         });
     }
 
@@ -1453,7 +1623,7 @@ async function restoreSandboxFromSnapshot(
       }
     });
 
-    logInfo("sandbox.restore.boot_overlap_complete", {
+    logPhase("boot_overlap_complete", {
       bootOverlapMs,
       firewallSyncMs,
       localReadyMs,
@@ -1511,7 +1681,7 @@ async function restoreSandboxFromSnapshot(
         const { reconcileTelegramIntegration } = await import("@/server/channels/telegram/reconcile");
         await reconcileTelegramIntegration({ force: true });
         logInfo("sandbox.restore.telegram_webhook_reconciled", {
-          webhookUrl: latest.channels.telegram.webhookUrl,
+          webhookUrl: redactBypassParam(latest.channels.telegram.webhookUrl),
         });
       } catch (err) {
         logWarn("sandbox.restore.telegram_webhook_reconcile_failed", {
@@ -1599,7 +1769,11 @@ async function restoreSandboxFromSnapshot(
       skippedPublicReady: skipPublicReady,
     };
 
-    logInfo("sandbox.restore.metrics", metrics as unknown as Record<string, unknown>);
+    if (op) {
+      logInfo("sandbox.restore.metrics", withOperationContext(op, metrics as unknown as Record<string, unknown>));
+    } else {
+      logInfo("sandbox.restore.metrics", metrics as unknown as Record<string, unknown>);
+    }
 
     await mutateMeta((meta) => {
       meta.lastRestoreMetrics = metrics;
@@ -1784,6 +1958,27 @@ async function withAutoRenewedLock<T>(
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+/**
+ * Remove the `x-vercel-protection-bypass` query parameter from a URL for
+ * safe logging. Falls back to regex replacement if the URL is malformed.
+ */
+function redactBypassParam(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.has("x-vercel-protection-bypass")) {
+      parsed.searchParams.delete("x-vercel-protection-bypass");
+      return parsed.toString();
+    }
+  } catch {
+    return url.replace(
+      /([?&])x-vercel-protection-bypass=[^&]+(&|$)/,
+      (_match, prefix, suffix) =>
+        suffix ? prefix : "",
+    );
+  }
+  return url;
+}
 
 function resolvePortUrls(sandbox: SandboxHandle): Record<string, string> {
   const urls: Record<string, string> = {};

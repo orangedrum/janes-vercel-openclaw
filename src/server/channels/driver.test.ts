@@ -1132,6 +1132,82 @@ test("[processChannelJob] structured log events at wake, gateway, and send phase
 });
 
 // ---------------------------------------------------------------------------
+// Correlated opId: all channel delivery phases share one opId
+// ---------------------------------------------------------------------------
+
+test("[processChannelJob] all delivery phase logs share a single opId", async () => {
+  await withHarness(async (h) => {
+    const channel: ChannelName = "slack";
+
+    await h.mutateMeta((meta) => {
+      meta.channels.slack = {
+        signingSecret: "test-signing-secret",
+        botToken: "xoxb-test-bot-token",
+        configuredAt: Date.now(),
+      };
+    });
+
+    h.installDefaultGatewayHandlers("opid-test-reply");
+    await h.driveToRunning();
+
+    await enqueueChannelJob(channel, createJob({ payload: { text: "opid-test" } }));
+
+    _resetLogBuffer();
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = h.fakeFetch.fetch;
+
+    try {
+      await drainChannelQueue({
+        channel,
+        getConfig: (m) => m.channels.slack,
+        createAdapter: () => ({
+          extractMessage: (payload: { text: string }) => ({
+            kind: "message" as const,
+            message: { text: payload.text },
+          }),
+          sendReply: async () => {},
+        }),
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const logs = getServerLogs();
+
+    // Collect opIds from the key delivery phases
+    const phaseMessages = [
+      "channels.wake_requested",
+      "channels.wake_ready",
+      "channels.gateway_request_started",
+      "channels.gateway_response_received",
+      "channels.platform_reply_sent",
+      "channels.delivery_success",
+    ];
+
+    const phaseOpIds: string[] = [];
+    for (const phase of phaseMessages) {
+      const entry = logs.find((l) => l.message === phase);
+      assert.ok(entry, `Expected log entry for ${phase}`);
+      assert.ok(entry.data?.opId, `Expected opId on ${phase}`);
+      phaseOpIds.push(entry.data.opId as string);
+    }
+
+    // All phases must share the same opId
+    const uniqueOpIds = [...new Set(phaseOpIds)];
+    assert.equal(
+      uniqueOpIds.length,
+      1,
+      `All delivery phases should share one opId, got ${uniqueOpIds.length}: ${JSON.stringify(uniqueOpIds)}`,
+    );
+    assert.ok(
+      uniqueOpIds[0].startsWith("op_"),
+      `opId should have op_ prefix, got ${uniqueOpIds[0]}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // runWithProcessingIndicator lifecycle tests
 // ---------------------------------------------------------------------------
 

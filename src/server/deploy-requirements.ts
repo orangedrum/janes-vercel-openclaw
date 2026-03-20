@@ -26,8 +26,8 @@ export function getWebhookBypassStatusMessage(
   input: WebhookBypassRequirement,
 ): string {
   if (input.configured) {
-    return "Webhook URLs will include x-vercel-protection-bypass (opportunistic).";
+    return "Protection bypass is configured for protected deployment webhook flows.";
   }
 
-  return "Webhook bypass is not required — the app handles auth via admin secret.";
+  return "Protection bypass is not configured. That is fine only when Deployment Protection is disabled; otherwise third-party webhooks may never reach the app.";
 }

@@ -4,6 +4,9 @@ import {
 } from "@/server/deployment-contract";
 import { getCurrentDeploymentId } from "@/server/launch-verify/state";
 import { logError, logInfo } from "@/server/log";
+import {
+  createOperationContext,
+} from "@/server/observability/operation-context";
 import { getPublicOrigin } from "@/server/public-url";
 import {
   probeGatewayReady,
@@ -12,7 +15,7 @@ import {
   type SandboxHealthResult,
 } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta } from "@/server/store/store";
-import type { SingleMeta } from "@/shared/types";
+import type { OperationContext, SingleMeta } from "@/shared/types";
 import type { WatchdogCheck, WatchdogReport } from "@/shared/watchdog";
 import {
   readWatchdogReport,
@@ -31,6 +34,7 @@ export type WatchdogDeps = {
   reconcile: (options: {
     origin: string;
     reason: string;
+    op?: OperationContext;
   }) => Promise<SandboxHealthResult>;
   readPrevious: () => Promise<WatchdogReport>;
   writeReport: (report: WatchdogReport) => Promise<WatchdogReport>;
@@ -156,9 +160,16 @@ export async function runSandboxWatchdog(
           status = "failed";
         } else {
           const reconcileStartedAt = deps.now();
+          const watchdogOp = createOperationContext({
+            trigger: "watchdog",
+            reason: "watchdog:probe_failed",
+            sandboxId: meta.sandboxId,
+            status: meta.status,
+          });
           const reconciliation = await deps.reconcile({
             origin: getPublicOrigin(options.request),
             reason: "watchdog",
+            op: watchdogOp,
           });
 
           triggeredRepair = reconciliation.repaired;

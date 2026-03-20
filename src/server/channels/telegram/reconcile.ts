@@ -10,7 +10,7 @@ import { getInitializedMeta, getStore } from "@/server/store/store";
  * Telegram's setWebhook silently drops registrations when the URL
  * contains this parameter.
  */
-function stripBypassParam(url: string): string {
+export function stripBypassParam(url: string): string {
   try {
     const parsed = new URL(url);
     if (parsed.searchParams.has("x-vercel-protection-bypass")) {
@@ -118,7 +118,7 @@ export async function reconcileTelegramIntegration(options?: {
   await getStore().setValue(TELEGRAM_RECONCILE_KEY, checkedAt);
 
   logInfo("channels.telegram_integration_reconciled", {
-    webhookUrl: config.webhookUrl,
+    webhookUrl: stripBypassParam(config.webhookUrl),
     commandsSynced,
     commandCount,
   });

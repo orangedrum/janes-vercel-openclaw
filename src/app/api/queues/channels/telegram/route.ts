@@ -11,22 +11,30 @@ import { buildQueueConsumerRetry } from "@/server/channels/queue";
 import { reconcileTelegramIntegration } from "@/server/channels/telegram/reconcile";
 import { createTelegramAdapter } from "@/server/channels/telegram/adapter";
 import { logInfo, logError, logWarn } from "@/server/log";
+import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 
 export const POST = handleCallback<QueuedChannelJob>(
   async (job, metadata) => {
-    logInfo("channels.queue_consumer_received", {
+    const op = createOperationContext({
+      trigger: "channel.queue.consumer",
+      reason: "channel:telegram",
       channel: "telegram",
       messageId: metadata.messageId,
       deliveryCount: metadata.deliveryCount,
-      receivedAt: job.receivedAt,
+      retryCount: job.retryCount ?? null,
+      parentOpId: job.opId ?? null,
     });
+
+    logInfo("channels.queue_consumer_received", withOperationContext(op, {
+      receivedAt: job.receivedAt,
+    }));
 
     try {
       await reconcileTelegramIntegration();
     } catch (err) {
-      logWarn("channels.telegram_integration_reconcile_failed", {
+      logWarn("channels.telegram_integration_reconcile_failed", withOperationContext(op, {
         error: err instanceof Error ? err.message : String(err),
-      });
+      }));
     }
 
     try {
@@ -39,20 +47,18 @@ export const POST = handleCallback<QueuedChannelJob>(
           requestTimeoutMs: DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS,
         },
         job,
+        op,
       );
     } catch (error) {
       void reconcileTelegramIntegration({ force: true }).catch((err) => {
-        logWarn("channels.telegram_reconcile_on_error_failed", {
+        logWarn("channels.telegram_reconcile_on_error_failed", withOperationContext(op, {
           error: err instanceof Error ? err.message : String(err),
-        });
+        }));
       });
       throw error;
     }
 
-    logInfo("channels.queue_consumer_success", {
-      channel: "telegram",
-      messageId: metadata.messageId,
-    });
+    logInfo("channels.queue_consumer_success", withOperationContext(op));
   },
   {
     visibilityTimeoutSeconds: 600,

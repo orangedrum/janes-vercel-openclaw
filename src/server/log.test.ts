@@ -224,6 +224,89 @@ describe("getFilteredServerLogs()", () => {
   });
 });
 
+describe("getFilteredServerLogs() correlation filters", () => {
+  beforeEach(() => {
+    _resetLogBuffer();
+    log("info", "channels.wake_requested", {
+      opId: "op_aaa111222333",
+      channel: "slack",
+      messageId: "vq_msg1",
+      sandboxId: "sbx_123",
+      requestId: "req-abc",
+    });
+    log("info", "sandbox.restore.phase_complete", {
+      opId: "op_aaa111222333",
+      phase: "local_ready",
+      sandboxId: "sbx_123",
+    });
+    log("info", "channels.wake_requested", {
+      opId: "op_bbb444555666",
+      parentOpId: "op_aaa111222333",
+      channel: "telegram",
+      messageId: "vq_msg2",
+      sandboxId: "sbx_456",
+      requestId: "req-def",
+    });
+    log("error", "channels.delivery_failed", {
+      opId: "op_ccc777888999",
+      channel: "discord",
+      messageId: "vq_msg3",
+    });
+  });
+
+  it("filters by opId (matches opId directly)", () => {
+    const results = getFilteredServerLogs({ opId: "op_aaa111222333" });
+    // Should match the two entries with opId=op_aaa111222333 plus the child with parentOpId
+    assert.equal(results.length, 3);
+  });
+
+  it("filters by opId (matches parentOpId)", () => {
+    const results = getFilteredServerLogs({ opId: "op_aaa111222333" });
+    const hasChild = results.some(
+      (e) => e.data?.parentOpId === "op_aaa111222333",
+    );
+    assert.ok(hasChild, "Should include entries where parentOpId matches");
+  });
+
+  it("filters by requestId", () => {
+    const results = getFilteredServerLogs({ requestId: "req-abc" });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].message, "channels.wake_requested");
+    assert.equal(results[0].data?.channel, "slack");
+  });
+
+  it("filters by channel", () => {
+    const results = getFilteredServerLogs({ channel: "telegram" });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].data?.opId, "op_bbb444555666");
+  });
+
+  it("filters by sandboxId", () => {
+    const results = getFilteredServerLogs({ sandboxId: "sbx_123" });
+    assert.equal(results.length, 2);
+  });
+
+  it("filters by messageId", () => {
+    const results = getFilteredServerLogs({ messageId: "vq_msg3" });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].data?.channel, "discord");
+  });
+
+  it("combines correlation filters with level", () => {
+    const results = getFilteredServerLogs({
+      opId: "op_ccc777888999",
+      level: "error",
+    });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].message, "channels.delivery_failed");
+  });
+
+  it("returns empty when no correlation match", () => {
+    const results = getFilteredServerLogs({ opId: "op_nonexistent" });
+    assert.equal(results.length, 0);
+  });
+});
+
 describe("_resetLogBuffer()", () => {
   it("clears all entries", () => {
     log("info", "before reset");

@@ -190,6 +190,7 @@ test("sign-in-with-vercel on Vercel with all config passes", async () => {
   process.env.NEXT_PUBLIC_APP_URL = "https://test.example.com";
   process.env.UPSTASH_REDIS_REST_URL = "https://test.upstash.io";
   process.env.UPSTASH_REDIS_REST_TOKEN = "test-upstash-token";
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass-secret";
   _setAiGatewayTokenOverrideForTesting("test-token");
 
   const contract = await buildDeploymentContract();
@@ -410,30 +411,34 @@ test("ai-gateway warns on non-Vercel when unavailable", async () => {
   assert.equal(gwReq.status, "warn");
 });
 
-test("webhook-bypass not emitted for sign-in-with-vercel mode", async () => {
+test("webhook-bypass warns when bypass secret is not configured", async () => {
+  delete process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   process.env.VERCEL = "1";
   process.env.VERCEL_AUTH_MODE = "sign-in-with-vercel";
   _setAiGatewayTokenOverrideForTesting("test-token");
 
   const contract = await buildDeploymentContract();
   const bypassReq = contract.requirements.find((r) => r.id === "webhook-bypass");
-  assert.equal(bypassReq, undefined);
+  assert.ok(bypassReq, "webhook-bypass requirement should be present");
+  assert.equal(bypassReq.status, "warn");
 });
 
-test("webhook-bypass not emitted for non-Vercel environments", async () => {
+test("webhook-bypass warns in non-Vercel environments without bypass secret", async () => {
   delete process.env.VERCEL;
   delete process.env.VERCEL_ENV;
   delete process.env.VERCEL_URL;
   delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
   delete process.env.VERCEL_AUTH_MODE;
+  delete process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   _setAiGatewayTokenOverrideForTesting("test-token");
 
   const contract = await buildDeploymentContract();
   const bypassReq = contract.requirements.find((r) => r.id === "webhook-bypass");
-  assert.equal(bypassReq, undefined);
+  assert.ok(bypassReq, "webhook-bypass requirement should be present");
+  assert.equal(bypassReq.status, "warn");
 });
 
-test("webhook-bypass requirement is not emitted on protected Vercel", async () => {
+test("webhook-bypass passes when bypass secret is configured", async () => {
   process.env.VERCEL = "1";
   delete process.env.VERCEL_AUTH_MODE;
   process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass-secret-value";
@@ -441,5 +446,6 @@ test("webhook-bypass requirement is not emitted on protected Vercel", async () =
 
   const contract = await buildDeploymentContract();
   const bypassReq = contract.requirements.find((r) => r.id === "webhook-bypass");
-  assert.equal(bypassReq, undefined);
+  assert.ok(bypassReq, "webhook-bypass requirement should be present");
+  assert.equal(bypassReq.status, "pass");
 });

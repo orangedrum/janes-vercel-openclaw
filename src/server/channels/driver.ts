@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 
 import type { ChannelName } from "@/shared/channels";
-import type { SingleMeta } from "@/shared/types";
+import type { OperationContext, SingleMeta } from "@/shared/types";
+import {
+  createOperationContext,
+  withOperationContext,
+} from "@/server/observability/operation-context";
 import { extractReply, toPlainText } from "@/server/channels/core/reply";
 import { startPlatformProcessingIndicator } from "@/server/channels/core/processing-indicator";
 import { runWithBootMessages } from "@/server/channels/core/boot-messages";
@@ -55,6 +59,10 @@ export type QueuedChannelJob<TPayload = unknown> = {
   lastError?: string;
   lastRetryAt?: number;
   dedupId?: string;
+  /** Root operation ID for end-to-end correlation across webhook → queue → consumer → lifecycle. */
+  opId?: string;
+  /** Parent operation ID when this job was spawned from another correlated flow. */
+  parentOpId?: string | null;
 };
 
 type FailedEntry = {
@@ -343,7 +351,21 @@ export async function processChannelJob<
 >(
   options: ChannelJobOptions<TConfig, TPayload, TMessage>,
   job: QueuedChannelJob<TPayload>,
+  externalOp?: OperationContext,
 ): Promise<void> {
+  // Build or adopt an operation context for end-to-end correlation.
+  const op = externalOp ?? createOperationContext({
+    trigger: "channel.queue.consumer",
+    reason: `channel:${options.channel}`,
+    channel: options.channel,
+    retryCount: job.retryCount ?? null,
+    parentOpId: job.parentOpId ?? null,
+  });
+  // Absorb job-level opId when present (propagated from webhook ingress).
+  if (!externalOp && job.opId) {
+    (op as { parentOpId: string | null }).parentOpId = job.opId;
+  }
+
   const meta = await getInitializedMeta();
   const config = options.getConfig(meta);
   if (!config) {
@@ -353,10 +375,10 @@ export async function processChannelJob<
   const adapter = options.createAdapter(config);
   const extracted = await adapter.extractMessage(job.payload);
   if (extracted.kind === "skip") {
-    logInfo("channels.job_skipped", {
+    logInfo("channels.job_skipped", withOperationContext(op, {
       channel: options.channel,
       reason: extracted.reason,
-    });
+    }));
     return;
   }
 
@@ -376,10 +398,13 @@ export async function processChannelJob<
     options.requestTimeoutMs ?? DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS;
 
   // --- Phase 1: Wake the sandbox (with boot messages if supported) ---
-  logInfo("channels.wake_requested", {
+  logInfo("channels.wake_requested", withOperationContext(op, {
     channel: options.channel,
     sandboxReadyTimeoutMs,
-  });
+    sandboxId: meta.sandboxId,
+    snapshotId: meta.snapshotId,
+    status: meta.status,
+  }));
 
   let readyMeta: SingleMeta;
   let gatewayUrl: string;
@@ -403,6 +428,7 @@ export async function processChannelJob<
           origin: resolveAppOrigin(job.origin),
           reason: `channel:${options.channel}`,
           timeoutMs: sandboxReadyTimeoutMs,
+          op,
         });
       }
     } else {
@@ -410,19 +436,22 @@ export async function processChannelJob<
         origin: resolveAppOrigin(job.origin),
         reason: `channel:${options.channel}`,
         timeoutMs: sandboxReadyTimeoutMs,
+        op,
       });
     }
     gatewayUrl = await getSandboxDomain();
-    logInfo("channels.wake_ready", {
+    logInfo("channels.wake_ready", withOperationContext(op, {
       channel: options.channel,
       bootMessageSent,
-    });
+      sandboxId: readyMeta.sandboxId,
+      status: readyMeta.status,
+    }));
   } catch (sandboxError) {
-    logWarn("channels.wake_retry_scheduled", {
+    logWarn("channels.wake_retry_scheduled", withOperationContext(op, {
       channel: options.channel,
       error: formatError(sandboxError),
       retryAfterSeconds: DEFAULT_CHANNEL_WAKE_RETRY_AFTER_SECONDS,
-    });
+    }));
     throw new RetryableChannelError(
       `sandbox_not_ready: ${formatError(sandboxError)}`,
       DEFAULT_CHANNEL_WAKE_RETRY_AFTER_SECONDS,
@@ -447,12 +476,13 @@ export async function processChannelJob<
         (m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"),
       );
 
-      logInfo("channels.gateway_request_started", {
+      logInfo("channels.gateway_request_started", withOperationContext(op, {
         channel: options.channel,
         requestTimeoutMs,
         messageCount: messages.length,
         hasImageParts,
-      });
+        sandboxId: readyMeta.sandboxId,
+      }));
 
       const recoveryResult = await callGatewayWithAuthRecovery<ChannelReply>({
         label: `channel:${options.channel}`,
@@ -481,19 +511,16 @@ export async function processChannelJob<
       });
 
       if (!recoveryResult.ok) {
-        // A 410 from the gateway means the sandbox is gone (timed out /
-        // reclaimed) even though metadata still says "running".  Trigger
-        // the same health reconciliation the gateway proxy uses so we
-        // actually restore instead of retrying against a dead sandbox.
         if (recoveryResult.status === 410) {
-          logWarn("channels.gateway_410_reconcile", {
+          logWarn("channels.gateway_410_reconcile", withOperationContext(op, {
             channel: options.channel,
             sandboxId: readyMeta.sandboxId,
             error: recoveryResult.error,
-          });
+          }));
           await reconcileSandboxHealth({
             origin: resolveAppOrigin(job.origin),
             reason: `channel:${options.channel}:gateway_410`,
+            op,
           });
           throw new RetryableChannelError(
             `sandbox_gone_410: reconciliation scheduled`,
@@ -515,24 +542,26 @@ export async function processChannelJob<
       const replyText = toPlainText(resolvedReply);
       const imageCount = resolvedReply.images?.length ?? 0;
 
-      logInfo("channels.gateway_response_received", {
+      logInfo("channels.gateway_response_received", withOperationContext(op, {
         channel: options.channel,
         replyTextLength: replyText.length,
         imageCount,
         imageKinds: resolvedReply.images?.map((img) => img.kind) ?? [],
         usingSendReplyRich: Boolean(adapter.sendReplyRich),
-      });
+      }));
 
       if (adapter.sendReplyRich) {
         await adapter.sendReplyRich(message, resolvedReply);
       } else {
         await adapter.sendReply(message, replyText);
       }
-      logInfo("channels.platform_reply_sent", {
+      logInfo("channels.platform_reply_sent", withOperationContext(op, {
         channel: options.channel,
         imageCount,
-      });
-      logInfo("channels.delivery_success", { channel: options.channel });
+      }));
+      logInfo("channels.delivery_success", withOperationContext(op, {
+        channel: options.channel,
+      }));
       if (sessionKey) {
         await appendSessionHistory(options.channel, sessionKey, message.text, replyText);
       }

@@ -6,7 +6,7 @@ import {
   isVercelDeployment,
 } from "@/server/env";
 import { logInfo } from "@/server/log";
-import { resolvePublicOrigin } from "@/server/public-url";
+import { getProtectionBypassSecret, resolvePublicOrigin } from "@/server/public-url";
 
 // Re-export shared types so existing consumers keep working.
 export type {
@@ -102,12 +102,29 @@ function checkPublicOrigin(
   }
 }
 
-function checkWebhookBypass(): DeploymentRequirement | null {
-  // Webhook bypass is no longer a hard requirement. The app uses
-  // admin-secret auth so channel webhooks are not blocked by Vercel's
-  // deployment protection. If VERCEL_AUTOMATION_BYPASS_SECRET is set,
-  // it is applied opportunistically to webhook URLs (see public-url.ts).
-  return null;
+function checkWebhookBypass(): DeploymentRequirement {
+  const configured = Boolean(getProtectionBypassSecret());
+
+  if (configured) {
+    return {
+      id: "webhook-bypass",
+      status: "pass",
+      message:
+        "Protection bypass secret is configured for protected deployment webhook flows.",
+      remediation: "",
+      env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
+    };
+  }
+
+  return {
+    id: "webhook-bypass",
+    status: "warn",
+    message:
+      "Protection bypass secret is not configured. This is safe only when Deployment Protection is disabled; protected third-party webhooks can be blocked before app auth runs.",
+    remediation:
+      "If Deployment Protection is enabled, set VERCEL_AUTOMATION_BYPASS_SECRET or use a Deployment Protection Exception for webhook endpoints/providers that cannot preserve the bypass query parameter.",
+    env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
+  };
 }
 
 function checkStore(onVercel: boolean): DeploymentRequirement {

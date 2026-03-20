@@ -129,14 +129,25 @@ export function getServerLogs(): LogEntry[] {
   return [..._buffer];
 }
 
-/**
- * Return filtered server-side log entries.
- */
-export function getFilteredServerLogs(filters: {
+export type LogFilters = {
   level?: LogLevel;
   source?: LogSource;
   search?: string;
-}): LogEntry[] {
+  opId?: string;
+  requestId?: string;
+  channel?: "slack" | "telegram" | "discord";
+  sandboxId?: string;
+  messageId?: string;
+};
+
+/**
+ * Return filtered server-side log entries.
+ *
+ * Supports both the original level/source/search filters and the new
+ * correlation-based filters (opId, requestId, channel, sandboxId, messageId)
+ * that match against the `data` context attached to each log entry.
+ */
+export function getFilteredServerLogs(filters: LogFilters): LogEntry[] {
   let entries = _buffer;
 
   if (filters.level) {
@@ -152,6 +163,28 @@ export function getFilteredServerLogs(filters: {
         e.message.toLowerCase().includes(term) ||
         (e.data && JSON.stringify(e.data).toLowerCase().includes(term)),
     );
+  }
+  if (filters.opId) {
+    const id = filters.opId;
+    entries = entries.filter(
+      (e) => e.data?.opId === id || e.data?.parentOpId === id,
+    );
+  }
+  if (filters.requestId) {
+    const rid = filters.requestId;
+    entries = entries.filter((e) => e.data?.requestId === rid);
+  }
+  if (filters.channel) {
+    const ch = filters.channel;
+    entries = entries.filter((e) => e.data?.channel === ch);
+  }
+  if (filters.sandboxId) {
+    const sid = filters.sandboxId;
+    entries = entries.filter((e) => e.data?.sandboxId === sid);
+  }
+  if (filters.messageId) {
+    const mid = filters.messageId;
+    entries = entries.filter((e) => e.data?.messageId === mid);
   }
 
   return [...entries];

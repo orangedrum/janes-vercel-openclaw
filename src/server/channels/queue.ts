@@ -71,6 +71,7 @@ export async function publishToChannelQueue<TPayload>(
       messageId: result.messageId,
       idempotencyKey,
       receivedAt: job.receivedAt,
+      ...(job.opId ? { opId: job.opId } : {}),
     });
 
     return { queued: true, messageId: result.messageId };
@@ -80,6 +81,7 @@ export async function publishToChannelQueue<TPayload>(
       topic,
       idempotencyKey,
       error: error instanceof Error ? error.message : String(error),
+      ...(job.opId ? { opId: job.opId } : {}),
     });
 
     return { queued: false, messageId: null };

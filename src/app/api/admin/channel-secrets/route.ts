@@ -9,7 +9,7 @@ import {
   signSlackPayload,
 } from "@/server/smoke/remote-crypto";
 import { extractRequestId, logInfo, logWarn } from "@/server/log";
-import { buildPublicUrl } from "@/server/public-url";
+import { buildPublicDisplayUrl, buildPublicUrl } from "@/server/public-url";
 
 const DISCORD_SMOKE_PRIVATE_KEY_STORE_KEY =
   "smoke:discord:private-key-pkcs8-pem";
@@ -101,7 +101,7 @@ export async function PUT(request: Request): Promise<Response> {
     const slackSigningSecret = randomBytes(32).toString("hex");
     const telegramWebhookSecret = randomBytes(24).toString("base64url");
     const discordKeys = generateDiscordSmokeKeyPair();
-    const telegramWebhookUrl = buildPublicUrl(
+    const telegramWebhookUrl = buildPublicDisplayUrl(
       "/api/channels/telegram/webhook",
       request,
     );

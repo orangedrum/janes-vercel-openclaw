@@ -4,6 +4,7 @@ import { verifyDiscordRequestSignature } from "@/server/channels/discord/adapter
 import { channelDedupKey } from "@/server/channels/keys";
 import { publishToChannelQueue } from "@/server/channels/queue";
 import { logInfo } from "@/server/log";
+import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
 function extractInteractionId(payload: unknown): string | null {
@@ -61,16 +62,29 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
+  const op = createOperationContext({
+    trigger: "channel.discord.webhook",
+    reason: "incoming discord webhook",
+    channel: "discord",
+    dedupId: interactionId ?? null,
+    sandboxId: meta.sandboxId ?? null,
+    snapshotId: meta.snapshotId ?? null,
+    status: meta.status,
+  });
+
+  logInfo("channels.discord_webhook_accepted", withOperationContext(op));
+
   const job = {
     payload,
     receivedAt: Date.now(),
     origin: getPublicOrigin(request),
+    opId: op.opId,
   };
 
   const { queued } = await publishToChannelQueue("discord", job);
   if (!queued) {
     await enqueueChannelJob("discord", job);
-    logInfo("channels.discord_webhook_fallback_enqueue", { receivedAt: job.receivedAt });
+    logInfo("channels.discord_webhook_fallback_enqueue", withOperationContext(op, { receivedAt: job.receivedAt }));
   }
 
   return Response.json({ type: 5 });

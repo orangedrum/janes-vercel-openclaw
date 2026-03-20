@@ -30,6 +30,7 @@ const MANIFEST_PATH = join(
 const ROUTE_ROOTS = [
   join(API_ROOT, "admin"),
   join(API_ROOT, "firewall"),
+  join(API_ROOT, "debug"),
 ];
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -39,6 +40,7 @@ const AUTH_TOKENS = [
   "requireMutationAuth(",
   "requireAdminAuth(",
   "requireAdminMutationAuth(",
+  "requireDebugEnabled(",
 ];
 
 function normalizePath(value) {
@@ -77,6 +79,40 @@ function toApiPath(routeFile) {
   return `/api/${normalizePath(rel).replace(/\/route\.ts$/, "")}`;
 }
 
+/**
+ * Strip block comments, line comments, and string literals so that auth tokens
+ * appearing only inside comments or strings are not treated as real calls.
+ */
+function stripCommentsAndStrings(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "")
+    .replace(/(["'`])(?:\\.|(?!\1)[\s\S])*\1/g, '""');
+}
+
+/**
+ * Extract the source region for a specific exported HTTP method handler.
+ * Falls back to the full source if the method boundary cannot be determined.
+ */
+function getMethodSource(source, method) {
+  const methodNames = METHODS.join("|");
+  const patterns = [
+    new RegExp(
+      `export\\s+async\\s+function\\s+${method}\\b[\\s\\S]*?(?=\\nexport\\s+(?:async\\s+function|const)\\s+(?:${methodNames})\\b|$)`,
+    ),
+    new RegExp(
+      `export\\s+const\\s+${method}\\s*=\\s*[\\s\\S]*?(?=\\nexport\\s+(?:async\\s+function|const)\\s+(?:${methodNames})\\b|$)`,
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match) return match[0];
+  }
+
+  return source;
+}
+
 function discoverRoutes() {
   return ROUTE_ROOTS.flatMap((root) => {
     try {
@@ -102,15 +138,51 @@ function discoverRoutes() {
     );
 }
 
+/**
+ * Check if a method handler's source (or a delegated function in the same file)
+ * contains an auth token.
+ */
+function isMethodAuthenticated(source, method) {
+  const methodBody = getMethodSource(source, method);
+  const strippedMethodBody = stripCommentsAndStrings(methodBody);
+
+  // Direct auth call in the method body
+  if (AUTH_TOKENS.some((token) => strippedMethodBody.includes(token))) {
+    return true;
+  }
+
+  // Delegation pattern: the method calls a function defined in the same file.
+  // Extract function calls from the method body, then check each called
+  // function's body for auth tokens.
+  const calledFunctions = strippedMethodBody.match(/\b([a-zA-Z_]\w*)\s*\(/g);
+  if (calledFunctions) {
+    const strippedFullSource = stripCommentsAndStrings(source);
+    for (const call of calledFunctions) {
+      const fnName = call.replace(/\s*\($/, "");
+      // Look for a function definition in the same file
+      const fnDefPattern = new RegExp(
+        `(?:export\\s+)?(?:async\\s+)?function\\s+${fnName}\\b[\\s\\S]*?(?=\\n(?:export\\s+)?(?:async\\s+)?function\\s+\\w|$)`,
+      );
+      const fnMatch = strippedFullSource.match(fnDefPattern);
+      if (fnMatch && AUTH_TOKENS.some((token) => fnMatch[0].includes(token))) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function findUnauthenticatedRoutes(routes) {
   return routes
-    .filter(({ source }) => !AUTH_TOKENS.some((token) => source.includes(token)))
-    .map(({ method, file }) => ({
+    .filter(({ source, method }) => !isMethodAuthenticated(source, method))
+    .map(({ method, path, file }) => ({
       method,
+      path,
       file: normalizePath(relative(PROJECT_ROOT, file)),
     }))
     .sort((a, b) =>
-      `${a.method} ${a.file}`.localeCompare(`${b.method} ${b.file}`),
+      `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`),
     );
 }
 

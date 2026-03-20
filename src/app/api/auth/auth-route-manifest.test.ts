@@ -14,7 +14,7 @@ import { join, relative, sep } from "node:path";
 import test from "node:test";
 
 const API_ROOT = join(process.cwd(), "src", "app", "api");
-const ROUTE_ROOTS = [join(API_ROOT, "admin"), join(API_ROOT, "firewall")];
+const ROUTE_ROOTS = [join(API_ROOT, "admin"), join(API_ROOT, "firewall"), join(API_ROOT, "debug")];
 
 const METHODS = [
   "GET",
@@ -31,6 +31,7 @@ const AUTH_TOKENS = [
   "requireMutationAuth(",
   "requireAdminAuth(",
   "requireAdminMutationAuth(",
+  "requireDebugEnabled(",
 ] as const;
 
 function walk(dir: string): string[] {

@@ -28,6 +28,10 @@ import {
   mutateMeta,
 } from "@/server/store/store";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
+import { getServerLogs, _resetLogBuffer } from "@/server/log";
+import {
+  createOperationContext,
+} from "@/server/observability/operation-context";
 import {
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
   OPENCLAW_BIN,
@@ -892,6 +896,140 @@ test("restoreSandboxFromSnapshot fails closed when enforcing firewall sync fails
       assert.ok(meta.firewall.lastSyncFailedAt);
       assert.equal(meta.firewall.lastSyncOutcome?.applied, false);
       assert.equal(handle.stopCalled, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Create-path firewall sync tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: triggers createAndBootstrapSandbox by calling ensureSandboxRunning
+ * with an uninitialized meta (no snapshotId), captures the scheduled callback,
+ * and runs it.
+ */
+async function runCreatePath(
+  fake: FakeSandboxController,
+): Promise<SingleMeta> {
+  let scheduledCallback: (() => Promise<void> | void) | null = null;
+
+  await ensureSandboxRunning({
+    origin: "https://test.example.com",
+    reason: "create-firewall-test",
+    schedule(cb) {
+      scheduledCallback = cb;
+    },
+  });
+
+  assert.ok(scheduledCallback, "expected lifecycle callback");
+  await (scheduledCallback as () => Promise<void>)();
+  return getInitializedMeta();
+}
+
+test("createAndBootstrapSandbox records successful firewall sync before running", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "uninitialized";
+      meta.snapshotId = null;
+      meta.gatewayToken = "test-gw-token";
+      meta.firewall.mode = "enforcing";
+      meta.firewall.allowlist = ["api.openai.com", "registry.npmjs.org"];
+    });
+
+    fake.onNetworkPolicy = async (policy) => {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return policy;
+    };
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const meta = await runCreatePath(fake);
+      assert.equal(meta.status, "running");
+      assert.equal(meta.firewall.lastSyncOutcome?.applied, true);
+      assert.equal(meta.firewall.lastSyncReason, "create-policy-applied");
+      assert.ok(meta.firewall.lastSyncAppliedAt);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("createAndBootstrapSandbox fails closed when enforcing firewall sync fails", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "uninitialized";
+      meta.snapshotId = null;
+      meta.gatewayToken = "test-gw-token";
+      meta.firewall.mode = "enforcing";
+      meta.firewall.allowlist = ["api.openai.com"];
+    });
+
+    fake.onNetworkPolicy = async () => {
+      throw new Error("simulated network policy failure");
+    };
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const meta = await runCreatePath(fake);
+      assert.equal(meta.status, "error");
+      assert.equal(meta.sandboxId, null);
+      assert.equal(meta.portUrls, null);
+      assert.ok(
+        meta.lastError?.includes("Firewall sync failed during create"),
+        `expected create firewall error, got: ${meta.lastError}`,
+      );
+      assert.equal(meta.firewall.lastSyncOutcome?.applied, false);
+      assert.equal(meta.firewall.lastSyncReason, "create-policy-failed");
+      assert.ok(meta.firewall.lastSyncFailedAt);
+      // Verify sandbox was stopped for cleanup
+      const handle = fake.created[fake.created.length - 1];
+      assert.equal(handle.stopCalled, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("createAndBootstrapSandbox does not fail closed in learning mode when firewall sync fails", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "uninitialized";
+      meta.snapshotId = null;
+      meta.gatewayToken = "test-gw-token";
+      meta.firewall.mode = "learning";
+      meta.firewall.allowlist = ["api.openai.com"];
+    });
+
+    fake.onNetworkPolicy = async () => {
+      throw new Error("simulated network policy failure");
+    };
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const meta = await runCreatePath(fake);
+      // Learning mode should still reach running despite firewall failure
+      assert.equal(meta.status, "running");
+      assert.equal(meta.firewall.lastSyncOutcome?.applied, false);
+      assert.equal(meta.firewall.lastSyncReason, "create-policy-failed");
+      assert.ok(meta.firewall.lastSyncFailedAt);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2732,5 +2870,136 @@ test("getRunningSandboxTimeoutRemainingMs returns null when not running", async 
 
     const remaining = await getRunningSandboxTimeoutRemainingMs();
     assert.equal(remaining, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Correlated opId: concurrent wakes produce one restore with shared opId
+// ---------------------------------------------------------------------------
+
+test("concurrent ensureSandboxRunning with op context: exactly one restore, restore-phase logs share the winning opId", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-opid-concurrency";
+    });
+
+    _resetLogBuffer();
+
+    const ops = Array.from({ length: 3 }, (_, i) =>
+      createOperationContext({
+        trigger: "channel.queue.consumer",
+        reason: `concurrent-wake-${i}`,
+        channel: i === 0 ? "slack" : i === 1 ? "telegram" : "discord",
+      }),
+    );
+
+    const callbacks: Array<() => Promise<void> | void> = [];
+
+    const results = await Promise.all(
+      ops.map((op) =>
+        ensureSandboxRunning({
+          origin: "https://test.example.com",
+          reason: op.reason,
+          op,
+          schedule(cb) {
+            callbacks.push(cb);
+          },
+        }),
+      ),
+    );
+
+    // All should return waiting
+    for (const r of results) {
+      assert.equal(r.state, "waiting");
+    }
+
+    // Exactly one scheduled callback (deduplicated by start lock)
+    assert.equal(
+      callbacks.length,
+      1,
+      `Expected exactly 1 scheduled callback, got ${callbacks.length}`,
+    );
+
+    // Execute the restore
+    await callbacks[0]();
+
+    const meta = await getInitializedMeta();
+    assert.equal(meta.status, "running", "Sandbox should be running after restore");
+
+    // Exactly one restore event
+    const restoreEvents = fake.events.filter((e) => e.kind === "restore");
+    assert.equal(restoreEvents.length, 1, "Should produce exactly one restore");
+
+    // Verify restore-phase logs contain opId from the winning operation
+    const logs = getServerLogs();
+    const restorePhaseLogs = logs.filter((l) =>
+      l.message === "sandbox.restore.phase_complete" ||
+      l.message === "sandbox.restore.metrics",
+    );
+
+    // Should have at least some restore-phase logs with opId
+    const logsWithOpId = restorePhaseLogs.filter((l) => l.data?.opId);
+    assert.ok(
+      logsWithOpId.length >= 1,
+      `Expected at least 1 restore-phase log with opId, got ${logsWithOpId.length}`,
+    );
+
+    // All restore-phase logs with opId should share the same opId
+    const opIds = [...new Set(logsWithOpId.map((l) => l.data?.opId as string))];
+    assert.equal(
+      opIds.length,
+      1,
+      `All restore-phase logs should share one opId, got ${opIds.length}: ${JSON.stringify(opIds)}`,
+    );
+
+    // The winning opId should belong to one of our original operations
+    const winningOpId = opIds[0];
+    assert.ok(
+      winningOpId.startsWith("op_"),
+      `opId should have op_ prefix, got ${winningOpId}`,
+    );
+
+    // Verify the lifecycle.action_chosen log was emitted
+    const actionLog = logs.find((l) => l.message === "sandbox.lifecycle.action_chosen");
+    assert.ok(actionLog, "Should emit sandbox.lifecycle.action_chosen");
+    assert.equal(actionLog.data?.action, "restoring");
+    assert.ok(actionLog.data?.opId, "action_chosen should include opId");
+  });
+});
+
+test("ensureSandboxRunning with op context includes opId in ensure_running log", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sbx-opid-test";
+    });
+
+    fake.handlesByIds.set("sbx-opid-test", new FakeSandboxHandle("sbx-opid-test", fake.events));
+
+    _resetLogBuffer();
+
+    const op = createOperationContext({
+      trigger: "channel.queue.consumer",
+      reason: "channel:slack",
+      channel: "slack",
+    });
+
+    const result = await ensureSandboxRunning({
+      origin: "https://test.example.com",
+      reason: "channel:slack",
+      op,
+    });
+
+    assert.equal(result.state, "running");
+
+    const logs = getServerLogs();
+    const ensureLog = logs.find((l) => l.message === "sandbox.ensure_running");
+    assert.ok(ensureLog, "Should emit sandbox.ensure_running");
+    assert.equal(ensureLog.data?.opId, op.opId, "ensure_running should include the passed opId");
+    assert.equal(ensureLog.data?.channel, "slack");
+    assert.equal(ensureLog.data?.status, "running");
   });
 });

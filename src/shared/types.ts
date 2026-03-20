@@ -28,6 +28,54 @@ export type LearnedDomain = {
   categories?: DomainCategory[];
 };
 
+// ---------------------------------------------------------------------------
+// Operation context types for correlated observability
+// ---------------------------------------------------------------------------
+
+export type OperationTrigger =
+  | "admin.ensure"
+  | "admin.stop"
+  | "gateway.request"
+  | "status.heartbeat"
+  | "watchdog"
+  | "channel.slack.webhook"
+  | "channel.telegram.webhook"
+  | "channel.discord.webhook"
+  | "channel.queue.consumer"
+  | "channel.store.drain";
+
+export type OperationContext = {
+  opId: string;
+  parentOpId: string | null;
+  trigger: OperationTrigger;
+  reason: string;
+  requestId: string | null;
+  channel: "slack" | "telegram" | "discord" | null;
+  messageId: string | null;
+  dedupId: string | null;
+  deliveryCount: number | null;
+  retryCount: number | null;
+  sandboxId: string | null;
+  snapshotId: string | null;
+  status: SingleStatus | null;
+};
+
+export type QueueStateSnapshot = {
+  queued: number;
+  processing: number;
+};
+
+export type LifecycleStateSnapshot = {
+  status: SingleStatus;
+  sandboxId: string | null;
+  snapshotId: string | null;
+  lastError: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Log types
+// ---------------------------------------------------------------------------
+
 export type LogLevel = "error" | "warn" | "info" | "debug";
 
 export type LogSource =
