@@ -344,8 +344,20 @@ export async function snapshotSandbox(): Promise<SingleMeta> {
   return stopSandbox();
 }
 
-export async function markSandboxUnavailable(reason: string): Promise<SingleMeta> {
+export async function markSandboxUnavailable(
+  reason: string,
+  expectedSandboxId?: string,
+): Promise<SingleMeta> {
   return mutateMeta((meta) => {
+    if (expectedSandboxId !== undefined && meta.sandboxId !== expectedSandboxId) {
+      logWarn("sandbox.mark_unavailable_skipped_stale", {
+        reason,
+        expectedSandboxId,
+        actualSandboxId: meta.sandboxId,
+      });
+      return;
+    }
+
     meta.sandboxId = null;
     meta.portUrls = null;
     meta.status = meta.snapshotId ? "stopped" : "error";
@@ -380,6 +392,7 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
   if (!meta.sandboxId || meta.status !== "running") {
     return meta;
   }
+  const sandboxId = meta.sandboxId;
 
   const now = Date.now();
   const throttleMs = getSandboxTouchThrottleMs();
@@ -389,10 +402,10 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
 
   let sandbox: SandboxHandle;
   try {
-    sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+    sandbox = await getSandboxController().get({ sandboxId });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return markSandboxUnavailable(`sandbox lookup failed: ${message}`);
+    return markSandboxUnavailable(`sandbox lookup failed: ${message}`, sandboxId);
   }
 
   const targetSleepAfterMs = getSandboxSleepAfterMs();
@@ -423,11 +436,12 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
       // Timeout already at max — sandbox is fine, ignore.
     } else {
       logWarn("sandbox.extend_timeout_failed", {
-        sandboxId: meta.sandboxId,
+        sandboxId,
         error: message,
       });
       return markSandboxUnavailable(
         `extend timeout failed: ${message}`,
+        sandboxId,
       );
     }
   }
@@ -1005,6 +1019,7 @@ export async function reconcileSandboxHealth(options: {
   }
 
   // Metadata says running — verify with a real probe.
+  const sandboxId = meta.sandboxId;
   const probe = await probeGatewayReady();
   if (probe.ready) {
     return { status: "ready", meta, repaired: false };
@@ -1015,17 +1030,18 @@ export async function reconcileSandboxHealth(options: {
     ? withOperationContext(options.op, {
         probeError: probe.error,
         statusCode: probe.statusCode,
-        sandboxId: meta.sandboxId,
+        sandboxId,
       })
     : {
         reason: options.reason,
         probeError: probe.error,
         statusCode: probe.statusCode,
-        sandboxId: meta.sandboxId,
+        sandboxId,
       };
   logWarn("sandbox.health_reconcile", reconcileCtx);
   await markSandboxUnavailable(
     `Health reconciliation: gateway unreachable (${options.reason})`,
+    sandboxId,
   );
   const ensureResult = await ensureSandboxRunning(options);
   const recoveryCtx = options.op

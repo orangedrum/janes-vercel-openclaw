@@ -1704,6 +1704,40 @@ test("[lifecycle] markSandboxUnavailable without snapshotId -> transitions to er
   });
 });
 
+test("[lifecycle] markSandboxUnavailable skips stale sandbox invalidation when sandboxId changed", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sbx-fresh";
+      meta.snapshotId = "snap-existing";
+      meta.portUrls = { "3000": "https://sbx-fresh-3000.fake.vercel.run" };
+      meta.lastError = null;
+    });
+
+    _resetLogBuffer();
+
+    const result = await markSandboxUnavailable(
+      "sandbox crashed",
+      "sbx-stale",
+    );
+
+    assert.equal(result.status, "running");
+    assert.equal(result.sandboxId, "sbx-fresh");
+    assert.deepEqual(result.portUrls, {
+      "3000": "https://sbx-fresh-3000.fake.vercel.run",
+    });
+    assert.equal(result.lastError, null);
+
+    const staleLog = getServerLogs().find(
+      (entry) => entry.message === "sandbox.mark_unavailable_skipped_stale",
+    );
+    assert.ok(staleLog, "Should emit sandbox.mark_unavailable_skipped_stale");
+    assert.equal(staleLog.data?.expectedSandboxId, "sbx-stale");
+    assert.equal(staleLog.data?.actualSandboxId, "sbx-fresh");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Edge-branch: stopSandbox 409 with no sandboxId
 // ---------------------------------------------------------------------------
@@ -2671,6 +2705,69 @@ test("reconcileSandboxHealth with 410-style unreachable sandbox repairs correctl
       const meta = await getInitializedMeta();
       assert.equal(meta.sandboxId, null);
       assert.equal(meta.status, "restoring");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("reconcileSandboxHealth skips stale invalidation when sandbox was already replaced", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sbx-stale";
+      meta.snapshotId = "snap-replaced";
+      meta.portUrls = { "3000": "https://sbx-stale-3000.fake.vercel.run" };
+    });
+
+    const originalFetch = globalThis.fetch;
+    let scheduledWork: (() => Promise<void> | void) | null = null;
+
+    globalThis.fetch = async () => {
+      await mutateMeta((meta) => {
+        meta.status = "running";
+        meta.sandboxId = "sbx-fresh";
+        meta.portUrls = { "3000": "https://sbx-fresh-3000.fake.vercel.run" };
+        meta.lastError = null;
+      });
+      throw new Error("ECONNREFUSED");
+    };
+
+    _resetLogBuffer();
+
+    try {
+      const result = await reconcileSandboxHealth({
+        origin: "https://test.example.com",
+        reason: "test-stale-replaced",
+        schedule(cb) {
+          scheduledWork = cb;
+        },
+      });
+
+      assert.equal(result.status, "recovering");
+      assert.equal(result.repaired, true);
+      assert.equal(
+        scheduledWork,
+        null,
+        "Late callers should not schedule a second recovery after another worker replaced the sandbox",
+      );
+      assert.equal(result.meta.sandboxId, "sbx-fresh");
+      assert.equal(result.meta.status, "running");
+
+      const meta = await getInitializedMeta();
+      assert.equal(meta.sandboxId, "sbx-fresh");
+      assert.equal(meta.status, "running");
+      assert.deepEqual(meta.portUrls, {
+        "3000": "https://sbx-fresh-3000.fake.vercel.run",
+      });
+
+      const staleLog = getServerLogs().find(
+        (entry) => entry.message === "sandbox.mark_unavailable_skipped_stale",
+      );
+      assert.ok(staleLog, "Should emit sandbox.mark_unavailable_skipped_stale");
+      assert.equal(staleLog.data?.expectedSandboxId, "sbx-stale");
+      assert.equal(staleLog.data?.actualSandboxId, "sbx-fresh");
     } finally {
       globalThis.fetch = originalFetch;
     }
