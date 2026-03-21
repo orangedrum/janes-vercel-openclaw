@@ -112,14 +112,11 @@ export async function setupOpenClaw(
   const onVercel = isVercelDeployment();
 
   if (onVercel && !isPinnedPackageSpec(packageSpec)) {
-    logError("openclaw.setup.unpinned_package_spec", {
+    logWarn("openclaw.setup.unpinned_package_spec", {
       sandboxId: sandbox.sandboxId,
       packageSpec,
-      reason: "Vercel deployments require a pinned OPENCLAW_PACKAGE_SPEC for deterministic restores",
+      reason: "Vercel deployments should use a pinned OPENCLAW_PACKAGE_SPEC for deterministic restores — falling back to current spec",
     });
-    throw new Error(
-      `OPENCLAW_PACKAGE_SPEC must be a pinned version on Vercel deployments (e.g. "openclaw@1.2.3"), got "${packageSpec}".`,
-    );
   }
 
   logInfo("openclaw.setup.start", { sandboxId: sandbox.sandboxId, packageSpec, onVercel });
