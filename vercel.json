@@ -1,9 +1,7 @@
 {
   "regions": ["iad1"],
   "installCommand": "npm install",
-  "crons": [
-    { "path": "/api/cron/watchdog", "schedule": "*/5 * * * *" }
-  ],
+  "crons": [],
   "functions": {
     "src/app/api/admin/ssh/route.ts": {
       "maxDuration": 60
