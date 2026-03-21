@@ -39,7 +39,7 @@ test("reconcileDiscordIntegration patches endpoint and registers command", async
 
     try {
       const result = await reconcileDiscordIntegration({
-        request: new Request("https://new.example.com/api/queues/channels/discord"),
+        request: new Request("https://new.example.com/api/channels/discord/webhook"),
         force: true,
       });
 
@@ -79,7 +79,7 @@ test("reconcileDiscordIntegration skips within throttle window", async () => {
       .setValue("discord:integration:last-reconciled-at", Date.now());
 
     const result = await reconcileDiscordIntegration({
-      request: new Request("https://new.example.com/api/queues/channels/discord"),
+      request: new Request("https://new.example.com/api/channels/discord/webhook"),
     });
     assert.equal(result, null);
   });

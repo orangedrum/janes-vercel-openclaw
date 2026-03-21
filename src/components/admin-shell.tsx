@@ -9,7 +9,6 @@ import { StatusPanel } from "@/components/panels/status-panel";
 import { FirewallPanel } from "@/components/panels/firewall-panel";
 import { ChannelsPanel } from "@/components/panels/channels-panel";
 import { LaunchPanel } from "@/components/panels/launch-panel";
-import { ChannelQueueHealthCard } from "@/components/panels/channel-queue-health-card";
 import { SshPanel } from "@/components/panels/ssh-panel";
 import { LogsPanel } from "@/components/panels/logs-panel";
 import { SnapshotsPanel } from "@/components/panels/snapshots-panel";
@@ -297,7 +296,6 @@ export function AdminShell({
                     requestJson={requestJson}
                     refresh={refresh}
                   />
-                  <ChannelQueueHealthCard />
                   <LaunchPanel
                     status={status}
                     busy={busy}

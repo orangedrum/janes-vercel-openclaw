@@ -183,11 +183,6 @@ export function SlackPanel({
               Saved {formatTimestamp(sl.configuredAt)}
             </p>
           ) : null}
-          {sl.queueDepth > 0 ? (
-            <div className="channel-queue-badge">
-              <ChannelPill variant="good">{sl.queueDepth} queued</ChannelPill>
-            </div>
-          ) : null}
           <div className="inline-actions">
             <button
               className="button secondary"

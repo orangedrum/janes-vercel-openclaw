@@ -2,7 +2,6 @@ import type { ChannelName } from "@/shared/channels";
 import type {
   LogLevel,
   OperationContext,
-  QueueStateSnapshot,
   SingleMeta,
 } from "@/shared/types";
 import { log } from "@/server/log";
@@ -17,7 +16,6 @@ export type StateSnapshotInput = {
   op?: OperationContext;
   level?: LogLevel;
   channel?: ChannelName;
-  queue?: QueueStateSnapshot | null;
   extra?: Record<string, unknown>;
 };
 
@@ -34,10 +32,6 @@ export function buildStateSnapshotData(
   };
 
   if (input.channel) out.channel = input.channel;
-  if (input.queue) {
-    out.queueQueued = input.queue.queued;
-    out.queueProcessing = input.queue.processing;
-  }
 
   if (input.extra) {
     for (const [key, value] of Object.entries(input.extra)) {

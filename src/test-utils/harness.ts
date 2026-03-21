@@ -12,7 +12,6 @@ import assert from "node:assert/strict";
 
 import type { SingleMeta, LogSource } from "@/shared/types";
 import type { AuthMode } from "@/server/env";
-import type { ChannelName } from "@/shared/channels";
 import { _setSandboxControllerForTesting } from "@/server/sandbox/controller";
 import {
   _resetStoreForTesting,
@@ -46,10 +45,6 @@ import {
   probeGatewayReady,
 } from "@/server/sandbox/lifecycle";
 import { generateDiscordKeyPair } from "@/test-utils/webhook-builders";
-import {
-  channelQueueKey,
-  channelProcessingKey,
-} from "@/server/channels/keys";
 
 // Re-export types so existing consumers can keep importing from harness
 export type { SandboxEvent, SandboxEventKind } from "@/test-utils/fake-sandbox-controller";
@@ -174,11 +169,6 @@ export type ScenarioHarness = {
    * HTTP request captures, sorted by timestamp.
    */
   formatTimeline(): string;
-
-  /**
-   * Format current queue depths for all channels.
-   */
-  formatQueues(): Promise<string>;
 
   /**
    * Format the last N captured HTTP requests (default 10).
@@ -399,18 +389,6 @@ export function createScenarioHarness(options?: {
       return lines.join("\n");
     },
 
-    async formatQueues(): Promise<string> {
-      const store = getStore();
-      const channels: ChannelName[] = ["slack", "telegram", "discord"];
-      const lines: string[] = [];
-      for (const ch of channels) {
-        const q = await store.getQueueLength(channelQueueKey(ch));
-        const p = await store.getQueueLength(channelProcessingKey(ch));
-        lines.push(`${ch}: queue=${q} processing=${p}`);
-      }
-      return lines.join("\n");
-    },
-
     formatLastRequests(n = 10): string {
       const reqs = fakeFetch.requests();
       const slice = reqs.slice(-n);
@@ -574,7 +552,6 @@ export async function dumpDiagnostics(
   h: ScenarioHarness,
 ): Promise<void> {
   t.diagnostic("=== TIMELINE ===\n" + h.formatTimeline());
-  t.diagnostic("=== QUEUES ===\n" + (await h.formatQueues()));
   t.diagnostic("=== LAST REQUESTS ===\n" + h.formatLastRequests(10));
   t.diagnostic("=== RECENT LOGS ===\n" + h.formatRecentLogs(30));
 }

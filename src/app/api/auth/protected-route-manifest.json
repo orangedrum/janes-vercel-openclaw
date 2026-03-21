@@ -6,7 +6,7 @@
     "src/app/api/firewall",
     "src/app/api/debug"
   ],
-  "discoveredRouteCount": 38,
+  "discoveredRouteCount": 37,
   "unauthenticatedRouteCount": 0,
   "violationCount": 0,
   "routes": [
@@ -21,10 +21,6 @@
     {
       "method": "DELETE",
       "path": "/api/firewall/learned"
-    },
-    {
-      "method": "GET",
-      "path": "/api/admin/channels/health"
     },
     {
       "method": "GET",

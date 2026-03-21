@@ -269,21 +269,6 @@ test("[state] createTelegramWebhookSecret -> returns base64url string of suffici
 });
 
 // ---------------------------------------------------------------------------
-// Edge-branch: queueDepth from actual queued items
-// ---------------------------------------------------------------------------
-
-test("[state] getPublicChannelState -> queueDepth is always 0 (workflows handle processing)", async () => {
-  await withHarness(async (h) => {
-    const meta = await h.getMeta();
-    const state = await getPublicChannelState(makeRequest(), meta);
-
-    assert.equal(state.slack.queueDepth, 0);
-    assert.equal(state.telegram.queueDepth, 0);
-    assert.equal(state.discord.queueDepth, 0);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Edge-branch: setter functions round-trip
 // ---------------------------------------------------------------------------
 

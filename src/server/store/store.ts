@@ -17,11 +17,6 @@ const INIT_READ_RETRY_DELAY_MS = 50;
 const META_CAS_MAX_RETRIES = 10;
 const META_CAS_RETRY_DELAY_MS = 25;
 
-export type StoreEnqueueUniqueResult = {
-  enqueued: boolean;
-  queueLength: number;
-};
-
 export type Store = {
   readonly name: string;
   getMeta(): Promise<SingleMeta | null>;
@@ -31,33 +26,6 @@ export type Store = {
   getValue<T>(key: string): Promise<T | null>;
   setValue<T>(key: string, value: T, ttlSeconds?: number): Promise<void>;
   deleteValue(key: string): Promise<void>;
-  enqueue(key: string, value: string): Promise<number>;
-  enqueueFront(key: string, value: string): Promise<number>;
-  enqueueUnique(
-    key: string,
-    dedupKey: string,
-    dedupTtlSeconds: number,
-    value: string,
-  ): Promise<StoreEnqueueUniqueResult>;
-  dequeue(key: string): Promise<string | null>;
-  leaseQueueItem(
-    queueKey: string,
-    processingKey: string,
-    nowMs: number,
-    visibilityTimeoutSeconds: number,
-  ): Promise<string | null>;
-  ackQueueItem(processingKey: string, leasedValue: string): Promise<boolean>;
-  updateQueueLease(
-    processingKey: string,
-    currentLeasedValue: string,
-    nextLeasedValue: string,
-  ): Promise<boolean>;
-  requeueExpiredLeases(
-    queueKey: string,
-    processingKey: string,
-    nowMs: number,
-  ): Promise<number>;
-  getQueueLength(key: string): Promise<number>;
   acquireLock(key: string, ttlSeconds: number): Promise<string | null>;
   renewLock(key: string, token: string, ttlSeconds: number): Promise<boolean>;
   releaseLock(key: string, token: string): Promise<void>;

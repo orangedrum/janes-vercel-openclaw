@@ -11,6 +11,9 @@ import {
   buildTtsScript,
   buildStructuredExtractSkill,
   buildStructuredExtractScript,
+  OPENCLAW_TELEGRAM_WEBHOOK_HOST,
+  OPENCLAW_TELEGRAM_INTERNAL_WEBHOOK_PATH,
+  TELEGRAM_PUBLIC_WEBHOOK_PATH,
 } from "@/server/openclaw/config";
 
 function withEnv<T>(
@@ -122,6 +125,41 @@ test("buildGatewayConfig with apiKey includes model aliases and providers", () =
   // Media tools
   const tools = config.tools as { media: { audio: { enabled: boolean } } };
   assert.equal(tools.media.audio.enabled, true);
+});
+
+test("buildGatewayConfig omits telegram webhookUrl when proxy origin is missing", () => {
+  const withoutOrigin = JSON.parse(
+    buildGatewayConfig(undefined, undefined, "test-telegram-token"),
+  ) as {
+    channels: {
+      telegram: Record<string, unknown>;
+    };
+  };
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(withoutOrigin.channels.telegram, "webhookUrl"),
+    false,
+  );
+
+  const withOrigin = JSON.parse(
+    buildGatewayConfig(undefined, "https://app.example.com/", "test-telegram-token"),
+  ) as {
+    channels: {
+      telegram: {
+        webhookHost: string;
+        webhookPath: string;
+        webhookUrl?: string;
+      };
+    };
+  };
+  assert.equal(withOrigin.channels.telegram.webhookHost, OPENCLAW_TELEGRAM_WEBHOOK_HOST);
+  assert.equal(
+    withOrigin.channels.telegram.webhookPath,
+    OPENCLAW_TELEGRAM_INTERNAL_WEBHOOK_PATH,
+  );
+  assert.equal(
+    withOrigin.channels.telegram.webhookUrl,
+    `https://app.example.com${TELEGRAM_PUBLIC_WEBHOOK_PATH}`,
+  );
 });
 
 // ---------------------------------------------------------------------------

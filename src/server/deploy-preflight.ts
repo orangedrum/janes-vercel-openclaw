@@ -30,7 +30,6 @@ export type PreflightCheckId =
   | "webhook-bypass"
   | "store"
   | "ai-gateway"
-  | "drain-recovery"
   | "openclaw-package-spec"
   | "auth-config"
   | "bootstrap-exposure";
@@ -470,13 +469,6 @@ export async function buildDeployPreflight(
       status: (contractGatewayReq?.status ?? "fail") as PreflightStatus,
       message: contractGatewayReq?.message ??
         "OIDC token is not available.",
-    },
-    {
-      id: "drain-recovery",
-      status: "pass",
-      message: cronSecretConfigured
-        ? "Channel delivery uses Vercel Queues as the primary mechanism. /api/cron/drain-channels is available as a diagnostic backstop."
-        : "Channel delivery uses Vercel Queues as the primary mechanism. Set CRON_SECRET to enable /api/cron/drain-channels as an optional diagnostic backstop.",
     },
     // Contract-derived checks
     ...(packageSpecReq

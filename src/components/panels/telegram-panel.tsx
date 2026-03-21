@@ -133,9 +133,6 @@ export function TelegramPanel({
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {tg.queueDepth > 0 && (
-            <span className="channel-pill good">{tg.queueDepth} queued</span>
-          )}
           <span
             className={`channel-pill ${
               tg.commandSyncStatus === "synced"

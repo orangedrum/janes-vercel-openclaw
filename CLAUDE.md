@@ -81,10 +81,7 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) call `POST /api/admi
 | `/api/admin/snapshot` | Snapshot and stop (same as stop for now) |
 | `/api/admin/snapshots/delete` | Delete a past snapshot from Vercel and local history (cannot delete current restore target) |
 | `/api/admin/channel-secrets` | Configure smoke credentials and dispatch server-signed synthetic Slack/Telegram/Discord webhooks. Raw secrets are never returned. |
-| `/api/queues/channels/slack` | Private Vercel Queues consumer for Slack delivery (not publicly reachable on Vercel) |
-| `/api/queues/channels/telegram` | Private Vercel Queues consumer for Telegram delivery (not publicly reachable on Vercel) |
-| `/api/queues/channels/discord` | Private Vercel Queues consumer for Discord delivery (not publicly reachable on Vercel) |
-| `/api/cron/drain-channels` | Optional diagnostic backstop — replays queued channel work when `CRON_SECRET` is configured. Vercel Queues is the primary delivery mechanism |
+| `/api/cron/drain-channels` | Optional diagnostic backstop — replays queued channel work when `CRON_SECRET` is configured. Workflow delivery is primary; this is not the normal path. |
 
 ## Architecture
 
@@ -106,7 +103,7 @@ All channel webhook URL builders (`buildSlackWebhookUrl`, `buildTelegramWebhookU
 
 Machine-checkable config readiness report consumed by `/api/admin/preflight`.
 
-Checks: `public-origin`, `webhook-bypass` (always passes — admin-secret auth handles webhooks without bypass), `store`, `ai-gateway`, `drain-recovery` (always passes — Vercel Queues is the primary delivery mechanism), `openclaw-package-spec` (fail on Vercel when missing or unpinned), `auth-config` (fail when sign-in-with-vercel vars are missing).
+Checks: `public-origin`, `webhook-bypass` (always passes — admin-secret auth handles webhooks without bypass), `store`, `ai-gateway`, `openclaw-package-spec` (fail on Vercel when missing or unpinned), `auth-config` (fail when sign-in-with-vercel vars are missing).
 
 The authoritative readiness check is `POST /api/admin/launch-verify` (`src/app/api/admin/launch-verify/route.ts`), which runs preflight as its first phase and then verifies runtime behavior: Vercel Queue loopback delivery via `/api/queues/launch-verify`, sandbox ensure, gateway chat completions, and wake-from-sleep recovery (destructive mode). `scripts/check-deploy-readiness.mjs` consumes launch-verify by default.
 
@@ -291,32 +288,18 @@ Main files:
 Channel delivery flow:
 
 1. the public webhook route validates the platform signature or secret
-2. the handler publishes a message to a Vercel Queue topic (`channel-slack`, `channel-telegram`, or `channel-discord`)
-3. a private queue consumer route under `/api/queues/channels/*` restores the sandbox if needed
-4. the consumer sends the message to `POST /v1/chat/completions` on the OpenClaw gateway
+2. the handler starts a channel workflow
+3. the workflow restores the sandbox if needed
+4. the workflow sends the message to `POST /v1/chat/completions` on the OpenClaw gateway
 5. the app delivers the reply back to the originating channel
 
-Private queue consumers are configured in `vercel.json` and are not publicly reachable on Vercel.
+Channel delivery uses Workflow DevKit as the primary durable transport. `/api/cron/drain-channels` remains an optional diagnostic backstop when `CRON_SECRET` is configured. Launch verification still uses `/api/queues/launch-verify` as a separate queue probe.
 
 Behavior:
 
 - Slack uses threaded replies
 - Telegram uses webhook-secret validation and Bot API replies
 - Discord uses deferred interaction responses and can register `/ask`
-- `/api/cron/drain-channels` is an optional diagnostic backstop when `CRON_SECRET` is configured — not the primary delivery path
-
-Channel delivery uses Vercel Queues as the primary durable transport. If you change queue semantics, keep the webhook acknowledgment path fast and preserve retry behavior.
-
-### Local queue development
-
-Running `@vercel/queue` locally requires OIDC credentials:
-
-```bash
-vercel link
-vercel env pull
-```
-
-This writes the OIDC credentials that `@vercel/queue` needs for local `send` and `handleCallback` calls. On deployed Vercel environments, queue auth is automatic.
 
 ### Channel connectability and 409 guards
 

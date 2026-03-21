@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { ChannelPill } from "@/components/ui/badge";
 import type {
   StatusPayload,
   RunAction,
@@ -8,19 +7,6 @@ import type {
 import { TelegramPanel } from "@/components/panels/telegram-panel";
 import { SlackPanel } from "@/components/panels/slack-panel";
 import { DiscordPanel } from "@/components/panels/discord-panel";
-
-type ChannelSummaryEntry = {
-  connected: boolean;
-  queueDepth: number;
-  failedCount: number;
-  lastError: string | null;
-};
-
-type ChannelSummary = {
-  slack: ChannelSummaryEntry;
-  telegram: ChannelSummaryEntry;
-  discord: ChannelSummaryEntry;
-};
 
 type PreflightAction = {
   id: string;
@@ -43,14 +29,6 @@ type ChannelsPanelProps = {
   refresh: () => Promise<void>;
 };
 
-async function loadChannelSummary(): Promise<ChannelSummary | null> {
-  const res = await fetch("/api/channels/summary", {
-    cache: "no-store",
-    headers: { accept: "application/json" },
-  });
-  return res.ok ? ((await res.json()) as ChannelSummary) : null;
-}
-
 async function loadPreflightData(): Promise<PreflightData | null> {
   const res = await fetch("/api/admin/preflight", {
     cache: "no-store",
@@ -66,15 +44,11 @@ export function ChannelsPanel({
   requestJson,
   refresh,
 }: ChannelsPanelProps) {
-  const [summary, setSummary] = useState<ChannelSummary | null>(null);
   const [preflight, setPreflight] = useState<PreflightData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    void loadChannelSummary()
-      .then((data) => { if (!cancelled) setSummary(data); })
-      .catch(() => {});
     void loadPreflightData()
       .then((data) => { if (!cancelled) setPreflight(data); })
       .catch(() => {});
@@ -82,23 +56,9 @@ export function ChannelsPanel({
   }, []);
 
   async function refreshPanelData(): Promise<void> {
-    const [nextSummary, nextPreflight] = await Promise.all([
-      loadChannelSummary().catch(() => null),
-      loadPreflightData().catch(() => null),
-    ]);
-    if (nextSummary) setSummary(nextSummary);
+    const nextPreflight = await loadPreflightData().catch(() => null);
     if (nextPreflight) setPreflight(nextPreflight);
   }
-
-  const totalQueue =
-    (summary?.slack.queueDepth ?? 0) +
-    (summary?.telegram.queueDepth ?? 0) +
-    (summary?.discord.queueDepth ?? 0);
-
-  const totalDL =
-    (summary?.slack.failedCount ?? 0) +
-    (summary?.telegram.failedCount ?? 0) +
-    (summary?.discord.failedCount ?? 0);
 
   return (
     <article className="panel-card full-span">
@@ -108,12 +68,6 @@ export function ChannelsPanel({
           <h2>External entry points</h2>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 36 }}>
-          {totalQueue > 0 && (
-            <ChannelPill variant="good">{totalQueue} queued</ChannelPill>
-          )}
-          {totalDL > 0 && (
-            <ChannelPill variant="bad">{totalDL} failed</ChannelPill>
-          )}
           <button
             className="button ghost"
             disabled={busy || refreshing}

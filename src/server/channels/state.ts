@@ -16,7 +16,6 @@ import { getInitializedMeta, mutateMeta } from "@/server/store/store";
 
 export type PublicSlackState = {
   configured: boolean;
-  queueDepth: number;
   webhookUrl: string;
   configuredAt: number | null;
   team: string | null;
@@ -30,7 +29,6 @@ export type PublicSlackState = {
 
 export type PublicTelegramState = {
   configured: boolean;
-  queueDepth: number;
   webhookUrl: string | null;
   botUsername: string | null;
   configuredAt: number | null;
@@ -44,7 +42,6 @@ export type PublicTelegramState = {
 
 export type PublicDiscordState = {
   configured: boolean;
-  queueDepth: number;
   webhookUrl: string;
   applicationId: string | null;
   publicKey: string | null;
@@ -91,11 +88,6 @@ export async function getPublicChannelState(
   meta?: SingleMeta,
 ): Promise<PublicChannelState> {
   const resolvedMeta = meta ?? (await getInitializedMeta());
-  // Queue depth is no longer tracked — channel processing uses Workflow DevKit,
-  // which handles retries and delivery internally.
-  const slackQueueDepth = 0;
-  const telegramQueueDepth = 0;
-  const discordQueueDepth = 0;
 
   // Display URLs (without bypass secret) — safe for admin-visible state
   const slackDisplayUrl = buildPublicDisplayUrl("/api/channels/slack/webhook", request);
@@ -115,19 +107,16 @@ export async function getPublicChannelState(
     slack: toPublicSlackState(
       resolvedMeta.channels.slack,
       slackDisplayUrl,
-      slackQueueDepth,
       slackConnectability,
     ),
     telegram: toPublicTelegramState(
       resolvedMeta.channels.telegram,
       telegramDisplayUrl,
-      telegramQueueDepth,
       telegramConnectability,
     ),
     discord: toPublicDiscordState(
       resolvedMeta.channels.discord,
       discordDisplayUrl,
-      discordQueueDepth,
       discordPublic,
       discordConnectability,
     ),
@@ -161,12 +150,10 @@ export async function setDiscordChannelConfig(
 function toPublicSlackState(
   config: SlackChannelConfig | null,
   webhookUrl: string,
-  queueDepth: number,
   connectability: ChannelConnectability,
 ): PublicSlackState {
   return {
     configured: config !== null,
-    queueDepth,
     webhookUrl,
     configuredAt: config?.configuredAt ?? null,
     team: config?.team ?? null,
@@ -182,7 +169,6 @@ function toPublicSlackState(
 function toPublicTelegramState(
   config: TelegramChannelConfig | null,
   webhookUrl: string,
-  queueDepth: number,
   connectability: ChannelConnectability,
 ): PublicTelegramState {
   const status =
@@ -190,7 +176,6 @@ function toPublicTelegramState(
 
   return {
     configured: config !== null,
-    queueDepth,
     webhookUrl: config ? webhookUrl : null,
     botUsername: config?.botUsername ?? null,
     configuredAt: config?.configuredAt ?? null,
@@ -206,7 +191,6 @@ function toPublicTelegramState(
 function toPublicDiscordState(
   config: DiscordChannelConfig | null,
   webhookUrl: string,
-  queueDepth: number,
   publicUrl: boolean,
   connectability: ChannelConnectability,
 ): PublicDiscordState {
@@ -217,7 +201,6 @@ function toPublicDiscordState(
 
   return {
     configured: config !== null,
-    queueDepth,
     webhookUrl,
     applicationId: config?.applicationId ?? null,
     publicKey: config?.publicKey ?? null,

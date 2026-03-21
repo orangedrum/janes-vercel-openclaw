@@ -213,12 +213,6 @@ export function DiscordPanel({
             </div>
           </div>
 
-          {dc.queueDepth > 0 ? (
-            <div className="channel-queue-badge">
-              <ChannelPill variant="good">{dc.queueDepth} queued</ChannelPill>
-            </div>
-          ) : null}
-
           <details className="channel-details">
             <summary>Details</summary>
             <div className="channel-details-body">

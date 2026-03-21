@@ -1,18 +1,12 @@
 import { ApiError } from "@/shared/http";
-import { authJsonError, authJsonOk, requireJsonRouteAuth } from "@/server/auth/route-auth";
-import {
-  buildChannelConnectability,
-  buildChannelConnectBlockedResponse,
-} from "@/server/channels/connectability";
+import { createChannelAdminRouteHandlers } from "@/server/channels/admin/route-factory";
 import { getMe, getWebhookInfo, deleteWebhook, setWebhook } from "@/server/channels/telegram/bot-api";
 import { syncTelegramCommands } from "@/server/channels/telegram/commands";
 import {
-  createTelegramWebhookSecret,
-  getPublicChannelState,
-  setTelegramChannelConfig,
   buildTelegramWebhookUrl,
+  createTelegramWebhookSecret,
+  setTelegramChannelConfig,
 } from "@/server/channels/state";
-import { getInitializedMeta } from "@/server/store/store";
 
 const PREVIOUS_SECRET_GRACE_MS = 30 * 60 * 1000;
 
@@ -24,44 +18,27 @@ function parseBotToken(value: unknown): string {
   return value.trim();
 }
 
-export async function GET(request: Request): Promise<Response> {
-  const auth = await requireJsonRouteAuth(request);
-  if (auth instanceof Response) {
-    return auth;
-  }
+export const { GET, PUT, DELETE } = createChannelAdminRouteHandlers({
+  channel: "telegram",
 
-  try {
-    const meta = await getInitializedMeta();
-    const state = await getPublicChannelState(request);
-    const url = new URL(request.url);
+  selectState(fullState) {
+    return fullState.telegram;
+  },
 
-    if (url.searchParams.get("diagnostics") === "1" && meta.channels.telegram?.botToken) {
-      const webhookInfo = await getWebhookInfo(meta.channels.telegram.botToken).catch(() => null);
-      return authJsonOk({ ...state.telegram, webhookInfo }, auth);
+  async get({ state, url, meta }) {
+    if (url.searchParams.get("diagnostics") !== "1" || !meta.channels.telegram?.botToken) {
+      return state;
     }
 
-    return authJsonOk(state.telegram, auth);
-  } catch (error) {
-    return authJsonError(error, auth);
-  }
-}
+    const webhookInfo = await getWebhookInfo(meta.channels.telegram.botToken).catch(() => null);
+    return { ...state, webhookInfo };
+  },
 
-export async function PUT(request: Request): Promise<Response> {
-  const auth = await requireJsonRouteAuth(request);
-  if (auth instanceof Response) {
-    return auth;
-  }
-
-  const connectability = await buildChannelConnectability("telegram", request);
-  if (!connectability.canConnect) {
-    return buildChannelConnectBlockedResponse(auth, connectability);
-  }
-
-  try {
+  async put({ request, meta }) {
     const body = (await request.json()) as { botToken?: unknown };
     const botToken = parseBotToken(body.botToken);
     const bot = await getMe(botToken);
-    const meta = await getInitializedMeta();
+
     const current = meta.channels.telegram;
     const webhookSecret = createTelegramWebhookSecret();
     const webhookUrl = buildTelegramWebhookUrl(request);
@@ -93,30 +70,13 @@ export async function PUT(request: Request): Promise<Response> {
       commandsRegisteredAt,
       commandSyncError,
     });
+  },
 
-    const state = await getPublicChannelState(request);
-    return authJsonOk(state.telegram, auth);
-  } catch (error) {
-    return authJsonError(error, auth);
-  }
-}
-
-export async function DELETE(request: Request): Promise<Response> {
-  const auth = await requireJsonRouteAuth(request);
-  if (auth instanceof Response) {
-    return auth;
-  }
-
-  try {
-    const meta = await getInitializedMeta();
+  async delete({ meta }) {
     if (meta.channels.telegram?.botToken) {
       await deleteWebhook(meta.channels.telegram.botToken).catch(() => {});
     }
 
     await setTelegramChannelConfig(null);
-    const state = await getPublicChannelState(request);
-    return authJsonOk(state.telegram, auth);
-  } catch (error) {
-    return authJsonError(error, auth);
-  }
-}
+  },
+});

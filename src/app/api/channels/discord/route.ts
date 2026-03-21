@@ -1,10 +1,6 @@
 import type { DiscordChannelConfig } from "@/shared/channels";
 import { ApiError } from "@/shared/http";
-import { authJsonError, authJsonOk, requireJsonRouteAuth } from "@/server/auth/route-auth";
-import {
-  buildChannelConnectability,
-  buildChannelConnectBlockedResponse,
-} from "@/server/channels/connectability";
+import { createChannelAdminRouteHandlers } from "@/server/channels/admin/route-factory";
 import {
   fetchDiscordApplicationIdentity,
   patchInteractionsEndpoint,
@@ -12,10 +8,8 @@ import {
 import { registerAskCommand } from "@/server/channels/discord/commands";
 import {
   buildDiscordPublicWebhookUrl,
-  getPublicChannelState,
   setDiscordChannelConfig,
 } from "@/server/channels/state";
-import { getInitializedMeta } from "@/server/store/store";
 
 function normalizeBotToken(value: unknown): string {
   if (typeof value !== "string") {
@@ -65,59 +59,43 @@ function endpointConflictResponse(
   return response;
 }
 
-export async function GET(request: Request): Promise<Response> {
-  const auth = await requireJsonRouteAuth(request);
-  if (auth instanceof Response) {
-    return auth;
-  }
+export const { GET, PUT, DELETE } = createChannelAdminRouteHandlers({
+  channel: "discord",
 
-  try {
-    const meta = await getInitializedMeta();
-    const state = await getPublicChannelState(request);
-    const url = new URL(request.url);
+  selectState(fullState) {
+    return fullState.discord;
+  },
 
-    if (url.searchParams.get("diagnostics") === "1" && meta.channels.discord?.botToken) {
-      const desiredEndpointUrl = buildDiscordPublicWebhookUrl(request);
-      const diagnostics = await fetchDiscordApplicationIdentity(meta.channels.discord.botToken)
-        .then((identity) => ({
-          applicationId: identity.applicationId,
-          currentEndpointUrl: identity.currentInteractionsEndpointUrl ?? null,
-          desiredEndpointUrl,
-          endpointDrift:
-            (identity.currentInteractionsEndpointUrl ?? null) !== desiredEndpointUrl,
-        }))
-        .catch((error) => ({
-          desiredEndpointUrl,
-          error: error instanceof Error ? error.message : String(error),
-        }));
-
-      return authJsonOk({ ...state.discord, diagnostics }, auth);
+  async get({ state, url, meta, request }) {
+    if (url.searchParams.get("diagnostics") !== "1" || !meta.channels.discord?.botToken) {
+      return state;
     }
 
-    return authJsonOk(state.discord, auth);
-  } catch (error) {
-    return authJsonError(error, auth);
-  }
-}
+    const desiredEndpointUrl = buildDiscordPublicWebhookUrl(request);
+    const diagnostics = await fetchDiscordApplicationIdentity(meta.channels.discord.botToken)
+      .then((identity) => ({
+        applicationId: identity.applicationId,
+        currentEndpointUrl: identity.currentInteractionsEndpointUrl ?? null,
+        desiredEndpointUrl,
+        endpointDrift:
+          (identity.currentInteractionsEndpointUrl ?? null) !== desiredEndpointUrl,
+      }))
+      .catch((error) => ({
+        desiredEndpointUrl,
+        error: error instanceof Error ? error.message : String(error),
+      }));
 
-export async function PUT(request: Request): Promise<Response> {
-  const auth = await requireJsonRouteAuth(request);
-  if (auth instanceof Response) {
-    return auth;
-  }
+    return { ...state, diagnostics };
+  },
 
-  const connectability = await buildChannelConnectability("discord", request);
-  if (!connectability.canConnect) {
-    return buildChannelConnectBlockedResponse(auth, connectability);
-  }
-
-  try {
+  async put({ request, auth }) {
     const body = (await request.json()) as {
       botToken?: unknown;
       autoConfigureEndpoint?: unknown;
       autoRegisterCommand?: unknown;
       forceOverwriteEndpoint?: unknown;
     };
+
     const normalizedBotToken = normalizeBotToken(body.botToken);
     const autoConfigureEndpoint = parseOptionalBoolean(
       body.autoConfigureEndpoint,
@@ -183,21 +161,9 @@ export async function PUT(request: Request): Promise<Response> {
     }
 
     await setDiscordChannelConfig(updatedConfig);
-    const state = await getPublicChannelState(request);
-    return authJsonOk(state.discord, auth);
-  } catch (error) {
-    return authJsonError(error, auth);
-  }
-}
+  },
 
-export async function DELETE(request: Request): Promise<Response> {
-  const auth = await requireJsonRouteAuth(request);
-  if (auth instanceof Response) {
-    return auth;
-  }
-
-  try {
-    const meta = await getInitializedMeta();
+  async delete({ meta }) {
     if (meta.channels.discord?.botToken) {
       try {
         await patchInteractionsEndpoint(meta.channels.discord.botToken, "");
@@ -207,9 +173,5 @@ export async function DELETE(request: Request): Promise<Response> {
     }
 
     await setDiscordChannelConfig(null);
-    const state = await getPublicChannelState(request);
-    return authJsonOk(state.discord, auth);
-  } catch (error) {
-    return authJsonError(error, auth);
-  }
-}
+  },
+});

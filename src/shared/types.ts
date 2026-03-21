@@ -41,8 +41,7 @@ export type OperationTrigger =
   | "channel.slack.webhook"
   | "channel.telegram.webhook"
   | "channel.discord.webhook"
-  | "channel.queue.consumer"
-  | "channel.store.drain";
+  | "channel.queue.consumer";
 
 export type OperationContext = {
   opId: string;
@@ -58,11 +57,6 @@ export type OperationContext = {
   sandboxId: string | null;
   snapshotId: string | null;
   status: SingleStatus | null;
-};
-
-export type QueueStateSnapshot = {
-  queued: number;
-  processing: number;
 };
 
 export type LifecycleStateSnapshot = {

@@ -8,13 +8,6 @@
 import assert from "node:assert/strict";
 
 import type { CapturedRequest } from "@/test-utils/fake-fetch";
-import type { Store } from "@/server/store/store";
-import {
-  channelQueueKey,
-  channelProcessingKey,
-  channelFailedKey,
-} from "@/server/channels/keys";
-import type { ChannelName } from "@/shared/channels";
 
 // ---------------------------------------------------------------------------
 // assertGatewayRequest
@@ -75,44 +68,6 @@ export function assertGatewayRequest(
   }
 
   return gw;
-}
-
-// ---------------------------------------------------------------------------
-// assertQueuesDrained
-// ---------------------------------------------------------------------------
-
-/**
- * Assert that the main queue, processing queue, and (optionally) failed
- * queue for a channel are all at expected lengths (default: empty).
- */
-export async function assertQueuesDrained(
-  store: Store,
-  channel: ChannelName,
-  options?: {
-    queue?: number;
-    processing?: number;
-    failed?: number;
-  },
-): Promise<void> {
-  const expectedQueue = options?.queue ?? 0;
-  const expectedProcessing = options?.processing ?? 0;
-  const expectedFailed = options?.failed ?? 0;
-
-  assert.equal(
-    await store.getQueueLength(channelQueueKey(channel)),
-    expectedQueue,
-    `${channel} main queue expected ${expectedQueue} item(s)`,
-  );
-  assert.equal(
-    await store.getQueueLength(channelProcessingKey(channel)),
-    expectedProcessing,
-    `${channel} processing queue expected ${expectedProcessing} item(s)`,
-  );
-  assert.equal(
-    await store.getQueueLength(channelFailedKey(channel)),
-    expectedFailed,
-    `${channel} failed queue expected ${expectedFailed} item(s)`,
-  );
 }
 
 // ---------------------------------------------------------------------------

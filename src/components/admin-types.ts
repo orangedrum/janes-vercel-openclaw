@@ -49,7 +49,6 @@ export type StatusPayload = {
   channels: {
     slack: {
       configured: boolean;
-      queueDepth: number;
       webhookUrl: string;
       configuredAt: number | null;
       team: string | null;
@@ -62,7 +61,6 @@ export type StatusPayload = {
     };
     telegram: {
       configured: boolean;
-      queueDepth: number;
       webhookUrl: string | null;
       botUsername: string | null;
       configuredAt: number | null;
@@ -75,7 +73,6 @@ export type StatusPayload = {
     };
     discord: {
       configured: boolean;
-      queueDepth: number;
       webhookUrl: string;
       applicationId: string | null;
       publicKey: string | null;

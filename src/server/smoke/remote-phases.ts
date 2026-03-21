@@ -610,7 +610,7 @@ async function sendSmokeWebhook(
 async function fetchChannelSummary(
   baseUrl: string,
   requestTimeoutMs: number,
-): Promise<Record<string, { connected: boolean; queueDepth: number; deadLetterCount: number }> | null> {
+): Promise<Record<string, { connected: boolean; lastError: string | null }> | null> {
   try {
     const hdrs = authHeaders();
     const res = await fetchWithTimeout(
@@ -619,7 +619,7 @@ async function fetchChannelSummary(
       requestTimeoutMs,
     );
     if (!res.ok) return null;
-    return (await res.json()) as Record<string, { connected: boolean; queueDepth: number; deadLetterCount: number }>;
+    return (await res.json()) as Record<string, { connected: boolean; lastError: string | null }>;
   } catch {
     return null;
   }
@@ -633,7 +633,6 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
   const phase = "channelRoundTrip";
   const endpoint = "/api/admin/channel-secrets";
   const reqTimeout = opts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const pollTimeout = opts?.pollTimeoutMs ?? 120_000;
 
   let configuredByUs = false;
 
@@ -704,72 +703,19 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
       }
     }
 
-    // 2. Read baseline queue state
-    const baselineSummary = await fetchChannelSummary(baseUrl, reqTimeout);
-    const baselineSlackDL = baselineSummary?.slack?.deadLetterCount ?? 0;
-    const baselineTelegramDL = baselineSummary?.telegram?.deadLetterCount ?? 0;
-    const baselineDiscordDL = baselineSummary?.discord?.deadLetterCount ?? 0;
-
-    const results: Record<string, { sent: boolean; drained: boolean; deadLetterDelta: number; durationMs: number; error?: string }> = {};
+    // 2. Channel delivery uses Workflow DevKit — no queue depth to poll.
+    // Consider channels delivered once the webhook was accepted.
+    const results: Record<string, { sent: boolean; durationMs: number; error?: string }> = {};
     const t0 = performance.now();
 
     if (hasSlack) {
-      results.slack = { sent: true, drained: false, deadLetterDelta: 0, durationMs: 0 };
+      results.slack = { sent: true, durationMs: 0 };
     }
     if (hasTelegram) {
-      results.telegram = { sent: true, drained: false, deadLetterDelta: 0, durationMs: 0 };
+      results.telegram = { sent: true, durationMs: 0 };
     }
     if (hasDiscord) {
-      results.discord = { sent: true, drained: false, deadLetterDelta: 0, durationMs: 0 };
-    }
-
-    // 4. Poll until queues drain
-    const deadline = Date.now() + pollTimeout;
-    let delay = 2_000;
-
-    while (Date.now() < deadline) {
-      await sleep(delay);
-      const summary = await fetchChannelSummary(baseUrl, reqTimeout);
-      if (!summary) continue;
-
-      let allDrained = true;
-
-      if (hasSlack && results.slack?.sent) {
-        if (summary.slack?.queueDepth === 0) {
-          results.slack.drained = true;
-          results.slack.deadLetterDelta = (summary.slack?.deadLetterCount ?? 0) - baselineSlackDL;
-        } else {
-          allDrained = false;
-        }
-      }
-
-      if (hasTelegram && results.telegram?.sent) {
-        if (summary.telegram?.queueDepth === 0) {
-          results.telegram.drained = true;
-          results.telegram.deadLetterDelta = (summary.telegram?.deadLetterCount ?? 0) - baselineTelegramDL;
-        } else {
-          allDrained = false;
-        }
-      }
-
-      if (hasDiscord && results.discord?.sent) {
-        if (summary.discord?.queueDepth === 0) {
-          results.discord.drained = true;
-          results.discord.deadLetterDelta =
-            (summary.discord?.deadLetterCount ?? 0) - baselineDiscordDL;
-        } else {
-          allDrained = false;
-        }
-      }
-
-      log(phase, "poll", {
-        slackQueue: summary.slack?.queueDepth,
-        telegramQueue: summary.telegram?.queueDepth,
-        discordQueue: summary.discord?.queueDepth,
-      });
-
-      if (allDrained) break;
-      delay = Math.min(delay * 1.5, 10_000);
+      results.discord = { sent: true, durationMs: 0 };
     }
 
     const totalMs = Math.round(performance.now() - t0);
@@ -781,12 +727,8 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
       durationMs: totalMs,
     }));
 
-    // A channel passes if: sent successfully AND drained (queue=0)
-    // Dead letters from smoke payloads are expected (fake channel/chat IDs cause reply failures)
-    // so we don't fail on dead letter delta — we just report it
     const allSent = channelResults.every((r) => r.sent);
-    const allDrained = channelResults.every((r) => r.drained);
-    const passed = allSent && allDrained;
+    const passed = allSent;
 
     log(phase, passed ? "ok" : "failed", { channelResults, configuredByUs });
 
@@ -879,11 +821,7 @@ export async function channelWakeFromSleep(
       log(phase, "sandbox-stopped", {});
     }
 
-    // 3. Read baseline dead letters
-    const baselineSummary = await fetchChannelSummary(baseUrl, reqTimeout);
-    const baselineDL = baselineSummary?.slack?.deadLetterCount ?? 0;
-
-    // 4. Send webhook while sandbox is stopped (signed + sent server-side)
+    // 3. Send webhook while sandbox is stopped (signed + sent server-side)
     log(phase, "sending-webhook-while-stopped", {});
     const slackPayload = buildSlackSmokePayload().body;
     const slackResult = await sendSmokeWebhook(baseUrl, "slack", slackPayload, reqTimeout);
@@ -896,11 +834,10 @@ export async function channelWakeFromSleep(
       };
     }
 
-    // 5. Poll until sandbox wakes up AND queue drains
+    // 4. Poll until sandbox wakes up (workflow handles delivery internally)
     const deadline = Date.now() + timeoutMs;
     let delay = 3_000;
     let sandboxRunning = false;
-    let queueDrained = false;
 
     while (Date.now() < deadline) {
       await sleep(delay);
@@ -918,23 +855,11 @@ export async function channelWakeFromSleep(
             log(phase, "sandbox-woke-up", { elapsedMs: Math.round(performance.now() - t0) });
           }
           sandboxRunning = true;
+          break;
         }
         log(phase, "poll", { status: body.status, sandboxRunning });
       } catch {
         // ignore fetch errors during polling
-      }
-
-      // Check queue
-      if (sandboxRunning) {
-        const summary = await fetchChannelSummary(baseUrl, reqTimeout);
-        if (summary && summary.slack?.queueDepth === 0) {
-          queueDrained = true;
-          log(phase, "queue-drained", {
-            deadLetterDelta: summary.slack.deadLetterCount - baselineDL,
-            elapsedMs: Math.round(performance.now() - t0),
-          });
-          break;
-        }
       }
 
       delay = Math.min(delay * 1.3, 10_000);
@@ -948,15 +873,6 @@ export async function channelWakeFromSleep(
         error: "Sandbox did not wake up within timeout",
         errorCode: "WAKE_TIMEOUT",
         hint: "The channel webhook was sent but the sandbox did not reach 'running' — increase --timeout",
-      };
-    }
-
-    if (!queueDrained) {
-      return {
-        phase, passed: false, durationMs: totalMs, endpoint,
-        error: "Sandbox woke up but queue did not drain within timeout",
-        errorCode: "QUEUE_DRAIN_TIMEOUT",
-        hint: "Sandbox is running but the queued message was not processed — check drain logs",
       };
     }
 
@@ -1414,7 +1330,7 @@ export async function selfHealTokenRefresh(
     }
     log(phase, "token-corrupted", { tokenOnDisk: tokenOnDisk.slice(0, 20) });
 
-    // Step 4: Read baseline queue state
+    // Step 4: Read channel connectability
     const baselineSummary = await fetchChannelSummary(baseUrl, reqTimeout);
     const channelSummary = baselineSummary?.[channel];
     if (!channelSummary?.connected) {
@@ -1426,7 +1342,6 @@ export async function selfHealTokenRefresh(
         detail: { skipped: true, reason: "channel_not_configured" },
       };
     }
-    const baselineDL = channelSummary.deadLetterCount ?? 0;
 
     // Step 5: Send a smoke webhook for the selected channel
     const payload = buildSelfHealPayload(channel);
@@ -1441,35 +1356,13 @@ export async function selfHealTokenRefresh(
     }
     log(phase, "webhook-sent");
 
-    // Step 6: Poll until queue drains (self-healing happens during processing)
+    // Step 6: Wait briefly then verify gateway is healthy (self-healing happens during workflow processing)
     const t0 = performance.now();
     const deadline = Date.now() + pollTimeoutMs;
     let delay = HEAL_POLL_INITIAL_MS;
 
     while (Date.now() < deadline) {
       await sleep(delay);
-      const summary = await fetchChannelSummary(baseUrl, reqTimeout);
-      const state = summary?.[channel];
-      if (!state || state.queueDepth > 0) {
-        log(phase, "poll", { channel, queueDepth: state?.queueDepth });
-        delay = Math.min(delay * HEAL_POLL_BACKOFF, HEAL_POLL_MAX_MS);
-        continue;
-      }
-
-      // Queue drained — check for dead letters
-      const dlDelta = (state.deadLetterCount ?? 0) - baselineDL;
-      const totalMs = Math.round(performance.now() - t0);
-
-      if (dlDelta > 0) {
-        log(phase, "drained-to-dead-letter", { dlDelta, totalMs });
-        return {
-          phase, passed: false, durationMs: totalMs, endpoint,
-          error: `Queue drained but message went to dead letter (delta: ${dlDelta})`,
-          errorCode: "DEAD_LETTER",
-          detail: { dlDelta, totalMs },
-          hint: "Self-healing did not recover in time — check gateway logs",
-        };
-      }
 
       // Step 7: Verify gateway is healthy again
       const postCheck = await fetchWithTimeout(
@@ -1483,34 +1376,28 @@ export async function selfHealTokenRefresh(
       ).catch(() => null);
 
       const gatewayRecovered = postCheck?.ok === true;
+      const elapsedMs = Math.round(performance.now() - t0);
       log(phase, gatewayRecovered ? "gateway-recovered" : "gateway-still-broken", {
-        status: postCheck?.status, totalMs,
+        status: postCheck?.status, elapsedMs,
       });
 
-      return {
-        phase,
-        passed: gatewayRecovered,
-        durationMs: totalMs,
-        endpoint,
-        detail: {
-          channel,
-          gatewayRecovered,
-          postCheckStatus: postCheck?.status,
-          deadLetterDelta: dlDelta,
-          totalMs,
-        },
-        ...(!gatewayRecovered ? {
-          error: "Queue drained but gateway did not recover",
-          errorCode: "GATEWAY_NOT_RECOVERED",
-          hint: "Token refresh may have succeeded but gateway restart failed",
-        } : {}),
-      };
+      if (gatewayRecovered) {
+        return {
+          phase,
+          passed: true,
+          durationMs: elapsedMs,
+          endpoint,
+          detail: { channel, gatewayRecovered, postCheckStatus: postCheck?.status, elapsedMs },
+        };
+      }
+
+      delay = Math.min(delay * HEAL_POLL_BACKOFF, HEAL_POLL_MAX_MS);
     }
 
     const totalMs = Math.round(performance.now() - t0);
     return {
       phase, passed: false, durationMs: totalMs, endpoint,
-      error: "Queue did not drain within timeout",
+      error: "Gateway did not recover within timeout",
       errorCode: "POLL_TIMEOUT",
       hint: "Self-healing may be taking too long — increase --timeout",
     };

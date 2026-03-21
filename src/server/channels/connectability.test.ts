@@ -110,12 +110,8 @@ test("does not warn about missing CRON_SECRET", async () => {
     makeRequest(PUBLIC_ORIGIN),
   );
 
-  const issueIds = result.issues.map((issue) => issue.id);
-  assert.equal(
-    issueIds.includes("drain-recovery" as never),
-    false,
-    "connectability should not include drain-recovery warning",
-  );
+  // Channel connectability should have no issues in this setup
+  assert.equal(result.canConnect, true);
 });
 
 test("warns when Upstash env vars are missing in non-Vercel environment", async () => {

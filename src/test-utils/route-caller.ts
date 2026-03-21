@@ -232,8 +232,6 @@ let _telegramWebhookRoute: ChannelRouteModule | null = null;
 let _discordWebhookRoute: ChannelRouteModule | null = null;
 let _slackChannelRoute: SimpleRouteModule | null = null;
 let _discordChannelRoute: SimpleRouteModule | null = null;
-let _slackQueueRoute: SimpleRouteModule | null = null;
-let _discordQueueRoute: SimpleRouteModule | null = null;
 
 export function getSlackWebhookRoute(): ChannelRouteModule {
   if (!_slackWebhookRoute) {
@@ -278,24 +276,6 @@ export function getDiscordChannelRoute(): SimpleRouteModule {
     _discordChannelRoute = require("@/app/api/channels/discord/route") as SimpleRouteModule;
   }
   return _discordChannelRoute;
-}
-
-export function getSlackQueueRoute(): SimpleRouteModule {
-  if (!_slackQueueRoute) {
-    patchNextServerAfter();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _slackQueueRoute = require("@/app/api/queues/channels/slack/route") as SimpleRouteModule;
-  }
-  return _slackQueueRoute;
-}
-
-export function getDiscordQueueRoute(): SimpleRouteModule {
-  if (!_discordQueueRoute) {
-    patchNextServerAfter();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _discordQueueRoute = require("@/app/api/queues/channels/discord/route") as SimpleRouteModule;
-  }
-  return _discordQueueRoute;
 }
 
 // ---------------------------------------------------------------------------

@@ -36,7 +36,7 @@ That's it. AI Gateway auth is handled automatically via OIDC — no API keys nee
 
 - **Use OpenClaw** — the full OpenClaw UI is proxied at `/gateway`.
 - **Stop & restore** — save a snapshot of your sandbox and restore it later. Useful if you want to roll back after experimenting.
-- **Connect channels** — wire up Slack, Telegram, or Discord so people can talk to your OpenClaw instance from chat. Configure each one from the admin panel. Messages are delivered reliably through Vercel Queues (`/api/queues/channels/slack`, `/api/queues/channels/telegram`, `/api/queues/channels/discord`) and launch verification runs through `/api/queues/launch-verify`.
+- **Connect channels** — wire up Slack, Telegram, or Discord so people can talk to your OpenClaw instance from chat. Configure each one from the admin panel. Messages are delivered reliably through Workflow DevKit. Launch verification runs through `/api/queues/launch-verify`.
 - **Firewall** — the app can learn which domains your agent talks to, then lock egress down to only those domains.
 
 ## Optional: sign in with Vercel
