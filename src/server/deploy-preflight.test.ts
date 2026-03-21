@@ -1165,22 +1165,24 @@ test("getLaunchVerifyBlocking returns blocking with skip phase IDs when checks f
       );
       const result = getLaunchVerifyBlocking(payload);
       assert.equal(result.blocking, true);
-      if (result.blocking) {
-        assert.ok(result.failingCheckIds.length > 0, "should have failing check IDs");
-        assert.ok(result.errorMessage.length > 0, "should have error message");
-        assert.deepEqual(
-          [...result.skipPhaseIds],
-          ["queuePing", "ensureRunning", "chatCompletions", "wakeFromSleep"],
-          "skip phase IDs should match the canonical set",
+      assert.ok(result.failingCheckIds.length > 0, "should have failing check IDs");
+      assert.ok(result.errorMessage, "should have error message");
+      assert.ok(result.errorMessage.length > 0, "error message should be non-empty");
+      assert.deepEqual(
+        [...result.skipPhaseIds],
+        ["queuePing", "ensureRunning", "chatCompletions", "wakeFromSleep"],
+        "skip phase IDs should match the canonical set",
+      );
+      // Error message should include at least one failing check ID
+      for (const id of result.failingCheckIds) {
+        assert.ok(
+          result.errorMessage.includes(id),
+          `errorMessage should include failing check ID '${id}'`,
         );
-        // Error message should include at least one failing check ID
-        for (const id of result.failingCheckIds) {
-          assert.ok(
-            result.errorMessage.includes(id),
-            `errorMessage should include failing check ID '${id}'`,
-          );
-        }
       }
+      // New fields should be populated
+      assert.ok(result.requiredActionIds.length > 0, "should have required action IDs");
+      assert.ok(Array.isArray(result.recommendedActionIds), "should have recommendedActionIds array");
     },
   );
 });

@@ -31,6 +31,7 @@ import {
   writeChannelReadiness,
 } from "@/server/launch-verify/state";
 import type {
+  LaunchVerificationDiagnostics,
   LaunchVerificationPayload,
   LaunchVerificationPhase,
   LaunchVerificationPhaseId,
@@ -71,8 +72,28 @@ async function runPhase(
 }
 
 function skipPhase(id: LaunchVerificationPhaseId, message: string): LaunchVerificationPhase {
-  logInfo(`launch_verify.phase_skip`, { phase: id });
+  logInfo("launch_verify.phase_skip", { phase: id, message });
   return { id, status: "skip", durationMs: 0, message };
+}
+
+function buildLaunchVerificationDiagnostics(
+  preflight: PreflightPayload | null,
+  blocking: LaunchVerifyBlockingResult,
+): LaunchVerificationDiagnostics {
+  const warningChannelIds = preflight
+    ? (Object.values(preflight.channels ?? {})
+        .filter((channel) => channel.status === "fail")
+        .map((channel) => channel.channel) as LaunchVerificationDiagnostics["warningChannelIds"])
+    : [];
+
+  return {
+    blocking: blocking.blocking,
+    failingCheckIds: [...blocking.failingCheckIds],
+    requiredActionIds: [...blocking.requiredActionIds],
+    recommendedActionIds: [...blocking.recommendedActionIds],
+    warningChannelIds,
+    skipPhaseIds: [...blocking.skipPhaseIds],
+  };
 }
 
 /**
@@ -86,6 +107,7 @@ function skipPhase(id: LaunchVerificationPhaseId, message: string): LaunchVerifi
 async function evaluatePreflight(request: Request): Promise<{
   phase: LaunchVerificationPhase;
   blocking: LaunchVerifyBlockingResult;
+  diagnostics: LaunchVerificationDiagnostics;
 }> {
   const start = Date.now();
   let preflight: PreflightPayload;
@@ -93,7 +115,24 @@ async function evaluatePreflight(request: Request): Promise<{
     preflight = await buildDeployPreflight(request);
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    logError("launch_verify.phase_fail", { phase: "preflight", error: errMsg });
+
+    const blocking: LaunchVerifyBlockingResult = {
+      blocking: true,
+      failingCheckIds: [],
+      requiredActionIds: [],
+      recommendedActionIds: [],
+      errorMessage: errMsg,
+      skipPhaseIds: LAUNCH_VERIFY_SKIP_PHASE_IDS,
+    };
+
+    const diagnostics = buildLaunchVerificationDiagnostics(null, blocking);
+
+    logError("launch_verify.phase_fail", {
+      phase: "preflight",
+      error: errMsg,
+      diagnostics,
+    });
+
     return {
       phase: {
         id: "preflight",
@@ -102,38 +141,34 @@ async function evaluatePreflight(request: Request): Promise<{
         message: "Phase preflight failed.",
         error: errMsg,
       },
-      blocking: {
-        blocking: true,
-        failingCheckIds: [],
-        errorMessage: errMsg,
-        skipPhaseIds: LAUNCH_VERIFY_SKIP_PHASE_IDS,
-      },
+      blocking,
+      diagnostics,
     };
   }
 
   const blocking = getLaunchVerifyBlocking(preflight);
+  const diagnostics = buildLaunchVerificationDiagnostics(preflight, blocking);
+
+  logInfo("launch_verify.preflight_evaluated", diagnostics);
 
   if (blocking.blocking) {
-    logError("launch_verify.phase_fail", { phase: "preflight", error: blocking.errorMessage });
+    logError("launch_verify.phase_fail", {
+      phase: "preflight",
+      error: blocking.errorMessage,
+      diagnostics,
+    });
+
     return {
       phase: {
         id: "preflight",
         status: "fail",
         durationMs: Date.now() - start,
         message: "Phase preflight failed.",
-        error: blocking.errorMessage,
+        error: blocking.errorMessage ?? "Unknown preflight error.",
       },
       blocking,
+      diagnostics,
     };
-  }
-
-  const channelWarnings = Object.values(preflight.channels ?? {}).filter(
-    (ch) => ch.status === "fail",
-  );
-  if (channelWarnings.length > 0) {
-    logInfo("launch_verify.preflight_channel_warnings", {
-      channels: channelWarnings.map((ch) => ch.channel),
-    });
   }
 
   const phase: LaunchVerificationPhase = {
@@ -142,17 +177,24 @@ async function evaluatePreflight(request: Request): Promise<{
     durationMs: Date.now() - start,
     message: `All ${preflight.checks.length} config checks passed.`,
   };
-  logInfo("launch_verify.phase_pass", { phase: "preflight", durationMs: phase.durationMs });
-  return { phase, blocking };
+
+  logInfo("launch_verify.phase_pass", {
+    phase: "preflight",
+    durationMs: phase.durationMs,
+    diagnostics,
+  });
+
+  return { phase, blocking, diagnostics };
 }
 
 // NDJSON stream event types
 type StreamPhaseEvent = { type: "phase"; phase: LaunchVerificationPhase };
+type StreamSummaryEvent = { type: "summary"; payload: LaunchVerificationDiagnostics };
 type StreamResultEvent = {
   type: "result";
   payload: LaunchVerificationPayload & { channelReadiness?: import("@/shared/launch-verification").ChannelReadiness };
 };
-type StreamEvent = StreamPhaseEvent | StreamResultEvent;
+type StreamEvent = StreamPhaseEvent | StreamSummaryEvent | StreamResultEvent;
 
 function wantsStream(request: Request): boolean {
   const accept = request.headers.get("accept") ?? "";
@@ -215,9 +257,10 @@ function buildStreamingResponse(
       const phases: LaunchVerificationPhase[] = [];
 
       emitRunning("preflight");
-      const { phase: preflightPhase, blocking } = await evaluatePreflight(request);
+      const { phase: preflightPhase, blocking, diagnostics } = await evaluatePreflight(request);
       phases.push(preflightPhase);
       emit({ type: "phase", phase: preflightPhase });
+      emit({ type: "summary", payload: diagnostics });
 
       if (blocking.blocking) {
         for (const id of blocking.skipPhaseIds) {
@@ -229,6 +272,7 @@ function buildStreamingResponse(
         const payload: LaunchVerificationPayload = {
           ok: false, mode, startedAt,
           completedAt: new Date().toISOString(), phases,
+          diagnostics,
         };
         const readiness = await writeChannelReadiness(payload);
         emit({ type: "result", payload: { ...payload, channelReadiness: readiness } });
@@ -348,7 +392,7 @@ function buildStreamingResponse(
       const payload: LaunchVerificationPayload = {
         ok, mode, startedAt,
         completedAt: new Date().toISOString(),
-        phases, runtime, sandboxHealth,
+        phases, diagnostics, runtime, sandboxHealth,
       };
       const readiness = await writeChannelReadiness(payload);
 
@@ -384,7 +428,7 @@ async function buildJsonResponse(
 ): Promise<Response> {
   const phases: LaunchVerificationPhase[] = [];
 
-  const { phase: preflightPhase, blocking } = await evaluatePreflight(request);
+  const { phase: preflightPhase, blocking, diagnostics } = await evaluatePreflight(request);
   phases.push(preflightPhase);
 
   if (blocking.blocking) {
@@ -394,6 +438,7 @@ async function buildJsonResponse(
     const payload: LaunchVerificationPayload = {
       ok: false, mode, startedAt,
       completedAt: new Date().toISOString(), phases,
+      diagnostics,
     };
     const readiness = await writeChannelReadiness(payload);
     return authJsonOk({ ...payload, channelReadiness: readiness }, auth);
@@ -497,7 +542,7 @@ async function buildJsonResponse(
   const payload: LaunchVerificationPayload = {
     ok, mode, startedAt,
     completedAt: new Date().toISOString(),
-    phases, runtime, sandboxHealth,
+    phases, diagnostics, runtime, sandboxHealth,
   };
   const readiness = await writeChannelReadiness(payload);
 

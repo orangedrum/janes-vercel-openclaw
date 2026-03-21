@@ -25,12 +25,22 @@ export type LaunchVerificationSandboxHealth = {
   repaired: boolean;
 };
 
+export type LaunchVerificationDiagnostics = {
+  blocking: boolean;
+  failingCheckIds: string[];
+  requiredActionIds: string[];
+  recommendedActionIds: string[];
+  warningChannelIds: Array<"slack" | "telegram" | "discord">;
+  skipPhaseIds: LaunchVerificationPhaseId[];
+};
+
 export type LaunchVerificationPayload = {
   ok: boolean;
   mode: "safe" | "destructive";
   startedAt: string;
   completedAt: string;
   phases: LaunchVerificationPhase[];
+  diagnostics?: LaunchVerificationDiagnostics;
   runtime?: LaunchVerificationRuntime;
   sandboxHealth?: LaunchVerificationSandboxHealth;
 };

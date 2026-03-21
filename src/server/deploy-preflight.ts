@@ -330,9 +330,16 @@ export const LAUNCH_VERIFY_SKIP_PHASE_IDS = [
   "wakeFromSleep",
 ] as const;
 
-export type LaunchVerifyBlockingResult =
-  | { blocking: true; failingCheckIds: PreflightCheckId[]; errorMessage: string; skipPhaseIds: readonly string[] }
-  | { blocking: false };
+export type LaunchVerifySkipPhaseId = (typeof LAUNCH_VERIFY_SKIP_PHASE_IDS)[number];
+
+export type LaunchVerifyBlockingResult = {
+  blocking: boolean;
+  failingCheckIds: PreflightCheckId[];
+  requiredActionIds: PreflightActionId[];
+  recommendedActionIds: PreflightActionId[];
+  errorMessage: string | null;
+  skipPhaseIds: readonly LaunchVerifySkipPhaseId[];
+};
 
 /**
  * Determine whether a preflight payload should block launch-verify runtime
@@ -343,27 +350,54 @@ export function getLaunchVerifyBlocking(
   preflight: PreflightPayload,
 ): LaunchVerifyBlockingResult {
   const failingChecks = preflight.checks.filter((c) => c.status === "fail");
+  const failingCheckIds = failingChecks.map((c) => c.id);
+
+  const requiredActionIds = preflight.actions
+    .filter((a) => a.status === "required")
+    .map((a) => a.id);
+
+  const recommendedActionIds = preflight.actions
+    .filter((a) => a.status === "recommended")
+    .map((a) => a.id);
 
   if (failingChecks.length === 0) {
-    logInfo("launch_verify.blocking_check", { blocking: false, failingCheckIds: [] });
-    return { blocking: false };
+    logInfo("launch_verify.blocking_check", {
+      blocking: false,
+      failingCheckIds: [],
+      requiredActionIds,
+      recommendedActionIds,
+      skipPhaseIds: [],
+    });
+
+    return {
+      blocking: false,
+      failingCheckIds: [],
+      requiredActionIds,
+      recommendedActionIds,
+      errorMessage: null,
+      skipPhaseIds: [],
+    };
   }
 
-  const failingCheckIds = failingChecks.map((c) => c.id);
   const remediations = preflight.actions
     .filter((a) => a.status === "required")
     .map((a) => a.remediation);
+
   const errorMessage = `Preflight config checks failed: ${failingCheckIds.join(", ")}. ${remediations.join(" ")}`;
 
   logInfo("launch_verify.blocking_check", {
     blocking: true,
     failingCheckIds,
+    requiredActionIds,
+    recommendedActionIds,
     skipPhaseIds: [...LAUNCH_VERIFY_SKIP_PHASE_IDS],
   });
 
   return {
     blocking: true,
     failingCheckIds,
+    requiredActionIds,
+    recommendedActionIds,
     errorMessage,
     skipPhaseIds: LAUNCH_VERIFY_SKIP_PHASE_IDS,
   };

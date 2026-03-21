@@ -405,6 +405,30 @@ async function setupWebhookBypassScenario(
 }
 
 /**
+ * Shared assertions: the structured diagnostics must reflect that missing
+ * webhook bypass is non-blocking. When the bypass is "required" (per
+ * getWebhookBypassRequirement), it appears as a recommendation; when
+ * required is false (admin-secret mode), no action is emitted at all.
+ * Either way, it must never block.
+ */
+function assertBypassDiagnostics(
+  diagnostics: LaunchVerificationPayload["diagnostics"] | undefined,
+): void {
+  assert.ok(diagnostics, "expected launch-verify diagnostics");
+  assert.equal(
+    diagnostics.blocking,
+    false,
+    "missing webhook bypass should be non-blocking",
+  );
+  assert.equal(
+    diagnostics.failingCheckIds.includes("webhook-bypass"),
+    false,
+    "webhook-bypass should not appear in failingCheckIds when it is only a recommendation",
+  );
+  assert.equal(diagnostics.skipPhaseIds.length, 0, "no phases should be skipped");
+}
+
+/**
  * Shared assertions: preflight must not fail and runtime phases must not
  * be skipped solely because webhook bypass is missing.
  */
@@ -437,6 +461,7 @@ test("launch-verify POST (JSON): missing webhook bypass does not block runtime p
 
       const body = result.json as LaunchVerificationPayload;
       assertBypassNonBlocking(body.phases);
+      assertBypassDiagnostics(body.diagnostics);
     } finally {
       restoreEnv();
     }
@@ -458,20 +483,32 @@ test("launch-verify POST (NDJSON): missing webhook bypass does not block runtime
       const events = result.text
         .split("\n")
         .filter((line: string) => line.trim().length > 0)
-        .map((line: string) => JSON.parse(line) as { type: string; phase?: LaunchVerificationPayload["phases"][number]; payload?: LaunchVerificationPayload });
+        .map((line: string) => JSON.parse(line) as
+          | { type: "phase"; phase: LaunchVerificationPayload["phases"][number] }
+          | { type: "summary"; payload: NonNullable<LaunchVerificationPayload["diagnostics"]> }
+          | { type: "result"; payload: LaunchVerificationPayload });
 
-      // Extract phases from streamed phase events
       const phaseEvents = events
-        .filter((e) => e.type === "phase" && e.phase)
-        .map((e) => e.phase!);
+        .filter((event): event is { type: "phase"; phase: LaunchVerificationPayload["phases"][number] } => event.type === "phase")
+        .map((event) => event.phase);
 
-      // The final result event should contain the full payload
-      const resultEvent = events.find((e) => e.type === "result");
+      const summaryEvent = events.find(
+        (event): event is { type: "summary"; payload: NonNullable<LaunchVerificationPayload["diagnostics"]> } =>
+          event.type === "summary",
+      );
+
+      const resultEvent = events.find(
+        (event): event is { type: "result"; payload: LaunchVerificationPayload } =>
+          event.type === "result",
+      );
+
+      assert.ok(summaryEvent, "expected a summary event");
       assert.ok(resultEvent?.payload, "expected a result event with payload");
 
-      // Assert on both the streamed phases and the final payload
       assertBypassNonBlocking(phaseEvents);
-      assertBypassNonBlocking(resultEvent.payload!.phases);
+      assertBypassDiagnostics(summaryEvent.payload);
+      assertBypassNonBlocking(resultEvent.payload.phases);
+      assertBypassDiagnostics(resultEvent.payload.diagnostics);
     } finally {
       restoreEnv();
     }
