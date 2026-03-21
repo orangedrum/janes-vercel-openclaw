@@ -252,6 +252,9 @@ export type SingleMeta = {
   consecutiveTokenRefreshFailures?: number;
   /** Unix-epoch ms until which the token-refresh circuit breaker is open, or null. */
   breakerOpenUntil?: number | null;
+  /** Unique ID for the current lifecycle attempt (create/restore). Used for
+   *  orphan detection if the Vercel Sandbox API later supports tags/list. */
+  lifecycleAttemptId?: string | null;
 };
 
 export const CURRENT_SCHEMA_VERSION = 3;
@@ -591,3 +594,68 @@ export function computePolicyHash(mode: FirewallMode, allowlist: string[]): stri
   const input = JSON.stringify({ mode, allowlist: sorted });
   return createHash("sha256").update(input).digest("hex");
 }
+
+export type ScheduledTaskSchedule =
+  | { kind: "at"; at: string }
+  | { kind: "every"; everyMs: number }
+  | { kind: "cron"; expr: string; tz?: string };
+
+export type ScheduledTaskPayload =
+  | { kind: "systemEvent"; text: string }
+  | { kind: "agentTurn"; message: string; model?: string };
+
+export type ScheduledTaskDelivery =
+  | { mode: "none" }
+  | {
+      mode: "announce";
+      channel: "telegram" | "slack" | "discord";
+      to?: string | null;
+    }
+  | { mode: "webhook"; to: string };
+
+export type ScheduledTaskExecutionState =
+  | "scheduled"
+  | "claimed"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "disabled";
+
+export type ScheduledTaskRecord = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  schedule: ScheduledTaskSchedule;
+  nextRunAtMs: number | null;
+  lastRunAtMs: number | null;
+  lastFinishedAtMs: number | null;
+  deleteAfterRun: boolean;
+  sessionTarget: "main" | "isolated" | "current" | string;
+  resolvedSessionKey: string | null;
+  wakeMode: "now" | "next-heartbeat";
+  payload: ScheduledTaskPayload;
+  delivery: ScheduledTaskDelivery;
+  execution: {
+    state: ScheduledTaskExecutionState;
+    attemptCount: number;
+    consecutiveFailures: number;
+    leaseExpiresAtMs: number | null;
+    claimToken: string | null;
+    lastError: string | null;
+  };
+  cleanupAfterMs: number | null;
+};
+
+export type ScheduledTaskIndex = {
+  version: 1;
+  updatedAt: number;
+  tasks: ScheduledTaskRecord[];
+};
+
+export type RememberedTelegramTarget = {
+  chatId: string;
+  messageThreadId: number | null;
+  updatedAt: number;
+};
