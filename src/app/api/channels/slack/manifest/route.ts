@@ -2,11 +2,26 @@ import { authJsonError, authJsonOk, requireJsonRouteAuth } from "@/server/auth/r
 import { buildPublicUrl } from "@/server/public-url";
 
 const SLACK_BOT_SCOPES = [
+  // Messaging — post, edit, delete, ephemeral
   "chat:write",
+  // Reactions — ack emoji, status reactions
   "reactions:write",
+  "reactions:read",
+  // History — thread context, conversation replies
   "channels:history",
   "groups:history",
   "im:history",
+  // Channel/user info — room detection, user display names
+  "channels:read",
+  "groups:read",
+  "im:write",
+  "users:read",
+  // Files — image uploads, file attachments
+  "files:read",
+  "files:write",
+  // Pins
+  "pins:read",
+  "pins:write",
 ] as const;
 
 const SLACK_BOT_EVENTS = [
