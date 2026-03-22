@@ -22,6 +22,10 @@ const SLACK_BOT_SCOPES = [
   // Pins
   "pins:read",
   "pins:write",
+  // Custom emoji — list workspace emojis for agent use
+  "emoji:read",
+  // Slack AI assistant threads — status, title, suggested prompts
+  "assistant:write",
 ] as const;
 
 const SLACK_BOT_EVENTS = [

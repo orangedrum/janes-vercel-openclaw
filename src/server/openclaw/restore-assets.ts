@@ -8,7 +8,6 @@ import {
   buildImageGenScript,
   buildImageGenSkill,
   buildStartupScript,
-  buildCronSkill,
   buildStructuredExtractScript,
   buildStructuredExtractSkill,
   buildTtsScript,
@@ -20,7 +19,6 @@ import {
   OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
   OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_CONFIG_PATH,
-  OPENCLAW_CRON_SKILL_PATH,
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
@@ -68,7 +66,6 @@ export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
       path: OPENCLAW_STRUCTURED_EXTRACT_SKILL_PATH,
       content: Buffer.from(buildStructuredExtractSkill()),
     },
-    { path: OPENCLAW_CRON_SKILL_PATH, content: Buffer.from(buildCronSkill()) },
     {
       path: OPENCLAW_STRUCTURED_EXTRACT_SCRIPT_PATH,
       content: Buffer.from(buildStructuredExtractScript()),

@@ -28,7 +28,6 @@ export const OPENCLAW_TTS_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/tts/SKILL.m
 export const OPENCLAW_TTS_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/tts/scripts/speak.mjs`;
 export const OPENCLAW_STRUCTURED_EXTRACT_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/structured-extract/SKILL.md`;
 export const OPENCLAW_STRUCTURED_EXTRACT_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/structured-extract/scripts/extract.mjs`;
-export const OPENCLAW_CRON_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/host-scheduler/SKILL.md`;
 
 // The built-in skill shipped with the openclaw npm package uses a Python
 // gen.py script that requires a direct sk-* OPENAI_API_KEY.  We overwrite
@@ -437,6 +436,10 @@ if [ "\$_ready" = "1" ]; then
   # left a non-silent pending request, it blocks auto-pairing for all
   # subsequent local CLI connections (cron tool, gateway status, etc.).
   rm -f "${OPENCLAW_STATE_DIR}/devices/pending.json"
+  # Remove stale host-scheduler skill — it told the agent "the cron tool
+  # is disabled" and directed it to a removed script.  The native cron
+  # tool works correctly with Claude Sonnet and needs no skill wrapper.
+  rm -rf "${OPENCLAW_STATE_DIR}/skills/host-scheduler"
   # Telegram deleteWebhook: removed — the app's webhook route handles
   #   incoming messages and forwards to the sandbox fast path when running.
   #   Deleting the webhook here created a deadlock: no webhook → no messages
