@@ -52,6 +52,7 @@ import {
 const OPENCLAW_PORT = 3000;
 const SANDBOX_PORTS = [OPENCLAW_PORT, OPENCLAW_TELEGRAM_WEBHOOK_PORT];
 export const CRON_NEXT_WAKE_KEY = "openclaw-single:cron-next-wake-ms";
+export const CRON_JOBS_KEY = "openclaw-single:cron-jobs-json";
 const CRON_JOBS_PATH = `${OPENCLAW_STATE_DIR}/cron/jobs.json`;
 const LIFECYCLE_LOCK_KEY = "openclaw-single:lock:lifecycle";
 const START_LOCK_KEY = "openclaw-single:lock:start";
@@ -78,8 +79,8 @@ const TOKEN_REFRESH_LOCK_POLL_MS = 500;
 export type BackgroundScheduler = (callback: () => Promise<void> | void) => void;
 
 export type CronWakeReadResult =
-  | { status: "ok"; nextWakeMs: number }
-  | { status: "no-jobs" }
+  | { status: "ok"; nextWakeMs: number; rawJobsJson: string }
+  | { status: "no-jobs"; rawJobsJson?: string }
   | { status: "error"; error: string };
 
 type AutoRenewedLockOptions = {
@@ -341,7 +342,8 @@ async function readCronNextWakeFromSandbox(
     if (!buf) {
       return { status: "no-jobs" };
     }
-    const data = JSON.parse(buf.toString("utf8")) as {
+    const raw = buf.toString("utf8");
+    const data = JSON.parse(raw) as {
       jobs?: Array<{
         enabled?: boolean;
         state?: { nextRunAtMs?: number };
@@ -364,7 +366,12 @@ async function readCronNextWakeFromSandbox(
     }
     if (earliest) {
       logInfo("sandbox.cron_next_wake_read", { earliest, jobCount: data.jobs.length });
-      return { status: "ok", nextWakeMs: earliest };
+      return { status: "ok", nextWakeMs: earliest, rawJobsJson: raw };
+    }
+    // Return raw even when no wake time — jobs may exist but have no
+    // nextRunAtMs yet (e.g. freshly created, not yet scheduled).
+    if (data.jobs.length > 0) {
+      return { status: "no-jobs", rawJobsJson: raw };
     }
     return { status: "no-jobs" };
   } catch (error) {
@@ -427,6 +434,15 @@ export async function stopSandbox(): Promise<SingleMeta> {
         logInfo("sandbox.cron_wake_saved", { cronNextWakeMs: cronWakeRead.nextWakeMs });
       } else if (cronWakeRead.status === "no-jobs") {
         await getStore().deleteValue(CRON_NEXT_WAKE_KEY);
+      }
+
+      // Persist full cron jobs JSON so it survives snapshot restores.
+      // OpenClaw resets jobs.json on every gateway startup — without this,
+      // cron jobs are silently lost when the snapshot captures the empty state.
+      const rawJobs = cronWakeRead.status !== "error" ? cronWakeRead.rawJobsJson : undefined;
+      if (rawJobs) {
+        await getStore().setValue(CRON_JOBS_KEY, rawJobs);
+        logInfo("sandbox.cron_jobs_persisted", { bytes: rawJobs.length });
       }
 
       return mutateMeta((next) => {
@@ -775,6 +791,12 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
       await getStore().setValue(CRON_NEXT_WAKE_KEY, cronWakeRead.nextWakeMs);
     } else if (cronWakeRead.status === "no-jobs") {
       await getStore().deleteValue(CRON_NEXT_WAKE_KEY);
+    }
+    // Also persist full cron jobs JSON — OpenClaw resets jobs.json on
+    // gateway startup, so the store copy is the durable source of truth.
+    const rawJobs = cronWakeRead.status !== "error" ? cronWakeRead.rawJobsJson : undefined;
+    if (rawJobs) {
+      await getStore().setValue(CRON_JOBS_KEY, rawJobs);
     }
   } catch {
     // Non-critical — don't let cron-wake bookkeeping break the heartbeat.
@@ -2095,6 +2117,63 @@ async function restoreSandboxFromSnapshot(
       return getInitializedMeta();
     }
 
+    // Restore cron jobs if OpenClaw wiped them during gateway startup.
+    // OpenClaw resets jobs.json to empty on every boot (backing up to
+    // jobs.json.bak).  We persist the full jobs JSON to the store before
+    // each snapshot and heartbeat.  After the gateway is ready, write the
+    // stored jobs back and restart the gateway so its cron module loads them.
+    let cronJobsRestored = false;
+    try {
+      const storedJobsJson = await getStore().getValue<string>(CRON_JOBS_KEY);
+      if (storedJobsJson) {
+        // Verify the stored jobs actually have jobs (not an empty array).
+        const storedData = JSON.parse(storedJobsJson) as { jobs?: unknown[] };
+        if (Array.isArray(storedData.jobs) && storedData.jobs.length > 0) {
+          // Check current jobs.json — only restore if gateway wiped it.
+          const currentBuf = await sandbox.readFileToBuffer({ path: CRON_JOBS_PATH });
+          const currentData = currentBuf
+            ? (JSON.parse(currentBuf.toString("utf8")) as { jobs?: unknown[] })
+            : { jobs: [] };
+          if (!Array.isArray(currentData.jobs) || currentData.jobs.length === 0) {
+            await sandbox.writeFiles([{
+              path: CRON_JOBS_PATH,
+              content: Buffer.from(storedJobsJson),
+            }]);
+            // Restart gateway so cron module re-reads the restored jobs.
+            await sandbox.runCommand("bash", [OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH]);
+            // Wait for the restarted gateway to become ready.
+            await pollUntil({
+              label: "cron-restore-gateway-ready",
+              timeoutMs: 15_000,
+              initialDelayMs: 200,
+              maxDelayMs: 500,
+              step: async () => {
+                const result = await sandbox.runCommand("bash", [
+                  "-c",
+                  `curl -s -f --max-time 1 http://localhost:${OPENCLAW_PORT}/ 2>/dev/null | grep -q 'openclaw-app' && echo ok || echo not-ready`,
+                ]);
+                const out = await result.output("stdout");
+                if (out.trim() === "ok") return { done: true, result: true };
+                return { done: false };
+              },
+              timeoutError: () => new Error("Gateway did not become ready after cron jobs restore"),
+            });
+            cronJobsRestored = true;
+            logInfo("sandbox.restore.cron_jobs_restored", {
+              sandboxId: sandbox.sandboxId,
+              jobCount: storedData.jobs.length,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      // Non-critical — cron jobs are a convenience, not a hard requirement.
+      logWarn("sandbox.restore.cron_jobs_restore_failed", {
+        sandboxId: sandbox.sandboxId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     // Gateway is locally healthy and firewall is confirmed (or not enforcing)
     // — mark as running so callers that poll metadata see the correct state.
     await mutateMeta((meta) => {
@@ -2208,6 +2287,7 @@ async function restoreSandboxFromSnapshot(
       recordedAt: Date.now(),
       bootOverlapMs,
       skippedPublicReady: skipPublicReady,
+      cronJobsRestored,
     };
 
     if (op) {

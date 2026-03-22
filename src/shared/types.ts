@@ -211,6 +211,8 @@ export type RestorePhaseMetrics = {
   bootOverlapMs?: number;
   /** Whether the public readiness probe was skipped (non-waiting callers). */
   skippedPublicReady?: boolean;
+  /** Whether cron jobs were restored from the store after gateway boot. */
+  cronJobsRestored?: boolean;
 };
 
 /**

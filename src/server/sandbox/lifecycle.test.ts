@@ -18,6 +18,7 @@ import {
   getSandboxDomain,
   touchRunningSandbox,
   markSandboxUnavailable,
+  CRON_JOBS_KEY,
 } from "@/server/sandbox/lifecycle";
 import {
   _resetSandboxSleepConfigCacheForTesting,
@@ -28,6 +29,7 @@ import {
 import {
   _resetStoreForTesting,
   getInitializedMeta,
+  getStore,
   mutateMeta,
 } from "@/server/store/store";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
@@ -3943,5 +3945,148 @@ test("ensureRunningSandboxDynamicConfigFresh returns sandbox-unavailable when no
     assert.equal(result.verified, false);
     assert.equal(result.changed, false);
     assert.equal(result.reason, "sandbox-unavailable");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cron jobs persistence
+// ---------------------------------------------------------------------------
+
+test("stopSandbox persists cron jobs JSON to store", async () => {
+  const fake = new FakeSandboxController();
+  const cronJobsJson = JSON.stringify({
+    version: 1,
+    jobs: [{
+      id: "test-job",
+      enabled: true,
+      state: { nextRunAtMs: Date.now() + 60_000 },
+    }],
+  });
+
+  await withTestEnv(fake, async () => {
+    // Create a handle via the controller so it has the shared eventLog.
+    const handle = await fake.create({ ports: [3000], timeout: 300_000 });
+    // Pre-populate cron/jobs.json so readFileToBuffer finds it.
+    await handle.writeFiles([{
+      path: "/home/vercel-sandbox/.openclaw/cron/jobs.json",
+      content: Buffer.from(cronJobsJson),
+    }]);
+
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = handle.sandboxId;
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    await stopSandbox();
+
+    const storedJobs = await getStore().getValue<string>(CRON_JOBS_KEY);
+    assert.ok(storedJobs, "Cron jobs JSON should be persisted to store");
+    const parsed = JSON.parse(storedJobs);
+    assert.equal(parsed.jobs.length, 1);
+    assert.equal(parsed.jobs[0].id, "test-job");
+  });
+});
+
+test("restoreSandboxFromSnapshot restores cron jobs from store after gateway boot", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+  const cronJobsJson = JSON.stringify({
+    version: 1,
+    jobs: [{
+      id: "avatar-quote",
+      enabled: true,
+      state: { nextRunAtMs: Date.now() + 60_000 },
+    }],
+  });
+
+  // Default responder: respond to readiness probes with "ok" so the cron
+  // restore gateway restart poll succeeds.
+  fake.defaultResponders.push((cmd, args) => {
+    if (cmd === "bash" && args?.some((a) => typeof a === "string" && a.includes("openclaw-app"))) {
+      return { exitCode: 0, output: async () => "ok" };
+    }
+    return undefined;
+  });
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-cron-restore";
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    // Pre-populate the store with cron jobs (as if saved before snapshot)
+    await getStore().setValue(CRON_JOBS_KEY, cronJobsJson);
+
+    // Mock fetch for probeGatewayReady
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle, meta } = await triggerRestore(fake, {
+        tokenOverride: "test-ai-key",
+      });
+
+      assert.equal(meta.status, "running");
+
+      // Verify cron jobs were written to sandbox
+      const cronWrite = handle.writtenFiles.find(
+        (f) => f.path.includes("cron/jobs.json"),
+      );
+      assert.ok(cronWrite, "Cron jobs.json should be written to sandbox after restore");
+      const writtenContent = cronWrite.content.toString("utf8");
+      const parsed = JSON.parse(writtenContent);
+      assert.equal(parsed.jobs.length, 1);
+      assert.equal(parsed.jobs[0].id, "avatar-quote");
+
+      // Verify gateway was restarted (restart script was run)
+      const restartCmd = handle.commands.find(
+        (c) => c.cmd === "bash" && c.args?.some((a) => a.includes("restart-gateway")),
+      );
+      assert.ok(restartCmd, "Gateway restart script should be run after cron restore");
+
+      // Verify metrics record the restore
+      assert.equal(meta.lastRestoreMetrics?.cronJobsRestored, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("restoreSandboxFromSnapshot skips cron restore when store has no jobs", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-no-cron";
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    // No cron jobs in store
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle, meta } = await triggerRestore(fake, {
+        tokenOverride: "test-ai-key",
+      });
+
+      assert.equal(meta.status, "running");
+
+      // Verify NO cron jobs.json was written
+      const cronWrite = handle.writtenFiles.find(
+        (f) => f.path.includes("cron/jobs.json"),
+      );
+      assert.ok(!cronWrite, "Should not write cron jobs when store is empty");
+
+      // Verify metrics show no cron restore
+      assert.equal(meta.lastRestoreMetrics?.cronJobsRestored, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
