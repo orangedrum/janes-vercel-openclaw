@@ -3,6 +3,7 @@ import { buildPublicUrl } from "@/server/public-url";
 
 const SLACK_BOT_SCOPES = [
   "chat:write",
+  "reactions:write",
   "channels:history",
   "groups:history",
   "im:history",
