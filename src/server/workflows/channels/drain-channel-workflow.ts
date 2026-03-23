@@ -133,6 +133,7 @@ export function buildQueuedChannelJob(
 // Workflows can run for up to 5 minutes — give the sandbox 2 minutes to
 // restore instead of the old 25-second queue consumer timeout.
 const WORKFLOW_SANDBOX_READY_TIMEOUT_MS = 120_000;
+const WORKFLOW_RETRY_AFTER = "15s";
 
 export function buildChannelJobOptions(
   channel: string,
@@ -173,15 +174,18 @@ export function toWorkflowProcessingError(
   const message = `drain_channel_workflow_failed:${channel}:${formatChannelError(error)}`;
   const errorMsg = formatChannelError(error);
 
-  // Sandbox timeout should not be retried — the sandbox lifecycle handles
-  // its own retry internally. Retrying the step just burns time re-polling.
+  // Sandbox readiness failures are transient infrastructure issues while the
+  // sandbox is restoring. Retry the workflow step so the webhook can recover
+  // once the sandbox becomes available again.
   if (errorMsg.includes("sandbox_not_ready") || errorMsg.includes("SANDBOX_READY_TIMEOUT")) {
-    return new dependencies.FatalError(message);
+    return new dependencies.RetryableError(message, {
+      retryAfter: WORKFLOW_RETRY_AFTER,
+    });
   }
 
   if (dependencies.isRetryable(error)) {
     return new dependencies.RetryableError(message, {
-      retryAfter: "15s",
+      retryAfter: WORKFLOW_RETRY_AFTER,
     });
   }
 
