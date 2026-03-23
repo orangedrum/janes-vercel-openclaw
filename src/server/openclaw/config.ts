@@ -66,6 +66,23 @@ function readBooleanEnv(name: string, defaultValue = false): boolean {
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1";
 
 /**
+ * Shell fragment that ensures OPENCLAW_GATEWAY_PORT is in the shell profile
+ * so CLI tools (openclaw cron list, etc.) and agent-spawned tool processes
+ * can find the gateway.  Without this, they default to port 18789.
+ */
+function buildGatewayPortProfileShell(): string {
+  return [
+    '_home="${HOME:-/home/vercel-sandbox}"',
+    `if ! grep -q 'OPENCLAW_GATEWAY_PORT' "$_home/.zshrc" 2>/dev/null; then`,
+    `  echo 'export OPENCLAW_GATEWAY_PORT=${OPENCLAW_PORT}' >> "$_home/.zshrc" 2>/dev/null || true`,
+    "fi",
+    `if ! grep -q 'OPENCLAW_GATEWAY_PORT' "$_home/.bashrc" 2>/dev/null; then`,
+    `  echo 'export OPENCLAW_GATEWAY_PORT=${OPENCLAW_PORT}' >> "$_home/.bashrc" 2>/dev/null || true`,
+    "fi",
+  ].join("\n");
+}
+
+/**
  * Shell fragment that reads the gateway token and AI gateway key from disk
  * (or env fallback) and exports the variables needed by the openclaw gateway.
  * Exits non-zero when the gateway token is missing or empty.
@@ -370,6 +387,7 @@ ${buildGatewayEnvShell()}
 ${buildGatewayLaunchShell()}
 _learning_log=/tmp/shell-commands-for-learning.log
 touch "$_learning_log"
+${buildGatewayPortProfileShell()}
 _home="\${HOME:-/home/vercel-sandbox}"
 if ! grep -q 'shell-commands-for-learning' "$_home/.zshrc" 2>/dev/null; then
   cat >> "$_home/.zshrc" 2>/dev/null <<'ZSHEOF' || true
@@ -465,6 +483,9 @@ if [ "\$_ready" = "1" ]; then
   # is disabled" and directed it to a removed script.  The native cron
   # tool works correctly with Claude Sonnet and needs no skill wrapper.
   rm -rf "${OPENCLAW_STATE_DIR}/skills/host-scheduler"
+  # Ensure OPENCLAW_GATEWAY_PORT is in the shell profile so agent tools
+  # (cron, gateway status) can connect.  Old snapshots may lack this.
+  ${buildGatewayPortProfileShell()}
   # Telegram deleteWebhook: removed — the app's webhook route handles
   #   incoming messages and forwards to the sandbox fast path when running.
   #   Deleting the webhook here created a deadlock: no webhook → no messages
