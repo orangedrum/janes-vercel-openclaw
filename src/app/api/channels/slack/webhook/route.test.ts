@@ -9,8 +9,11 @@
  */
 
 import assert from "node:assert/strict";
+import { mock } from "node:test";
 import test from "node:test";
 
+import { channelDedupKey } from "@/server/channels/keys";
+import { getStore } from "@/server/store/store";
 import { withHarness, type ScenarioHarness } from "@/test-utils/harness";
 import {
   buildSlackWebhook,
@@ -22,6 +25,7 @@ import {
   getSlackWebhookRoute,
   resetAfterCallbacks,
 } from "@/test-utils/route-caller";
+import { slackWebhookWorkflowRuntime } from "@/app/api/channels/slack/webhook/route";
 
 const SLACK_SIGNING_SECRET = "test-slack-signing-secret-direct";
 
@@ -103,12 +107,18 @@ test("Slack webhook: valid event enqueues job and returns 200", async () => {
   await withHarness(async (h) => {
     await configureSlack(h);
     const route = getSlackWebhookRoute();
+    const startMock = mock.method(slackWebhookWorkflowRuntime, "start", async () => {});
     const req = buildSlackWebhook({ signingSecret: SLACK_SIGNING_SECRET });
-    const result = await callRoute(route.POST, req);
-    assert.equal(result.status, 200);
-    const body = result.json as { ok: boolean };
-    assert.equal(body.ok, true);
-    resetAfterCallbacks();
+    try {
+      const result = await callRoute(route.POST, req);
+      assert.equal(result.status, 200);
+      const body = result.json as { ok: boolean };
+      assert.equal(body.ok, true);
+      assert.equal(startMock.mock.callCount(), 1);
+      resetAfterCallbacks();
+    } finally {
+      startMock.mock.restore();
+    }
   });
 });
 
@@ -120,6 +130,7 @@ test("Slack webhook: duplicate event_id is deduplicated", async () => {
   await withHarness(async (h) => {
     await configureSlack(h);
     const route = getSlackWebhookRoute();
+    const startMock = mock.method(slackWebhookWorkflowRuntime, "start", async () => {});
     const payload = {
       type: "event_callback",
       event_id: "Ev_DEDUP_TEST",
@@ -132,17 +143,62 @@ test("Slack webhook: duplicate event_id is deduplicated", async () => {
       },
     };
 
-    // First request
-    const req1 = buildSlackWebhook({ signingSecret: SLACK_SIGNING_SECRET, payload });
-    const result1 = await callRoute(route.POST, req1);
-    assert.equal(result1.status, 200);
-    resetAfterCallbacks();
+    try {
+      // First request
+      const req1 = buildSlackWebhook({ signingSecret: SLACK_SIGNING_SECRET, payload });
+      const result1 = await callRoute(route.POST, req1);
+      assert.equal(result1.status, 200);
+      resetAfterCallbacks();
 
-    // Second request with same event_id — should be deduped
-    const req2 = buildSlackWebhook({ signingSecret: SLACK_SIGNING_SECRET, payload });
-    const result2 = await callRoute(route.POST, req2);
-    assert.equal(result2.status, 200);
-    const body2 = result2.json as { ok: boolean };
-    assert.equal(body2.ok, true);
+      // Second request with same event_id — should be deduped
+      const req2 = buildSlackWebhook({ signingSecret: SLACK_SIGNING_SECRET, payload });
+      const result2 = await callRoute(route.POST, req2);
+      assert.equal(result2.status, 200);
+      const body2 = result2.json as { ok: boolean };
+      assert.equal(body2.ok, true);
+      assert.equal(startMock.mock.callCount(), 1);
+    } finally {
+      startMock.mock.restore();
+    }
+  });
+});
+
+test("Slack webhook: releases dedup lock and returns 500 when workflow start fails", async () => {
+  await withHarness(async (h) => {
+    await configureSlack(h);
+    const route = getSlackWebhookRoute();
+    const payload = {
+      type: "event_callback",
+      event_id: "Ev_START_FAIL",
+      event: {
+        type: "message",
+        text: "hello",
+        channel: "C123",
+        ts: "1234567890.000001",
+        user: "U123",
+      },
+    };
+    const dedupKey = channelDedupKey("slack", payload.event_id);
+    const startMock = mock.method(slackWebhookWorkflowRuntime, "start", async () => {
+      throw new Error("workflow engine unavailable");
+    });
+
+    try {
+      const req = buildSlackWebhook({ signingSecret: SLACK_SIGNING_SECRET, payload });
+      const result = await callRoute(route.POST, req);
+      assert.equal(result.status, 500);
+      assert.deepEqual(result.json, {
+        ok: false,
+        error: "WORKFLOW_START_FAILED",
+        retryable: true,
+      });
+
+      const reacquiredToken = await getStore().acquireLock(dedupKey, 60);
+      assert.ok(reacquiredToken, "dedup lock should be released when workflow start fails");
+      await getStore().releaseLock(dedupKey, reacquiredToken!);
+      assert.equal(startMock.mock.callCount(), 1);
+    } finally {
+      startMock.mock.restore();
+    }
   });
 });

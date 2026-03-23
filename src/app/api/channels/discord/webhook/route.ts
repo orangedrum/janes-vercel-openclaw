@@ -1,4 +1,4 @@
-import { start } from "workflow/api";
+import * as workflowApi from "workflow/api";
 
 import { getPublicOrigin } from "@/server/public-url";
 import { verifyDiscordRequestSignature } from "@/server/channels/discord/adapter";
@@ -7,6 +7,21 @@ import { drainChannelWorkflow } from "@/server/workflows/channels/drain-channel-
 import { extractRequestId, logInfo, logWarn } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { getInitializedMeta, getStore } from "@/server/store/store";
+
+type DiscordWebhookDedupLock = {
+  key: string;
+  token: string;
+};
+
+type DiscordWebhookDedupReleaseResult = {
+  attempted: boolean;
+  released: boolean;
+  releaseError: string | null;
+};
+
+export const discordWebhookWorkflowRuntime = {
+  start: workflowApi.start,
+};
 
 function extractInteractionId(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") {
@@ -19,6 +34,32 @@ function extractInteractionId(payload: unknown): string | null {
   }
 
   return null;
+}
+
+function workflowStartFailedResponse() {
+  return Response.json(
+    { ok: false, error: "WORKFLOW_START_FAILED", retryable: true },
+    { status: 500 },
+  );
+}
+
+async function releaseDiscordWebhookDedupLockForRetry(
+  lock: DiscordWebhookDedupLock | null,
+): Promise<DiscordWebhookDedupReleaseResult> {
+  if (!lock) {
+    return { attempted: false, released: false, releaseError: null };
+  }
+
+  try {
+    await getStore().releaseLock(lock.key, lock.token);
+    return { attempted: true, released: true, releaseError: null };
+  } catch (error) {
+    return {
+      attempted: true,
+      released: false,
+      releaseError: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -57,11 +98,17 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const interactionId = extractInteractionId(payload);
+  let dedupLock: DiscordWebhookDedupLock | null = null;
   if (interactionId) {
-    const accepted = await getStore().acquireLock(channelDedupKey("discord", interactionId), 24 * 60 * 60);
-    if (!accepted) {
+    const dedupKey = channelDedupKey("discord", interactionId);
+    const dedupToken = await getStore().acquireLock(dedupKey, 24 * 60 * 60);
+    if (!dedupToken) {
       return Response.json({ type: 5 });
     }
+    dedupLock = {
+      key: dedupKey,
+      token: dedupToken,
+    };
   }
 
   const op = createOperationContext({
@@ -79,12 +126,20 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const origin = getPublicOrigin(request);
-    await start(drainChannelWorkflow, ["discord", payload, origin, requestId ?? null]);
+    await discordWebhookWorkflowRuntime.start(drainChannelWorkflow, ["discord", payload, origin, requestId ?? null]);
     logInfo("channels.discord_workflow_started", withOperationContext(op));
   } catch (error) {
+    const dedupRelease = await releaseDiscordWebhookDedupLockForRetry(dedupLock);
     logWarn("channels.discord_workflow_start_failed", withOperationContext(op, {
       error: error instanceof Error ? error.message : String(error),
+      attemptedAction: "start_drain_channel_workflow",
+      dedupLockKey: dedupLock?.key ?? null,
+      dedupLockReleaseAttempted: dedupRelease.attempted,
+      dedupLockReleased: dedupRelease.released,
+      dedupLockReleaseError: dedupRelease.releaseError,
+      retryable: true,
     }));
+    return workflowStartFailedResponse();
   }
 
   return Response.json({ type: 5 });

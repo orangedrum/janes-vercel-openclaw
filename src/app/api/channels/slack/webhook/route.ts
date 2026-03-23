@@ -1,4 +1,4 @@
-import { start } from "workflow/api";
+import * as workflowApi from "workflow/api";
 
 import { getPublicOrigin } from "@/server/public-url";
 import { channelDedupKey } from "@/server/channels/keys";
@@ -20,8 +20,49 @@ const SLACK_FORWARD_HEADERS = [
   "x-slack-retry-reason",
 ] as const;
 
+type SlackWebhookDedupLock = {
+  key: string;
+  token: string;
+};
+
+type SlackWebhookDedupReleaseResult = {
+  attempted: boolean;
+  released: boolean;
+  releaseError: string | null;
+};
+
+export const slackWebhookWorkflowRuntime = {
+  start: workflowApi.start,
+};
+
 function unauthorizedResponse() {
   return Response.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+}
+
+function workflowStartFailedResponse() {
+  return Response.json(
+    { ok: false, error: "WORKFLOW_START_FAILED", retryable: true },
+    { status: 500 },
+  );
+}
+
+async function releaseSlackWebhookDedupLockForRetry(
+  lock: SlackWebhookDedupLock | null,
+): Promise<SlackWebhookDedupReleaseResult> {
+  if (!lock) {
+    return { attempted: false, released: false, releaseError: null };
+  }
+
+  try {
+    await getStore().releaseLock(lock.key, lock.token);
+    return { attempted: true, released: true, releaseError: null };
+  } catch (error) {
+    return {
+      attempted: true,
+      released: false,
+      releaseError: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function extractSlackEventInfo(payload: unknown): {
@@ -149,9 +190,11 @@ export async function POST(request: Request): Promise<Response> {
 
   const eventInfo = extractSlackEventInfo(payload);
   const dedupId = extractSlackDedupId(payload);
+  let dedupLock: SlackWebhookDedupLock | null = null;
   if (dedupId) {
-    const accepted = await getStore().acquireLock(channelDedupKey("slack", dedupId), 24 * 60 * 60);
-    if (!accepted) {
+    const dedupKey = channelDedupKey("slack", dedupId);
+    const dedupToken = await getStore().acquireLock(dedupKey, 24 * 60 * 60);
+    if (!dedupToken) {
       logInfo("channels.slack_webhook_dedup_skip", {
         requestId,
         dedupId,
@@ -159,6 +202,10 @@ export async function POST(request: Request): Promise<Response> {
       });
       return Response.json({ ok: true });
     }
+    dedupLock = {
+      key: dedupKey,
+      token: dedupToken,
+    };
   }
 
   // Skip bot messages to avoid feedback loops
@@ -263,15 +310,23 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const origin = getPublicOrigin(request);
-    await start(drainChannelWorkflow, ["slack", payload, origin, requestId ?? null]);
+    await slackWebhookWorkflowRuntime.start(drainChannelWorkflow, ["slack", payload, origin, requestId ?? null]);
     logInfo("channels.slack_workflow_started", withOperationContext(op, {
       ...eventInfo,
     }));
   } catch (error) {
+    const dedupRelease = await releaseSlackWebhookDedupLockForRetry(dedupLock);
     logWarn("channels.slack_workflow_start_failed", withOperationContext(op, {
       error: error instanceof Error ? error.message : String(error),
+      attemptedAction: "start_drain_channel_workflow",
+      dedupLockKey: dedupLock?.key ?? null,
+      dedupLockReleaseAttempted: dedupRelease.attempted,
+      dedupLockReleased: dedupRelease.released,
+      dedupLockReleaseError: dedupRelease.releaseError,
+      retryable: true,
       ...eventInfo,
     }));
+    return workflowStartFailedResponse();
   }
 
   return Response.json({ ok: true });
