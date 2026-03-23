@@ -43,7 +43,6 @@ function makeDeps(overrides: Partial<Parameters<typeof runSandboxWatchdog>[1]> =
     writeReport: async (next: WatchdogReport) => next,
     getCronNextWakeMs: async () => null as number | null,
     clearCronNextWake: async () => {},
-    getCronJobsJson: async () => null as string | null,
     now: (() => {
       let current = 0;
       return () => (current += 10);
@@ -134,7 +133,12 @@ test("stopped sandbox with due cron job wakes sandbox", async () => {
       getCronNextWakeMs: async () => 1, // in the past (now() starts at 10+)
       ensureReady: async () => {
         ensureCalled = true;
-        return { status: "running" } as SingleMeta;
+        return {
+          status: "running",
+          lastRestoreMetrics: {
+            cronRestoreOutcome: "no-store-jobs",
+          },
+        } as SingleMeta;
       },
       clearCronNextWake: async () => {
         cronCleared = true;
@@ -147,6 +151,7 @@ test("stopped sandbox with due cron job wakes sandbox", async () => {
   assert.equal(findCheck(report, "cron.wake")?.status, "pass");
   assert.ok(findCheck(report, "cron.wake")?.message?.includes("woke sandbox"));
   assert.equal(report.triggeredRepair, true);
+  assert.equal(report.sandboxStatus, "running");
 });
 
 test("error status with snapshot and due cron job wakes sandbox", async () => {
@@ -161,7 +166,12 @@ test("error status with snapshot and due cron job wakes sandbox", async () => {
       getCronNextWakeMs: async () => 1,
       ensureReady: async () => {
         ensureCalled = true;
-        return { status: "running" } as SingleMeta;
+        return {
+          status: "running",
+          lastRestoreMetrics: {
+            cronRestoreOutcome: "no-store-jobs",
+          },
+        } as SingleMeta;
       },
       clearCronNextWake: async () => {
         cronCleared = true;
@@ -212,24 +222,17 @@ test("stopped sandbox with null cron wake skips correctly", async () => {
 
 test("cron wake retains wake key when store has jobs but cron restore failed", async () => {
   let cronCleared = false;
-  const baseTime = Date.now();
 
   const report = await runSandboxWatchdog(
     { request: new Request("https://app.test/api/cron/watchdog") },
     makeDeps({
-      now: () => baseTime,
       getMeta: async () =>
         ({ status: "stopped", sandboxId: null, snapshotId: "snap_123" }) as SingleMeta,
       getCronNextWakeMs: async () => 1, // in the past
-      getCronJobsJson: async () => JSON.stringify({
-        version: 1,
-        jobs: [{ id: "test-job", enabled: true }],
-      }),
       ensureReady: async () => ({
         status: "running",
         lastRestoreMetrics: {
-          cronJobsRestored: false,
-          recordedAt: baseTime - 5_000, // recorded 5s ago (within 60s window)
+          cronRestoreOutcome: "restore-failed",
         },
       }) as SingleMeta,
       clearCronNextWake: async () => {
@@ -238,33 +241,26 @@ test("cron wake retains wake key when store has jobs but cron restore failed", a
     }),
   );
 
-  // Wake key should NOT be cleared — store had jobs but cron restore failed
   assert.equal(cronCleared, false, "Wake key must be retained when cron restore fails");
   assert.equal(findCheck(report, "cron.wake")?.status, "pass");
+  assert.ok(findCheck(report, "cron.wake")?.message?.includes("restore-failed"));
   assert.ok(findCheck(report, "cron.wake")?.message?.includes("wake key retained"));
   assert.equal(report.triggeredRepair, true);
 });
 
-test("cron wake clears wake key when cron restore succeeded", async () => {
+test("cron wake clears wake key when cron restore already present", async () => {
   let cronCleared = false;
-  const baseTime = Date.now();
 
   const report = await runSandboxWatchdog(
     { request: new Request("https://app.test/api/cron/watchdog") },
     makeDeps({
-      now: () => baseTime,
       getMeta: async () =>
         ({ status: "stopped", sandboxId: null, snapshotId: "snap_123" }) as SingleMeta,
       getCronNextWakeMs: async () => 1,
-      getCronJobsJson: async () => JSON.stringify({
-        version: 1,
-        jobs: [{ id: "test-job", enabled: true }],
-      }),
       ensureReady: async () => ({
         status: "running",
         lastRestoreMetrics: {
-          cronJobsRestored: true,
-          recordedAt: baseTime - 5_000,
+          cronRestoreOutcome: "already-present",
         },
       }) as SingleMeta,
       clearCronNextWake: async () => {
@@ -273,9 +269,36 @@ test("cron wake clears wake key when cron restore succeeded", async () => {
     }),
   );
 
-  assert.equal(cronCleared, true, "Wake key should be cleared when cron restore succeeded");
+  assert.equal(cronCleared, true, "Wake key should be cleared when cron jobs are already present");
   assert.equal(findCheck(report, "cron.wake")?.status, "pass");
+  assert.ok(findCheck(report, "cron.wake")?.message?.includes("already-present"));
   assert.ok(findCheck(report, "cron.wake")?.message?.includes("woke sandbox"));
+});
+
+test("cron wake clears wake key when cron restore verified", async () => {
+  let cronCleared = false;
+
+  const report = await runSandboxWatchdog(
+    { request: new Request("https://app.test/api/cron/watchdog") },
+    makeDeps({
+      getMeta: async () =>
+        ({ status: "stopped", sandboxId: null, snapshotId: "snap_123" }) as SingleMeta,
+      getCronNextWakeMs: async () => 1,
+      ensureReady: async () => ({
+        status: "running",
+        lastRestoreMetrics: {
+          cronRestoreOutcome: "restored-verified",
+        },
+      }) as SingleMeta,
+      clearCronNextWake: async () => {
+        cronCleared = true;
+      },
+    }),
+  );
+
+  assert.equal(cronCleared, true, "Wake key should be cleared when cron restore is verified");
+  assert.equal(findCheck(report, "cron.wake")?.status, "pass");
+  assert.ok(findCheck(report, "cron.wake")?.message?.includes("restored-verified"));
 });
 
 test("stuck-busy recovery passes schedule callback to reconcile", async () => {
