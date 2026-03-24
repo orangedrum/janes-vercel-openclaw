@@ -11,24 +11,18 @@
 </p>
 
 <p align="center">
-  <a href="https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel-labs%2Fvercel-openclaw.git&integration-ids=oac_V3R1GIpkoJorr6fqyiwdhl17&env=ADMIN_SECRET&envDescription=Password%20used%20to%20sign%20in%20to%20the%20admin%20UI.&project-name=openclaw&repository-name=openclaw"><img src="https://vercel.com/button" alt="Deploy with Vercel" /></a>
+  <a href="https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel-labs%2Fvercel-openclaw.git&integration-ids=oac_V3R1GIpkoJorr6fqyiwdhl17&env=ADMIN_SECRET,CRON_SECRET&envDescription=ADMIN_SECRET%20is%20the%20password%20for%20the%20admin%20UI.%20CRON_SECRET%20is%20any%20random%20string%20to%20secure%20scheduled%20jobs.&project-name=openclaw&repository-name=openclaw"><img src="https://vercel.com/button" alt="Deploy with Vercel" /></a>
 </p>
 
 ---
 
 ## Setup
 
-The deploy button auto-provisions an Upstash Redis database via the Vercel Marketplace integration and asks for an `ADMIN_SECRET` (the password for the admin UI). A working Vercel deployment still needs `CRON_SECRET` before launch verification passes.
-
-AI Gateway auth is handled automatically via OIDC on deployed Vercel environments.
+The deploy button auto-provisions an Upstash Redis database via the Vercel Marketplace integration and asks for `ADMIN_SECRET` (password for the admin UI) and `CRON_SECRET` (any random string to secure scheduled jobs). AI Gateway auth is handled automatically via OIDC on deployed Vercel environments.
 
 ## First visit
 
-1. Choose an auth mode:
-   - default: set `ADMIN_SECRET`
-   - experimental: set `VERCEL_AUTH_MODE=sign-in-with-vercel` plus `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, and `SESSION_SECRET`
-2. Set `CRON_SECRET`.
-3. Open the deployment and sign in.
+1. Open the deployment and sign in with your `ADMIN_SECRET`.
 4. Visit `/gateway` or use the admin panel to start the sandbox.
 5. Run launch verification before connecting channels.
 
