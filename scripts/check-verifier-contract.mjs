@@ -335,6 +335,30 @@ const docsSurfaceRequirements = [
     optional: false,
   },
   {
+    files: ["README.md", "CONTRIBUTING.md", "CLAUDE.md"],
+    snippet: "`GET /api/admin/launch-verify` returns",
+    label: "launch-verify GET readiness surface",
+    optional: false,
+  },
+  {
+    files: ["README.md", "CONTRIBUTING.md", "CLAUDE.md"],
+    snippet: "channelReadiness",
+    label: "launch-verify extended response payload",
+    optional: false,
+  },
+  {
+    files: ["README.md", "CONTRIBUTING.md", "CLAUDE.md"],
+    snippet: "ChannelReadiness",
+    label: "launch-verify readiness type docs",
+    optional: false,
+  },
+  {
+    files: ["README.md", "CONTRIBUTING.md", "CLAUDE.md"],
+    snippet: "terminal `result` event carries the same extended payload",
+    label: "launch-verify NDJSON result payload docs",
+    optional: false,
+  },
+  {
     files: [".claude/skills/vercel-openclaw-testing/SKILL.md"],
     snippet: "node scripts/verify.mjs",
     label: "testing skill canonical verify entrypoint",

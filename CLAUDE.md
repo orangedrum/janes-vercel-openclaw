@@ -182,6 +182,12 @@ Observability notes:
 
 `POST /api/admin/launch-verify` is the public readiness entrypoint. It supports standard JSON responses and NDJSON streaming when the client sends `Accept: application/x-ndjson`. Runtime phases are `preflight`, `queuePing`, `ensureRunning`, `chatCompletions`, and `wakeFromSleep` (destructive mode only). If preflight fails, the runtime phases are skipped.
 
+- `GET /api/admin/launch-verify` returns persisted `ChannelReadiness` for the current deployment.
+- `POST /api/admin/launch-verify` returns `LaunchVerificationPayload & { channelReadiness: ChannelReadiness }`.
+- When streaming with `Accept: application/x-ndjson`, the terminal `result` event carries the same extended payload including `channelReadiness`.
+
+`channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` path for the current deployment.
+
 ## Control plane
 
 State lives in one metadata record described in `src/shared/types.ts`.

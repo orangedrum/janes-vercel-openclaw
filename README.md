@@ -89,8 +89,42 @@ The app resolves its canonical public URL from Vercel system variables automatic
 ## Machine-readable operations surfaces
 
 - `GET /api/admin/preflight` returns a `PreflightPayload` with `checks`, `actions`, `nextSteps`, and per-channel readiness.
-- `POST /api/admin/launch-verify` returns a `LaunchVerificationPayload`. Send `Accept: application/x-ndjson` to stream phase events (`LaunchVerificationStreamEvent`) for automation.
+- `GET /api/admin/launch-verify` returns persisted `ChannelReadiness` for the current deployment.
+- `POST /api/admin/launch-verify` returns `LaunchVerificationPayload & { channelReadiness: ChannelReadiness }`. Send `Accept: application/x-ndjson` to stream phase events (`LaunchVerificationStreamEvent`) for automation.
+- When streaming with `Accept: application/x-ndjson`, the terminal `result` event carries the same extended payload including `channelReadiness`.
 - `GET /api/admin/watchdog` returns the cached `WatchdogReport`; `POST /api/admin/watchdog` runs a fresh check. Each report contains `WatchdogCheck` entries.
+
+`channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` path for the current deployment.
+
+Example `POST /api/admin/launch-verify` response:
+
+```json
+{
+  "ok": true,
+  "mode": "destructive",
+  "startedAt": "2026-03-24T08:00:00.000Z",
+  "completedAt": "2026-03-24T08:01:10.000Z",
+  "phases": [],
+  "diagnostics": {
+    "blocking": false,
+    "failingCheckIds": [],
+    "requiredActionIds": [],
+    "recommendedActionIds": [],
+    "warningChannelIds": [],
+    "failingChannelIds": [],
+    "skipPhaseIds": []
+  },
+  "channelReadiness": {
+    "deploymentId": "dpl_123",
+    "ready": true,
+    "verifiedAt": "2026-03-24T08:01:10.000Z",
+    "mode": "destructive",
+    "wakeFromSleepPassed": true,
+    "failingPhaseId": null,
+    "phases": []
+  }
+}
+```
 
 ## Structured output contracts
 
@@ -139,8 +173,9 @@ node scripts/check-deploy-readiness.mjs --base-url "$OPENCLAW_BASE_URL" --admin-
 ### API payloads
 
 - `GET /api/admin/preflight` returns `PreflightPayload`.
-- `POST /api/admin/launch-verify` returns `LaunchVerificationPayload`.
-- Send `Accept: application/x-ndjson` to `POST /api/admin/launch-verify` for streaming `LaunchVerificationStreamEvent`.
+- `GET /api/admin/launch-verify` returns persisted `ChannelReadiness` for the current deployment.
+- `POST /api/admin/launch-verify` returns `LaunchVerificationPayload & { channelReadiness: ChannelReadiness }`.
+- When streaming with `Accept: application/x-ndjson`, the terminal `result` event carries the same extended payload including `channelReadiness`.
 - `GET /api/admin/watchdog` returns `WatchdogReport`.
 
 Compatibility note:
