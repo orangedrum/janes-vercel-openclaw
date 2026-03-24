@@ -240,6 +240,21 @@ const wordingRequirements = [
     label: "OPENCLAW_PACKAGE_SPEC warn-only policy",
     files: ["CLAUDE.md"],
   },
+  {
+    snippet: "warningChannelIds` is deprecated",
+    label: "launch verification deprecated diagnostics field",
+    files: ["README.md", "CONTRIBUTING.md", "CLAUDE.md"],
+  },
+  {
+    snippet: "verify.step.start",
+    label: "verify.mjs event contract",
+    files: ["README.md", "CONTRIBUTING.md"],
+  },
+  {
+    snippet: "`0` = pass",
+    label: "check-deploy-readiness exit codes",
+    files: ["README.md", "CONTRIBUTING.md"],
+  },
 ];
 
 for (const { snippet, label, files } of wordingRequirements) {

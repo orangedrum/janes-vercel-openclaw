@@ -96,6 +96,13 @@ OpenClaw has a built-in cron scheduler (`croner` library) that persists jobs to 
 
 The watchdog never runs chat completions, delivers messages, or interacts with Telegram/Slack/Discord. It only wakes the sandbox — OpenClaw handles the rest.
 
+Watchdog observability notes:
+
+- `watchdog.run_completed` logs `{ deploymentId, status, sandboxStatus, triggeredRepair, consecutiveFailures }`
+- Each `WatchdogReport` contains per-check `{ id, status, durationMs, message }` entries
+- `cron.wake` is the check id for scheduled sandbox wake attempts
+- Cron wake success messages include whether the wake key was cleared or retained based on `cronRestoreOutcome`
+
 ### Cron jobs persistence (important)
 
 Cron jobs can be lost during snapshot restore in edge cases: partial writes during gateway restarts, config-triggered re-initialization, or snapshots taken after a transient empty state. OpenClaw's gateway normally preserves `jobs.json` across restarts (it reads, normalizes, and writes back with a `.bak` safety backup), but the store-based persistence acts as a belt-and-suspenders safety net.
@@ -128,6 +135,12 @@ Channel webhook URL construction lives in `src/server/channels/webhook-urls.ts`.
 
 Admin-visible surfaces (preflight payload, status responses, UI) must use `buildPublicDisplayUrl()` instead of `buildPublicUrl()`. The display variant omits the `x-vercel-protection-bypass` query parameter so secrets are never leaked to the browser or API consumers.
 
+Logging notes:
+
+- `public_url.built` logs redacted delivery URL diagnostics
+- `public_display_url.built` logs admin-visible URL diagnostics with `bypassApplied: false`
+- Never show `x-vercel-protection-bypass` in UI, status JSON, docs, or example payloads
+
 ### `src/server/deploy-preflight.ts`
 
 Machine-checkable config readiness report consumed by `/api/admin/preflight`.
@@ -137,6 +150,14 @@ Checks: `public-origin`, `webhook-bypass` (diagnostic only: pass or warn, never 
 The authoritative readiness check is `POST /api/admin/launch-verify` (`src/app/api/admin/launch-verify/route.ts`), which runs preflight as its first phase and then verifies runtime behavior: queue loopback delivery via `/api/queues/launch-verify`, sandbox ensure, gateway chat completions, and wake-from-sleep recovery (destructive mode). `scripts/check-deploy-readiness.mjs` consumes launch-verify by default.
 
 Store requirement policy: missing Upstash is a hard fail (`status: "fail"`) on Vercel deployments but a warning (`status: "warn"`) in non-Vercel/local environments. This applies to both connectability and preflight checks.
+
+Observability notes:
+
+- `deployment_contract.built` logs `{ ok, authMode, storeBackend, aiGatewayAuth, onVercel, requirementIds }`
+- `deploy_preflight.built` logs `{ ok, authMode, publicOrigin, webhookBypassEnabled, webhookBypassRecommended, storeBackend, aiGatewayAuth, cronSecretConfigured, actionCount, consumedContractIds }`
+- `launch_verify.blocking_check` logs `{ blocking, failingCheckIds, requiredActionIds, recommendedActionIds, skipPhaseIds }`
+- `launch_verify.preflight_evaluated` logs `LaunchVerificationDiagnostics`
+- `LaunchVerificationDiagnostics.warningChannelIds` is deprecated; prefer `failingChannelIds`
 
 `GET /api/admin/preflight` returns a `PreflightPayload`:
 

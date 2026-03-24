@@ -35,6 +35,28 @@ npm run check:deploy-readiness      # machine-checkable deployment readiness rep
 npm run check:verify-contract       # docs/env contract guard for README.md, CLAUDE.md, CONTRIBUTING.md, .env.example
 ```
 
+### Maintainer observability contract
+
+Prefer these non-interactive entrypoints in local automation and CI:
+
+- `node scripts/verify.mjs`
+- `node scripts/check-deploy-readiness.mjs`
+- `npm run verify:observability-pass`
+- `npm run check:verify-contract`
+
+Structured outputs to rely on:
+
+- `node scripts/verify.mjs` emits JSON Lines to stdout (`verify.start`, `verify.step.start`, `verify.step.finish`, `verify.summary`) and mirrors child command output to stderr.
+- `node scripts/check-deploy-readiness.mjs --json-only` emits machine-readable JSON and exits with stable numeric codes (`0` = pass, `1` = contract-fail, `2` = bad-args, `3` = fetch-fail, `4` = bad-response).
+- `POST /api/admin/launch-verify` supports both JSON and NDJSON (`Accept: application/x-ndjson`).
+- `GET /api/admin/watchdog` and `POST /api/admin/watchdog` return `WatchdogReport`.
+
+Policy details that matter to automation:
+
+- `webhook-bypass` is diagnostic-only and must not be treated as a hard deployment blocker by itself.
+- `warningChannelIds` is deprecated (compatibility alias for `failingChannelIds`); prefer `failingChannelIds` in new automation.
+- Admin-visible URLs must never include the `x-vercel-protection-bypass` secret.
+
 ### Remote smoke testing
 
 ```bash
