@@ -26,7 +26,7 @@ AI Gateway auth is handled automatically via OIDC on deployed Vercel environment
 
 1. Choose an auth mode:
    - default: set `ADMIN_SECRET`
-   - optional: set `VERCEL_AUTH_MODE=sign-in-with-vercel` plus `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, and `SESSION_SECRET`
+   - experimental: set `VERCEL_AUTH_MODE=sign-in-with-vercel` plus `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, and `SESSION_SECRET`
 2. Set `CRON_SECRET`.
 3. Open the deployment and sign in.
 4. Visit `/gateway` or use the admin panel to start the sandbox.
