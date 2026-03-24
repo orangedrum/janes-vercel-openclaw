@@ -161,13 +161,26 @@ Full reference:
 | `/` | Admin shell |
 | `/gateway` | Proxied OpenClaw UI |
 | `/api/status` | Current sandbox state and heartbeat |
-| `/api/admin/ensure` | Trigger create or restore |
-| `/api/admin/stop` | Snapshot and stop |
 | `/api/admin/preflight` | Deployment readiness checks |
 | `/api/admin/launch-verify` | Full launch verification |
+| `/api/queues/launch-verify` | Private queue consumer used by launch verification |
+| `/api/admin/ensure` | Trigger create or restore |
+| `/api/admin/stop` | Snapshot and stop |
+| `/api/admin/snapshot` | Snapshot and stop (same as stop for now) |
+| `/api/admin/snapshots/delete` | Delete a past snapshot from Vercel and local history |
+| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch signed synthetic Slack/Telegram/Discord webhooks |
+| `/api/cron/drain-channels` | Optional diagnostic backstop for queued channel work |
+| `/api/cron/watchdog` | Cron watchdog for health repair and scheduled OpenClaw cron wake |
+| `/api/admin/watchdog` | Read cached watchdog report or run a fresh one |
 | `/api/channels/slack/webhook` | Public Slack webhook |
 | `/api/channels/telegram/webhook` | Public Telegram webhook |
 | `/api/channels/discord/webhook` | Public Discord interactions endpoint |
+
+## Verification behavior that is easy to miss
+
+- `node scripts/verify.mjs` runs `node scripts/check-queue-consumers.mjs` before the `test` step whenever `test` is included in `--steps`. Expect `verify.step.start` / `verify.step.finish` events for `queue-consumers`.
+- `node scripts/check-deploy-readiness.mjs` regenerates `src/app/api/auth/protected-route-manifest.json` before calling `/api/admin/launch-verify` and includes `bootstrapExposure` in the JSON result. A stale manifest or any unauthenticated admin/firewall route is a contract failure.
+- On Deployment Protection-enabled deployments, pass `--protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET"` so automation can reach the app.
 
 ## Machine-readable operations surfaces
 

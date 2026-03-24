@@ -271,6 +271,100 @@ for (const { snippet, label, files } of wordingRequirements) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Operator route documentation checks — ensure CONTRIBUTING.md documents
+// every operator-facing route that CLAUDE.md describes.
+// ---------------------------------------------------------------------------
+
+const routeDocRequirements = [
+  {
+    file: "CONTRIBUTING.md",
+    routes: [
+      "/api/admin/preflight",
+      "/api/admin/launch-verify",
+      "/api/queues/launch-verify",
+      "/api/admin/ensure",
+      "/api/admin/stop",
+      "/api/admin/snapshot",
+      "/api/admin/snapshots/delete",
+      "/api/admin/channel-secrets",
+      "/api/cron/drain-channels",
+      "/api/cron/watchdog",
+      "/api/admin/watchdog",
+    ],
+  },
+];
+
+for (const { file, routes } of routeDocRequirements) {
+  const absPath = path.join(rootDir, file);
+  if (!existsSync(absPath)) {
+    failures.push(`${file}: missing file (needed for route docs check)`);
+    continue;
+  }
+
+  const text = readFileSync(absPath, "utf8");
+  for (const route of routes) {
+    if (!text.includes(`\`${route}\``)) {
+      failures.push(`${file}: missing operator route "${route}"`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Docs surface checks — ensure verification behavior nuances are documented
+// in README.md, CONTRIBUTING.md, and the testing skill doc.
+// ---------------------------------------------------------------------------
+
+const docsSurfaceRequirements = [
+  {
+    files: ["README.md", "CONTRIBUTING.md"],
+    snippet: "queue-consumers",
+    label: "verify.mjs queue-consumers pre-step",
+    optional: false,
+  },
+  {
+    files: ["README.md", "CONTRIBUTING.md"],
+    snippet: "bootstrapExposure",
+    label: "check-deploy-readiness bootstrap exposure output",
+    optional: false,
+  },
+  {
+    files: ["README.md", "CONTRIBUTING.md"],
+    snippet: "--protection-bypass",
+    label: "check-deploy-readiness protection bypass flag",
+    optional: false,
+  },
+  {
+    files: [".claude/skills/vercel-openclaw-testing/SKILL.md"],
+    snippet: "node scripts/verify.mjs",
+    label: "testing skill canonical verify entrypoint",
+    optional: true,
+  },
+  {
+    files: [".claude/skills/vercel-openclaw-testing/SKILL.md"],
+    snippet: "check-deploy-readiness.mjs",
+    label: "testing skill remote readiness entrypoint",
+    optional: true,
+  },
+];
+
+for (const { files, snippet, label, optional } of docsSurfaceRequirements) {
+  for (const relPath of files) {
+    const absPath = path.join(rootDir, relPath);
+    if (!existsSync(absPath)) {
+      if (!optional) {
+        failures.push(`${relPath}: missing file (needed for docs surface check: ${label})`);
+      }
+      continue;
+    }
+
+    const text = readFileSync(absPath, "utf8");
+    if (!text.includes(snippet)) {
+      failures.push(`${relPath}: missing required wording "${snippet}" (${label})`);
+    }
+  }
+}
+
 const payload = {
   event: "verifier_contract.checked",
   ok: failures.length === 0,
