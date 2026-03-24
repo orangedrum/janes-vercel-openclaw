@@ -76,6 +76,25 @@ Channel behavior:
 - Slack and Discord webhook URLs include the bypass query parameter when the secret is configured.
 - Telegram intentionally does not include the bypass query parameter. Telegram validates via the `x-telegram-bot-api-secret-token` header, and adding the bypass query parameter can cause `setWebhook` to silently drop registration. On protected deployments, Telegram needs a Deployment Protection Exception or another protection-compatible path.
 
+### Delivery URLs vs operator-visible URLs
+
+These are intentionally different surfaces:
+
+- Slack and Discord delivery URLs may include `x-vercel-protection-bypass` when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
+- Telegram intentionally does not include the bypass query parameter because Telegram webhook registration can silently fail when it is present.
+- Admin-visible payloads, rendered UI, connectability output, and docs examples must use display URLs that never expose the bypass secret.
+
+Examples:
+
+```
+Delivery URL (Slack):    https://app.example.com/api/channels/slack/webhook?x-vercel-protection-bypass=[redacted]
+Display URL (Slack):     https://app.example.com/api/channels/slack/webhook
+Delivery URL (Telegram): https://app.example.com/api/channels/telegram/webhook
+Display URL (Telegram):  https://app.example.com/api/channels/telegram/webhook
+```
+
+In code: use `buildPublicUrl()` only for outbound delivery or registration URLs that may need the bypass secret. Use `buildPublicDisplayUrl()` for admin JSON, UI, diagnostics, docs examples, and any operator-visible surface.
+
 ## Optional: override the public origin
 
 The app resolves its canonical public URL from Vercel system variables automatically. If you need to override it (e.g. custom domain, non-Vercel host), set one of:
@@ -96,7 +115,7 @@ The app resolves its canonical public URL from Vercel system variables automatic
 
 `channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` path for the current deployment.
 
-Example `POST /api/admin/launch-verify` response:
+Example `POST /api/admin/launch-verify` response (destructive mode, all phases passing):
 
 ```json
 {
@@ -104,7 +123,27 @@ Example `POST /api/admin/launch-verify` response:
   "mode": "destructive",
   "startedAt": "2026-03-24T08:00:00.000Z",
   "completedAt": "2026-03-24T08:01:10.000Z",
-  "phases": [],
+  "phases": [
+    { "id": "preflight", "status": "pass", "durationMs": 120, "message": "All 8 config checks passed." },
+    { "id": "queuePing", "status": "pass", "durationMs": 840, "message": "Vercel Queue delivered callback msg_123." },
+    { "id": "ensureRunning", "status": "pass", "durationMs": 41200, "message": "Sandbox started and gateway ready." },
+    { "id": "chatCompletions", "status": "pass", "durationMs": 910, "message": "Gateway replied with exact text: launch-verify-ok" },
+    { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." }
+  ],
+  "runtime": {
+    "packageSpec": "openclaw@1.2.3",
+    "installedVersion": "1.2.3",
+    "drift": false,
+    "expectedConfigHash": "abc123",
+    "lastRestoreConfigHash": "abc123",
+    "dynamicConfigVerified": true,
+    "dynamicConfigReason": "hash-match"
+  },
+  "sandboxHealth": {
+    "repaired": false,
+    "configReconciled": true,
+    "configReconcileReason": "already-fresh"
+  },
   "diagnostics": {
     "blocking": false,
     "failingCheckIds": [],
@@ -121,10 +160,32 @@ Example `POST /api/admin/launch-verify` response:
     "mode": "destructive",
     "wakeFromSleepPassed": true,
     "failingPhaseId": null,
-    "phases": []
+    "phases": [
+      { "id": "preflight", "status": "pass", "durationMs": 120, "message": "All 8 config checks passed." },
+      { "id": "queuePing", "status": "pass", "durationMs": 840, "message": "Vercel Queue delivered callback msg_123." },
+      { "id": "ensureRunning", "status": "pass", "durationMs": 41200, "message": "Sandbox started and gateway ready." },
+      { "id": "chatCompletions", "status": "pass", "durationMs": 910, "message": "Gateway replied with exact text: launch-verify-ok" },
+      { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." }
+    ]
   }
 }
 ```
+
+`warningChannelIds` is kept only for backward compatibility. New automation should consume `failingChannelIds`.
+
+### Launch verification fields that matter to automation
+
+`POST /api/admin/launch-verify` exposes more than phase pass/fail:
+
+- `runtime.expectedConfigHash` — hash derived from the current channel/runtime config.
+- `runtime.lastRestoreConfigHash` — hash recorded during the most recent restore.
+- `runtime.dynamicConfigVerified` — `true` when those hashes match, `false` when they drift, `null` when no restore hash is available yet.
+- `runtime.dynamicConfigReason` — one of `hash-match`, `hash-miss`, or `no-snapshot-hash`.
+- `sandboxHealth.repaired` — whether launch verification had to recover sandbox health.
+- `sandboxHealth.configReconciled` — whether stale runtime config was reconciled successfully.
+- `sandboxHealth.configReconcileReason` — one of `already-fresh`, `rewritten-and-restarted`, `rewrite-failed`, `restart-failed`, `sandbox-unavailable`, `error`, or `skipped`.
+
+Automation should treat `payload.ok=false` as authoritative even when the main runtime phases look healthy, because stale dynamic config that could not be reconciled is a hard failure.
 
 ## Structured output contracts
 

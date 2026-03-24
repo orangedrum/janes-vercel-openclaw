@@ -192,7 +192,7 @@ Full reference:
 
 `channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` path for the current deployment.
 
-Example `POST /api/admin/launch-verify` response:
+Example `POST /api/admin/launch-verify` response (destructive mode, all phases passing):
 
 ```json
 {
@@ -200,7 +200,27 @@ Example `POST /api/admin/launch-verify` response:
   "mode": "destructive",
   "startedAt": "2026-03-24T08:00:00.000Z",
   "completedAt": "2026-03-24T08:01:10.000Z",
-  "phases": [],
+  "phases": [
+    { "id": "preflight", "status": "pass", "durationMs": 120, "message": "All 8 config checks passed." },
+    { "id": "queuePing", "status": "pass", "durationMs": 840, "message": "Vercel Queue delivered callback msg_123." },
+    { "id": "ensureRunning", "status": "pass", "durationMs": 41200, "message": "Sandbox started and gateway ready." },
+    { "id": "chatCompletions", "status": "pass", "durationMs": 910, "message": "Gateway replied with exact text: launch-verify-ok" },
+    { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." }
+  ],
+  "runtime": {
+    "packageSpec": "openclaw@1.2.3",
+    "installedVersion": "1.2.3",
+    "drift": false,
+    "expectedConfigHash": "abc123",
+    "lastRestoreConfigHash": "abc123",
+    "dynamicConfigVerified": true,
+    "dynamicConfigReason": "hash-match"
+  },
+  "sandboxHealth": {
+    "repaired": false,
+    "configReconciled": true,
+    "configReconcileReason": "already-fresh"
+  },
   "diagnostics": {
     "blocking": false,
     "failingCheckIds": [],
@@ -217,10 +237,65 @@ Example `POST /api/admin/launch-verify` response:
     "mode": "destructive",
     "wakeFromSleepPassed": true,
     "failingPhaseId": null,
-    "phases": []
+    "phases": [
+      { "id": "preflight", "status": "pass", "durationMs": 120, "message": "All 8 config checks passed." },
+      { "id": "queuePing", "status": "pass", "durationMs": 840, "message": "Vercel Queue delivered callback msg_123." },
+      { "id": "ensureRunning", "status": "pass", "durationMs": 41200, "message": "Sandbox started and gateway ready." },
+      { "id": "chatCompletions", "status": "pass", "durationMs": 910, "message": "Gateway replied with exact text: launch-verify-ok" },
+      { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." }
+    ]
   }
 }
 ```
+
+`warningChannelIds` is kept only for backward compatibility. New automation should consume `failingChannelIds`.
+
+### Launch verification completion signals
+
+The server emits a terminal `launch_verify.completed` structured log that summarizes the full verification outcome in one machine-friendly object:
+
+```ts
+type LaunchVerifyCompletionLog = {
+  ok: boolean;
+  mode: "safe" | "destructive";
+  phaseCount: number;
+  totalMs: number;
+  channelReady: boolean;
+  failingCheckIds: string[];
+  requiredActionIds: string[];
+  recommendedActionIds: string[];
+  failingChannelIds: Array<"slack" | "telegram" | "discord">;
+  dynamicConfigVerified: boolean | null;
+  dynamicConfigReason?: "hash-match" | "hash-miss" | "no-snapshot-hash";
+  repaired: boolean | null;
+  configReconciled: boolean | null;
+  configReconcileReason?: string;
+};
+```
+
+Example:
+
+```json
+{
+  "event": "launch_verify.completed",
+  "ok": true,
+  "mode": "destructive",
+  "phaseCount": 5,
+  "totalMs": 70234,
+  "channelReady": true,
+  "failingCheckIds": [],
+  "requiredActionIds": [],
+  "recommendedActionIds": [],
+  "failingChannelIds": [],
+  "dynamicConfigVerified": true,
+  "dynamicConfigReason": "hash-match",
+  "repaired": false,
+  "configReconciled": true,
+  "configReconcileReason": "already-fresh"
+}
+```
+
+Use this log for machine-readable postmortems. Use persisted `channelReadiness` for deployment-level readiness state that survives the request.
 
 See `CLAUDE.md` for the complete route table and detailed system documentation.
 

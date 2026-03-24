@@ -135,6 +135,11 @@ Channel webhook URL construction lives in `src/server/channels/webhook-urls.ts`.
 
 Admin-visible surfaces (preflight payload, status responses, UI) must use `buildPublicDisplayUrl()` instead of `buildPublicUrl()`. The display variant omits the `x-vercel-protection-bypass` query parameter so secrets are never leaked to the browser or API consumers.
 
+Practical rule:
+
+- use `buildPublicUrl()` only for outbound delivery or registration URLs that may need the bypass secret
+- use `buildPublicDisplayUrl()` for admin JSON, UI, diagnostics, docs examples, and any operator-visible surface
+
 Logging notes:
 
 - `public_url.built` logs redacted delivery URL diagnostics
@@ -187,6 +192,14 @@ Observability notes:
 - When streaming with `Accept: application/x-ndjson`, the terminal `result` event carries the same extended payload including `channelReadiness`.
 
 `channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` path for the current deployment.
+
+Failure semantics that are easy to miss:
+
+- `payload.ok` can still be `false` after `ensureRunning` succeeds if dynamic config verification fails after restore.
+- `runtime.dynamicConfigVerified=false` means the most recent restore used stale runtime/channel config relative to current deployment metadata.
+- `sandboxHealth.configReconciled=false` means the sandbox came up but runtime config could not be safely brought back in sync.
+- `failingChannelIds` is the canonical machine-readable channel failure list.
+- `warningChannelIds` is a deprecated compatibility alias and should not be used in new automation.
 
 ## Control plane
 
