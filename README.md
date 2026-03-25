@@ -18,7 +18,7 @@
 
 ## Setup
 
-The deploy button auto-provisions an Upstash Redis database via the Vercel Marketplace integration and asks for `ADMIN_SECRET` (password for the admin UI). The admin secret also secures cron jobs automatically — set `CRON_SECRET` separately only if you want a distinct value. AI Gateway auth is handled automatically via OIDC on deployed Vercel environments.
+The deploy button auto-provisions an Upstash Redis database (`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`) via the Vercel Marketplace integration and asks for `ADMIN_SECRET` (password for the admin UI). The admin secret also secures cron jobs automatically — set `CRON_SECRET` separately only if you want a distinct value. AI Gateway auth is handled automatically via OIDC on deployed Vercel environments.
 
 ## First visit
 
@@ -30,18 +30,18 @@ The deploy button auto-provisions an Upstash Redis database via the Vercel Marke
 
 - **Use OpenClaw** — the full OpenClaw UI is proxied at `/gateway`.
 - **Stop & restore** — save a snapshot of your sandbox and restore it later. Useful if you want to roll back after experimenting.
-- **Connect channels** — wire up Slack, Telegram, or Discord so people can talk to your OpenClaw instance from chat. Configure each one from the admin panel. Normal channel delivery uses Workflow DevKit. Deployment verification is triggered via `POST /api/admin/launch-verify`, which internally probes the private `/api/queues/launch-verify` consumer. Smoke testing via `/api/admin/channel-secrets` dispatches server-signed synthetic webhooks — these use bypass-enabled URLs for all channels including Telegram, unlike provider-facing Telegram registration which intentionally omits the bypass parameter.
+- **Connect channels** — wire up Slack or Telegram so people can talk to your OpenClaw instance from chat. Configure each one from the admin panel. Normal channel delivery uses Workflow DevKit. Deployment verification is triggered via `POST /api/admin/launch-verify`, which internally probes the private `/api/queues/launch-verify` consumer. Smoke testing via `/api/admin/channel-secrets` dispatches server-signed synthetic webhooks — these use bypass-enabled URLs for all channels including Telegram, unlike provider-facing Telegram registration which intentionally omits the bypass parameter.
 - **Firewall** — the app can learn which domains your agent talks to, then lock egress down to only those domains.
 
 ## Required on Vercel
 
 | Variable | When required | Purpose |
 | -------- | ------------- | ------- |
-| `CRON_SECRET` | Always | Authenticates `/api/cron/watchdog`. Missing on Vercel is a hard failure in the deployment contract. |
+| `CRON_SECRET` | Recommended | Authenticates `/api/cron/watchdog`. Falls back to `ADMIN_SECRET` when not set. |
 | `ADMIN_SECRET` | `admin-secret` mode (default) | Secret exchanged for an encrypted session cookie via `/api/auth/login`. |
-| `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode | OAuth client ID. |
-| `VERCEL_APP_CLIENT_SECRET` | `sign-in-with-vercel` mode | OAuth client secret. |
-| `SESSION_SECRET` | `sign-in-with-vercel` mode on Vercel | Explicit cookie encryption secret. Do not rely on derivation from the Upstash token. |
+| `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode (experimental) | OAuth client ID. |
+| `VERCEL_APP_CLIENT_SECRET` | `sign-in-with-vercel` mode (experimental) | OAuth client secret. |
+| `SESSION_SECRET` | `sign-in-with-vercel` mode (experimental) on Vercel | Explicit cookie encryption secret. Do not rely on derivation from the Upstash token. |
 
 `VERCEL_AUTH_MODE` defaults to `admin-secret` when unset. AI Gateway auth uses Vercel OIDC automatically on deployed Vercel environments. `AI_GATEWAY_API_KEY` is an optional static fallback when OIDC is unavailable; deployed Vercel still prefers OIDC first.
 
@@ -64,14 +64,14 @@ By default the app installs `openclaw@latest`, which is non-deterministic across
 | `VERCEL_AUTOMATION_BYPASS_SECRET` | Lets protected webhook requests reach the app when Vercel Deployment Protection is enabled. |
 
 Channel behavior:
-- Slack and Discord webhook URLs include the bypass query parameter when the secret is configured.
+- Slack webhook URLs include the bypass query parameter when the secret is configured.
 - Telegram intentionally does not include the bypass query parameter. Telegram validates via the `x-telegram-bot-api-secret-token` header, and adding the bypass query parameter can cause `setWebhook` to silently drop registration. On protected deployments, Telegram needs a Deployment Protection Exception or another protection-compatible path.
 
 ### Delivery URLs vs operator-visible URLs
 
 These are intentionally different surfaces:
 
-- Slack and Discord delivery URLs may include `x-vercel-protection-bypass` when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
+- Slack delivery URLs may include `x-vercel-protection-bypass` when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
 - Telegram intentionally does not include the bypass query parameter because Telegram webhook registration can silently fail when it is present.
 - Admin-visible payloads, rendered UI, connectability output, and docs examples must use display URLs that never expose the bypass secret.
 
