@@ -35,15 +35,28 @@ The deploy button auto-provisions an Upstash Redis database (`UPSTASH_REDIS_REST
 
 ## Required on Vercel
 
-| Variable | When required | Purpose |
-| -------- | ------------- | ------- |
-| `CRON_SECRET` | Recommended | Authenticates `/api/cron/watchdog`. Falls back to `ADMIN_SECRET` when not set. |
-| `ADMIN_SECRET` | `admin-secret` mode (default) | Secret exchanged for an encrypted session cookie via `/api/auth/login`. |
-| `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode (experimental) | OAuth client ID. |
-| `VERCEL_APP_CLIENT_SECRET` | `sign-in-with-vercel` mode (experimental) | OAuth client secret. |
-| `SESSION_SECRET` | `sign-in-with-vercel` mode (experimental) on Vercel | Explicit cookie encryption secret. Do not rely on derivation from the Upstash token. |
+| Variable | Purpose |
+| -------- | ------- |
+| `ADMIN_SECRET` | Password for the admin UI. Also authenticates `/api/cron/watchdog` unless `CRON_SECRET` is set separately. |
 
-`VERCEL_AUTH_MODE` defaults to `admin-secret` when unset. AI Gateway auth uses Vercel OIDC automatically on deployed Vercel environments. `AI_GATEWAY_API_KEY` is an optional static fallback when OIDC is unavailable; deployed Vercel still prefers OIDC first.
+AI Gateway auth uses Vercel OIDC automatically on deployed Vercel environments.
+
+## Optional: auth and cron
+
+| Variable | Purpose |
+| -------- | ------- |
+| `CRON_SECRET` | Separate secret for `/api/cron/watchdog`. Falls back to `ADMIN_SECRET` when not set. |
+| `AI_GATEWAY_API_KEY` | Static fallback when Vercel OIDC is unavailable. Deployed Vercel still prefers OIDC first. |
+
+### Experimental: sign-in-with-vercel
+
+Set `VERCEL_AUTH_MODE=sign-in-with-vercel` to use Vercel OAuth instead of `ADMIN_SECRET`.
+
+| Variable | Purpose |
+| -------- | ------- |
+| `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | OAuth client ID. |
+| `VERCEL_APP_CLIENT_SECRET` | OAuth client secret. |
+| `SESSION_SECRET` | Explicit cookie encryption secret (required on Vercel). Do not rely on derivation from the Upstash token. |
 
 ## Optional: pin the OpenClaw version
 
