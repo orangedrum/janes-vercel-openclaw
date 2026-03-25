@@ -367,13 +367,12 @@ export function FirewallPanel({
 
           {fw.mode === "learning" &&
             diagnostics?.ingestionStatus.lastSkipReason &&
+            diagnostics.ingestionStatus.consecutiveSkips > 1 &&
             diagnostics.learningHealth.stalenessMs !== null &&
             diagnostics.learningHealth.stalenessMs > 30_000 && (
             <p className="error-banner" style={{ marginTop: 0 }}>
-              Learning may be stuck: {diagnostics.ingestionStatus.lastSkipReason}
-              {diagnostics.ingestionStatus.consecutiveSkips > 1
-                ? ` (${diagnostics.ingestionStatus.consecutiveSkips} consecutive skips)`
-                : ""}
+              Learning may be stuck: {diagnostics.ingestionStatus.consecutiveSkips}{" "}
+              consecutive ingest skips (last reason: {diagnostics.ingestionStatus.lastSkipReason})
             </p>
           )}
 

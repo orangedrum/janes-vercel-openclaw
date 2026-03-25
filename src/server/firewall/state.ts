@@ -378,7 +378,7 @@ export async function ingestLearningFromSandbox(
     await persistIngestionSkip("mode-not-learning", outcome);
     return { ingested: false, reason: "mode-not-learning", domains: [], outcome };
   }
-  if (meta.status !== "running" || !meta.sandboxId) {
+  if (!meta.sandboxId || (meta.status !== "running" && meta.status !== "booting")) {
     logInfo("firewall.ingest_skipped", { operation: "ingest", reason: "sandbox-not-running", status: meta.status, requestId: options?.requestId });
     const outcome = makeSkipOutcome("sandbox-not-running");
     await persistIngestionSkip("sandbox-not-running", outcome);
@@ -542,20 +542,22 @@ export async function ingestLearningFromSandbox(
       updatedCount: 0,
       skipReason: "sandbox-read-failed",
     };
-    await mutateMeta((m) => {
-      m.firewall.lastIngestOutcome = outcome;
-    });
+    await persistIngestionSkip("sandbox-read-failed", outcome);
     return { ingested: false, reason: "sandbox-read-failed", domains: [], outcome };
   } finally {
     await store.releaseLock(lockKey, lockToken);
   }
 }
 
+const BENIGN_SKIP_REASONS = new Set(["throttled", "locked"]);
+
 async function persistIngestionSkip(reason: string, outcome: FirewallIngestOutcome): Promise<void> {
   await mutateMeta((m) => {
-    m.firewall.lastIngestionSkipReason = reason;
-    m.firewall.ingestionSkipCount += 1;
     m.firewall.lastIngestOutcome = outcome;
+    if (!BENIGN_SKIP_REASONS.has(reason)) {
+      m.firewall.lastIngestionSkipReason = reason;
+      m.firewall.ingestionSkipCount += 1;
+    }
   });
 }
 
