@@ -121,7 +121,7 @@ test("cron-persistence: jobs survive a full stop → restore cycle", async (t) =
     await t.test("Phase 3: stop persists jobs and wake time to store", async () => {
       await h.stopToSnapshot();
 
-      const record = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY);
+      const record = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
       assert.ok(record, "Structured cron record should be in store");
       assert.equal(record.version, 1);
       assert.equal(record.source, "stop");
@@ -131,7 +131,7 @@ test("cron-persistence: jobs survive a full stop → restore cycle", async (t) =
       assert.ok(record.capturedAt > 0, "Should have a capture timestamp");
       assert.ok(record.jobsJson, "Should have raw jobsJson");
 
-      const storedWakeMs = await getStore().getValue<number>(CRON_NEXT_WAKE_KEY);
+      const storedWakeMs = await getStore().getValue<number>(CRON_NEXT_WAKE_KEY());
       assert.equal(storedWakeMs, futureWakeMs, "Wake time should be the earliest nextRunAtMs");
     });
 
@@ -199,7 +199,7 @@ test("cron-persistence: jobs survive a full stop → restore cycle", async (t) =
       assert.equal(h.controller.created.length, 2, "Should have created 2 sandboxes");
 
       // Store still has the persisted jobs (not cleared by restore).
-      const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY);
+      const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
       assert.ok(storedJobs, "Store should still have cron jobs after restore");
 
       // Timeline should show create → snapshot → restore sequence.
@@ -227,7 +227,7 @@ test("cron-persistence: restore skips cron recovery when store has no jobs", asy
     // Stop WITHOUT any cron jobs → store should have no CRON_JOBS_KEY.
     await h.stopToSnapshot();
 
-    const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY);
+    const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.equal(storedJobs, null, "Store should not have cron jobs when sandbox had none");
 
     // Restore — should skip cron recovery entirely.
@@ -365,7 +365,7 @@ test("cron-persistence: heartbeat persists jobs to store", async (t) => {
 
     // No jobs in store yet.
     assert.equal(
-      await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY),
+      await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY()),
       null,
       "Store should not have jobs before heartbeat",
     );
@@ -379,7 +379,7 @@ test("cron-persistence: heartbeat persists jobs to store", async (t) => {
     await touchRunningSandbox();
 
     // Now jobs should be in store as a structured record.
-    const record = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY);
+    const record = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.ok(record, "Store should have jobs after heartbeat");
     assert.equal(record.source, "heartbeat");
     assert.equal(record.jobCount, 2, "Both jobs should be persisted via heartbeat");
@@ -414,7 +414,7 @@ test("cron-persistence: heartbeat with empty jobs does not clobber store", async
       jobIds: ["avatar-quote", "daily-standup"],
       jobsJson: goodJobsJson,
     };
-    await getStore().setValue(CRON_JOBS_KEY, goodRecord);
+    await getStore().setValue(CRON_JOBS_KEY(), goodRecord);
 
     // Write EMPTY jobs.json to sandbox (simulating transient empty state).
     const handle = h.controller.lastCreated()!;
@@ -430,7 +430,7 @@ test("cron-persistence: heartbeat with empty jobs does not clobber store", async
     await touchRunningSandbox();
 
     // Store should still have the GOOD jobs — heartbeat must not clobber.
-    const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY);
+    const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.ok(storedJobs, "Store should still have jobs");
     assert.equal(storedJobs.jobCount, 2, "Good backup must not be overwritten by empty heartbeat read");
     assert.equal(storedJobs.source, "stop", "Original stop record should be preserved");
@@ -461,7 +461,7 @@ test("cron-persistence: cron restore failure does not block sandbox restore", as
     await h.stopToSnapshot();
 
     // Store corrupted JSON so the cron restore path hits a parse error.
-    await getStore().setValue(CRON_JOBS_KEY, "{{NOT VALID JSON}}");
+    await getStore().setValue(CRON_JOBS_KEY(), "{{NOT VALID JSON}}");
 
     h.fakeFetch.onGet(/fake\.vercel\.run/, () => gatewayReadyResponse());
     let scheduledCallback: (() => Promise<void> | void) | null = null;
@@ -508,7 +508,7 @@ test("cron-persistence: deleted jobs are not resurrected after restore", async (
     await h.stopToSnapshot();
 
     // Verify jobs are in the store.
-    const storedAfterFirstStop = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY);
+    const storedAfterFirstStop = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.ok(storedAfterFirstStop, "Store should have jobs after first stop");
 
     // Phase 2: Restore, then "user deletes all jobs" (empty jobs.json), stop again.
@@ -541,7 +541,7 @@ test("cron-persistence: deleted jobs are not resurrected after restore", async (
     await stopSandbox();
 
     // Verify store was CLEARED (not still holding old jobs).
-    const storedAfterSecondStop = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY);
+    const storedAfterSecondStop = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.equal(storedAfterSecondStop, null, "Store should be cleared when stop reads 0 jobs");
 
     // Phase 3: Restore again — should NOT resurrect the deleted jobs.

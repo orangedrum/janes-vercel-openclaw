@@ -58,11 +58,23 @@ import {
   mutateMeta,
   wait,
 } from "@/server/store/store";
+import {
+  cronJobsKey,
+  cronNextWakeKey,
+  lifecycleLockKey,
+  startLockKey,
+  tokenRefreshLockKey,
+} from "@/server/store/keyspace";
 
 const OPENCLAW_PORT = 3000;
 const SANDBOX_PORTS = [OPENCLAW_PORT, OPENCLAW_TELEGRAM_WEBHOOK_PORT];
-export const CRON_NEXT_WAKE_KEY = "openclaw-single:cron-next-wake-ms";
-export const CRON_JOBS_KEY = "openclaw-single:cron-jobs-json";
+export function CRON_NEXT_WAKE_KEY(): string {
+  return cronNextWakeKey();
+}
+
+export function CRON_JOBS_KEY(): string {
+  return cronJobsKey();
+}
 const CRON_JOBS_PATH = `${OPENCLAW_STATE_DIR}/cron/jobs.json`;
 const CRON_JOBS_MAX_BYTES = 256 * 1024; // 256 KB size cap for store value
 
@@ -114,9 +126,6 @@ function parseStoredCronRecord(
   return buildCronRecord(jobsJson, "stop") ?? null;
 }
 
-const LIFECYCLE_LOCK_KEY = "openclaw-single:lock:lifecycle";
-const START_LOCK_KEY = "openclaw-single:lock:start";
-const TOKEN_REFRESH_LOCK_KEY = "openclaw-single:lock:token-refresh";
 const LIFECYCLE_LOCK_TTL_SECONDS = 20 * 60;
 const START_LOCK_TTL_SECONDS = 15 * 60;
 const TOKEN_REFRESH_LOCK_TTL_SECONDS = 60;
@@ -594,10 +603,10 @@ export async function stopSandbox(): Promise<SingleMeta> {
       });
 
       if (cronWakeRead.status === "ok") {
-        await getStore().setValue(CRON_NEXT_WAKE_KEY, cronWakeRead.nextWakeMs);
+        await getStore().setValue(cronNextWakeKey(), cronWakeRead.nextWakeMs);
         logInfo("sandbox.cron_wake_saved", { cronNextWakeMs: cronWakeRead.nextWakeMs });
       } else if (cronWakeRead.status === "no-jobs") {
-        await getStore().deleteValue(CRON_NEXT_WAKE_KEY);
+        await getStore().deleteValue(cronNextWakeKey());
       }
 
       // Persist structured cron record as a safety net for snapshot restores.
@@ -608,13 +617,13 @@ export async function stopSandbox(): Promise<SingleMeta> {
       if (rawJobs) {
         const record = buildCronRecord(rawJobs, "stop");
         if (record) {
-          await getStore().setValue(CRON_JOBS_KEY, record);
+          await getStore().setValue(cronJobsKey(), record);
           logInfo("sandbox.cron_jobs_persisted", {
             source: "stop", jobCount: record.jobCount, sha256: record.sha256,
           });
         }
       } else if (cronWakeRead.status === "no-jobs") {
-        await getStore().deleteValue(CRON_JOBS_KEY);
+        await getStore().deleteValue(cronJobsKey());
         logInfo("sandbox.cron_jobs_cleared", { reason: "no-jobs-on-stop" });
       }
 
@@ -1006,9 +1015,9 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
   try {
     const cronWakeRead = await readCronNextWakeFromSandbox(sandbox);
     if (cronWakeRead.status === "ok") {
-      await getStore().setValue(CRON_NEXT_WAKE_KEY, cronWakeRead.nextWakeMs);
+      await getStore().setValue(cronNextWakeKey(), cronWakeRead.nextWakeMs);
     } else if (cronWakeRead.status === "no-jobs") {
-      await getStore().deleteValue(CRON_NEXT_WAKE_KEY);
+      await getStore().deleteValue(cronNextWakeKey());
     }
     // Persist structured cron record as a safety net.  IMPORTANT: only
     // overwrite the store when we read valid, non-empty, changed jobs.
@@ -1020,10 +1029,10 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
       if (record) {
         // Only write if the hash changed — avoids redundant Upstash writes.
         const existing = parseStoredCronRecord(
-          await getStore().getValue<unknown>(CRON_JOBS_KEY),
+          await getStore().getValue<unknown>(cronJobsKey()),
         );
         if (!existing || existing.sha256 !== record.sha256) {
-          await getStore().setValue(CRON_JOBS_KEY, record);
+          await getStore().setValue(cronJobsKey(), record);
         }
       }
       // If record is null (empty/invalid), do NOT clear — may be transient.
@@ -1314,14 +1323,20 @@ async function withTokenRefreshLock(
   fn: (meta: SingleMeta) => Promise<TokenRefreshResult>,
 ): Promise<TokenRefreshResult> {
   const store = getStore();
-  let lockToken = await store.acquireLock(TOKEN_REFRESH_LOCK_KEY, TOKEN_REFRESH_LOCK_TTL_SECONDS);
+  let lockToken = await store.acquireLock(
+    tokenRefreshLockKey(),
+    TOKEN_REFRESH_LOCK_TTL_SECONDS,
+  );
 
   if (!lockToken) {
     // Lock is contended — wait a bounded time, then re-read state.
     const waitStart = Date.now();
     while (Date.now() - waitStart < TOKEN_REFRESH_LOCK_WAIT_MS) {
       await wait(TOKEN_REFRESH_LOCK_POLL_MS);
-      lockToken = await store.acquireLock(TOKEN_REFRESH_LOCK_KEY, TOKEN_REFRESH_LOCK_TTL_SECONDS);
+      lockToken = await store.acquireLock(
+        tokenRefreshLockKey(),
+        TOKEN_REFRESH_LOCK_TTL_SECONDS,
+      );
       if (lockToken) break;
     }
 
@@ -1345,7 +1360,7 @@ async function withTokenRefreshLock(
     const currentMeta = await getInitializedMeta();
     return await fn(currentMeta);
   } finally {
-    await store.releaseLock(TOKEN_REFRESH_LOCK_KEY, lockToken).catch((error) => {
+    await store.releaseLock(tokenRefreshLockKey(), lockToken).catch((error) => {
       logWarn("sandbox.token_refresh.lock_release_failed", {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -1687,7 +1702,7 @@ async function scheduleLifecycleWork(options: {
   op?: OperationContext;
 }): Promise<void> {
   const store = getStore();
-  const startToken = await store.acquireLock(START_LOCK_KEY, START_LOCK_TTL_SECONDS);
+  const startToken = await store.acquireLock(startLockKey(), START_LOCK_TTL_SECONDS);
   if (!startToken) {
     const lockCtx = options.op
       ? withOperationContext(options.op, { lock: "start", contention: true })
@@ -1698,12 +1713,12 @@ async function scheduleLifecycleWork(options: {
 
   const latest = await getInitializedMeta();
   if (latest.status === "running" && latest.sandboxId) {
-    await store.releaseLock(START_LOCK_KEY, startToken);
+    await store.releaseLock(startLockKey(), startToken);
     return;
   }
 
   if (isBusyStatus(latest.status) && !isOperationStale(latest)) {
-    await store.releaseLock(START_LOCK_KEY, startToken);
+    await store.releaseLock(startLockKey(), startToken);
     return;
   }
 
@@ -1732,7 +1747,7 @@ async function scheduleLifecycleWork(options: {
   const run = async (): Promise<void> => {
     await withAutoRenewedLock(
       {
-        key: START_LOCK_KEY,
+        key: startLockKey(),
         token: startToken,
         ttlSeconds: START_LOCK_TTL_SECONDS,
         label: "sandbox.start",
@@ -2362,7 +2377,7 @@ async function restoreSandboxFromSnapshot(
     let cronRestoreOutcome: CronRestoreOutcome = "no-store-jobs";
     try {
       const storedRecord = parseStoredCronRecord(
-        await getStore().getValue<unknown>(CRON_JOBS_KEY),
+        await getStore().getValue<unknown>(cronJobsKey()),
       );
       if (storedRecord && storedRecord.jobCount > 0) {
         // Check current jobs.json — only restore if gateway wiped it.
@@ -2712,8 +2727,8 @@ async function clearResetCronState(
   ctx: (extra?: Record<string, unknown>) => Record<string, unknown>,
 ): Promise<void> {
   await Promise.all([
-    getStore().deleteValue(CRON_NEXT_WAKE_KEY),
-    getStore().deleteValue(CRON_JOBS_KEY),
+    getStore().deleteValue(cronNextWakeKey()),
+    getStore().deleteValue(cronJobsKey()),
   ]);
   logInfo("sandbox.reset.cron_state_cleared", ctx());
 }
@@ -2739,14 +2754,14 @@ function clearSandboxRuntimeStateForReset(meta: SingleMeta): void {
 
 async function withLifecycleLock<T>(fn: () => Promise<T>): Promise<T> {
   const store = getStore();
-  const token = await store.acquireLock(LIFECYCLE_LOCK_KEY, LIFECYCLE_LOCK_TTL_SECONDS);
+  const token = await store.acquireLock(lifecycleLockKey(), LIFECYCLE_LOCK_TTL_SECONDS);
   if (!token) {
     throw new LifecycleLockUnavailableError();
   }
 
   return withAutoRenewedLock(
     {
-      key: LIFECYCLE_LOCK_KEY,
+      key: lifecycleLockKey(),
       token,
       ttlSeconds: LIFECYCLE_LOCK_TTL_SECONDS,
       label: "sandbox.lifecycle",

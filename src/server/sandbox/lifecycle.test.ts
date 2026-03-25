@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
 
 import type { SingleMeta } from "@/shared/types";
@@ -3936,7 +3935,7 @@ test("ensureRunningSandboxDynamicConfigFresh returns restart-failed on nonzero e
 });
 
 test("ensureRunningSandboxDynamicConfigFresh returns sandbox-unavailable when not running", async () => {
-  await withHarness(async (h) => {
+  await withHarness(async () => {
     // Do not drive to running — stay in uninitialized state.
     const result = await ensureRunningSandboxDynamicConfigFresh({
       origin: "https://test.example.com",
@@ -3980,7 +3979,7 @@ test("stopSandbox persists cron jobs JSON to store", async () => {
 
     await stopSandbox();
 
-    const record = await getStore().getValue<{ version: number; jobCount: number; jobIds: string[]; source: string }>(CRON_JOBS_KEY);
+    const record = await getStore().getValue<{ version: number; jobCount: number; jobIds: string[]; source: string }>(CRON_JOBS_KEY());
     assert.ok(record, "Structured cron record should be persisted to store");
     assert.equal(record.version, 1);
     assert.equal(record.jobCount, 1);
@@ -4018,7 +4017,7 @@ test("restoreSandboxFromSnapshot restores cron jobs from store after gateway boo
     });
 
     // Pre-populate the store with cron jobs (as if saved before snapshot)
-    await getStore().setValue(CRON_JOBS_KEY, cronJobsJson);
+    await getStore().setValue(CRON_JOBS_KEY(), cronJobsJson);
 
     // Mock fetch for probeGatewayReady
     globalThis.fetch = async () =>
@@ -4117,7 +4116,7 @@ test("restoreSandboxFromSnapshot marks cron restore unverified when post-restart
       meta.gatewayToken = "test-gw-token";
     });
 
-    await getStore().setValue(CRON_JOBS_KEY, cronJobsJson);
+    await getStore().setValue(CRON_JOBS_KEY(), cronJobsJson);
 
     globalThis.fetch = async () =>
       new Response('<div id="openclaw-app"></div>', { status: 200 });

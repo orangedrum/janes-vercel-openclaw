@@ -71,8 +71,8 @@ const defaultDeps: WatchdogDeps = {
   ensureReady: ensureSandboxReady,
   readPrevious: readWatchdogReport,
   writeReport: writeWatchdogReport,
-  getCronNextWakeMs: () => getStore().getValue<number>(CRON_NEXT_WAKE_KEY),
-  clearCronNextWake: () => getStore().deleteValue(CRON_NEXT_WAKE_KEY),
+  getCronNextWakeMs: () => getStore().getValue<number>(CRON_NEXT_WAKE_KEY()),
+  clearCronNextWake: () => getStore().deleteValue(CRON_NEXT_WAKE_KEY()),
   now: () => Date.now(),
 };
 
