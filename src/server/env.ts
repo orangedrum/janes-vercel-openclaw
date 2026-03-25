@@ -96,7 +96,9 @@ export function getStoreEnv():
 
 export function getCronSecret(): string | null {
   const secret = process.env.CRON_SECRET?.trim();
-  return secret || null;
+  if (secret) return secret;
+  const admin = process.env.ADMIN_SECRET?.trim();
+  return admin || null;
 }
 
 let _aiGatewayTokenOverride: string | undefined | null = null;
