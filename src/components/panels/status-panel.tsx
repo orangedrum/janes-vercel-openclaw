@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { StatusBadge } from "@/components/ui/badge";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import {
@@ -13,9 +14,11 @@ import type { SingleStatus } from "@/shared/types";
 
 type StatusPanelProps = {
   status: StatusPayload;
+  statusVersion?: number;
   busy: boolean;
   pendingAction: string | null;
   runAction: RunAction;
+  checkHealth: () => Promise<void>;
 };
 
 type LifecycleAwareStatus = StatusPayload & {
@@ -65,7 +68,105 @@ function friendlyError(raw: string): { headline: string; detail: string } {
   };
 }
 
-export function StatusPanel({ status, busy, pendingAction, runAction }: StatusPanelProps) {
+function formatDuration(ms: number): string {
+  if (ms < 60_000) return `${Math.ceil(ms / 1_000)}s`;
+  const totalSeconds = Math.ceil(ms / 1_000);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) return `${totalMinutes}m ${String(seconds).padStart(2, "0")}s`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const delta = Date.now() - timestamp;
+  if (delta < 5_000) return "just now";
+  if (delta < 60_000) return `${Math.floor(delta / 1_000)}s ago`;
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function formatGatewayStatus(status: StatusPayload["gatewayStatus"]): string {
+  if (status === "ready") return "Ready";
+  if (status === "not-ready") return "Not ready";
+  return "Unknown";
+}
+
+export function getNextDisplayedTimeoutMs(
+  current: number | null,
+  timeoutSource: StatusPayload["timeoutSource"],
+): number | null {
+  if (current == null || timeoutSource === "none") {
+    return current;
+  }
+  if (timeoutSource === "estimated") {
+    return current - 1_000;
+  }
+  return Math.max(current - 1_000, 0);
+}
+
+function AutoSleepValue({
+  status,
+}: {
+  status: Pick<StatusPayload, "timeoutRemainingMs" | "timeoutSource">;
+}) {
+  const [displayedTimeoutMs, setDisplayedTimeoutMs] = useState<number | null>(
+    status.timeoutRemainingMs,
+  );
+
+  useEffect(() => {
+    if (status.timeoutRemainingMs == null || status.timeoutSource === "none") {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setDisplayedTimeoutMs((current) =>
+        getNextDisplayedTimeoutMs(current, status.timeoutSource),
+      );
+    }, 1_000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [status.timeoutRemainingMs, status.timeoutSource]);
+
+  return <>{getAutoSleepDisplay(status, displayedTimeoutMs)}</>;
+}
+
+export function getAutoSleepDisplay(
+  status: Pick<StatusPayload, "timeoutSource">,
+  displayedTimeoutMs: number | null,
+): string {
+  if (displayedTimeoutMs == null || status.timeoutSource === "none") {
+    return "Unknown";
+  }
+  if (status.timeoutSource === "estimated" && displayedTimeoutMs <= 0) {
+    return "Past estimated sleep time \u2014 sandbox may be asleep";
+  }
+  const suffix =
+    status.timeoutSource === "estimated"
+      ? " (estimated)"
+      : status.timeoutSource === "live"
+        ? " (live)"
+        : "";
+  return `${formatDuration(Math.max(displayedTimeoutMs, 0))}${suffix}`;
+}
+
+export function StatusPanel({
+  status,
+  statusVersion = 0,
+  busy,
+  pendingAction,
+  runAction,
+  checkHealth,
+}: StatusPanelProps) {
   const { confirm: confirmStop, dialogProps: stopDialogProps } = useConfirm();
   const { confirm: confirmSnapshot, dialogProps: snapshotDialogProps } =
     useConfirm();
@@ -167,6 +268,7 @@ export function StatusPanel({ status, busy, pendingAction, runAction }: StatusPa
   const isResetDisabled =
     busy || lifecycleStatus === "uninitialized" || isLifecycleTransition;
   const errorCopy = status.lastError ? friendlyError(status.lastError) : null;
+  const isCheckingHealth = pendingAction === "Check health";
 
   return (
     <article className="panel-card">
@@ -200,18 +302,38 @@ export function StatusPanel({ status, busy, pendingAction, runAction }: StatusPa
         </div>
         <div>
           <dt>Gateway</dt>
-          <dd>{status.gatewayReady ? "Ready" : "Not ready"}</dd>
+          <dd>{formatGatewayStatus(status.gatewayStatus)}</dd>
+          {status.gatewayCheckedAt != null ? (
+            <p
+              style={{
+                margin: "4px 0 0",
+                color: "var(--foreground-muted)",
+                fontSize: 12,
+                lineHeight: 1.4,
+              }}
+            >
+              checked {formatRelativeTime(status.gatewayCheckedAt)}
+            </p>
+          ) : null}
         </div>
         <div>
           <dt>Sleep after</dt>
           <dd>{Math.round(status.sleepAfterMs / 60_000)}m</dd>
         </div>
-        {status.timeoutRemainingMs != null && (
-          <div>
-            <dt>Timeout left</dt>
-            <dd>{Math.round(status.timeoutRemainingMs / 1000)}s</dd>
-          </div>
-        )}
+        <div>
+          <dt>Auto-sleep in</dt>
+          <dd>
+            <AutoSleepValue key={statusVersion} status={status} />
+          </dd>
+        </div>
+        <div>
+          <dt>Last keepalive</dt>
+          <dd>
+            {status.lastKeepaliveAt != null
+              ? formatRelativeTime(status.lastKeepaliveAt)
+              : "Never"}
+          </dd>
+        </div>
         <div>
           <dt>Firewall</dt>
           <dd>{status.firewall.mode}</dd>
@@ -257,6 +379,14 @@ export function StatusPanel({ status, busy, pendingAction, runAction }: StatusPa
         )}
         {showRunningActions && (
           <>
+            <button
+              className="button ghost"
+              disabled={busy || isCheckingHealth}
+              onClick={() => void checkHealth()}
+              type="button"
+            >
+              {isCheckingHealth ? "Checking health\u2026" : "Check health"}
+            </button>
             <button
               className="button ghost"
               disabled={busy}

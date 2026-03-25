@@ -3,8 +3,14 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { StatusPayload, RunAction } from "@/components/admin-types";
+import type { ChannelConnectability } from "@/shared/channel-connectability";
 
-import { StatusPanel } from "./status-panel";
+import { getStatusRequestPath } from "../admin-shell";
+import {
+  getAutoSleepDisplay,
+  getNextDisplayedTimeoutMs,
+  StatusPanel,
+} from "./status-panel";
 
 type LifecycleAwareStatus = StatusPayload & {
   lifecycle?: {
@@ -12,6 +18,19 @@ type LifecycleAwareStatus = StatusPayload & {
   };
   snapshotHistory?: unknown[];
 };
+
+function makeConnectability(
+  channel: ChannelConnectability["channel"],
+  webhookUrl: string | null,
+): ChannelConnectability {
+  return {
+    channel,
+    canConnect: true,
+    status: "pass",
+    webhookUrl,
+    issues: [],
+  };
+}
 
 const CHANNELS: StatusPayload["channels"] = {
   slack: {
@@ -24,7 +43,7 @@ const CHANNELS: StatusPayload["channels"] = {
     hasSigningSecret: false,
     hasBotToken: false,
     lastError: null,
-    connectability: "unknown",
+    connectability: makeConnectability("slack", ""),
   },
   telegram: {
     configured: false,
@@ -36,7 +55,7 @@ const CHANNELS: StatusPayload["channels"] = {
     commandSyncStatus: "unsynced",
     commandsRegisteredAt: null,
     commandSyncError: null,
-    connectability: "unknown",
+    connectability: makeConnectability("telegram", null),
   },
   discord: {
     configured: false,
@@ -53,11 +72,12 @@ const CHANNELS: StatusPayload["channels"] = {
     commandId: null,
     inviteUrl: null,
     isPublicUrl: false,
-    connectability: "unknown",
+    connectability: makeConnectability("discord", ""),
   },
 };
 
 const RUN_ACTION: RunAction = async () => {};
+const CHECK_HEALTH = async () => {};
 
 function makeStatus(overrides: Partial<LifecycleAwareStatus> = {}): LifecycleAwareStatus {
   return {
@@ -68,11 +88,15 @@ function makeStatus(overrides: Partial<LifecycleAwareStatus> = {}): LifecycleAwa
     sandboxId: "sbx-test",
     snapshotId: "snap-test",
     gatewayReady: true,
+    gatewayStatus: "ready",
+    gatewayCheckedAt: null,
     gatewayUrl: "/gateway",
     lastError: null,
+    lastKeepaliveAt: null,
     sleepAfterMs: 300_000,
     heartbeatIntervalMs: 15_000,
     timeoutRemainingMs: 120_000,
+    timeoutSource: "estimated",
     firewall: {
       mode: "learning",
       allowlist: [],
@@ -97,6 +121,7 @@ function renderPanel(status: LifecycleAwareStatus, pendingAction: string | null 
       busy={pendingAction !== null}
       pendingAction={pendingAction}
       runAction={RUN_ACTION}
+      checkHealth={CHECK_HEALTH}
     />,
   );
 }
@@ -156,7 +181,77 @@ test("StatusPanel renders restore action and enabled reset when errored with a s
 test("StatusPanel renders Open Gateway as the main green running action", () => {
   const html = renderPanel(makeStatus());
 
+  assert.ok(html.includes("Check health"));
   assert.ok(html.includes("Save snapshot"));
   assert.ok(html.includes("Stop"));
   assert.match(html, /<a[^>]*class="button success"[^>]*>Open Gateway<\/a>/);
+});
+
+test("StatusPanel renders estimated auto-sleep, keepalive, and gateway check metadata", () => {
+  const now = Date.now();
+  const html = renderPanel(
+    makeStatus({
+      timeoutRemainingMs: 125_000,
+      timeoutSource: "estimated",
+      gatewayStatus: "unknown",
+      gatewayCheckedAt: now - 120_000,
+      lastKeepaliveAt: now - 30_000,
+    }),
+  );
+
+  assert.ok(html.includes("Auto-sleep in"));
+  assert.ok(html.includes("2m 05s (estimated)"));
+  assert.ok(html.includes("Gateway"));
+  assert.ok(html.includes("Unknown"));
+  assert.ok(html.includes("checked 2m ago"));
+  assert.ok(html.includes("Last keepalive"));
+  assert.ok(html.includes("30s ago"));
+});
+
+test("StatusPanel renders past estimated sleep warning when timeout is expired", () => {
+  const html = renderPanel(
+    makeStatus({
+      timeoutRemainingMs: 0,
+      timeoutSource: "estimated",
+    }),
+  );
+
+  assert.ok(html.includes("Past estimated sleep time"));
+  assert.ok(html.includes("sandbox may be asleep"));
+});
+
+test("StatusPanel disables check health button while the health probe is pending", () => {
+  const html = renderPanel(makeStatus(), "Check health");
+
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Checking health…<\/button>/);
+});
+
+test("getStatusRequestPath uses passive polling by default and live health on demand", () => {
+  assert.equal(getStatusRequestPath(), "/api/status");
+  assert.equal(getStatusRequestPath(false), "/api/status");
+  assert.equal(getStatusRequestPath(true), "/api/status?health=1");
+});
+
+test("getNextDisplayedTimeoutMs decrements estimated timers past zero but clamps live timers", () => {
+  assert.equal(getNextDisplayedTimeoutMs(5_000, "estimated"), 4_000);
+  assert.equal(getNextDisplayedTimeoutMs(0, "estimated"), -1_000);
+  assert.equal(getNextDisplayedTimeoutMs(5_000, "live"), 4_000);
+  assert.equal(getNextDisplayedTimeoutMs(0, "live"), 0);
+  assert.equal(getNextDisplayedTimeoutMs(null, "estimated"), null);
+});
+
+test("getAutoSleepDisplay shows source labels and estimated sleep warning", () => {
+  assert.equal(
+    getAutoSleepDisplay({ timeoutSource: "estimated" }, 65_000),
+    "1m 05s (estimated)",
+  );
+  assert.equal(
+    getAutoSleepDisplay({ timeoutSource: "live" }, 65_000),
+    "1m 05s (live)",
+  );
+  assert.equal(
+    getAutoSleepDisplay({ timeoutSource: "estimated" }, 0),
+    "Past estimated sleep time — sandbox may be asleep",
+  );
+  assert.equal(getAutoSleepDisplay({ timeoutSource: "none" }, null), "Unknown");
 });

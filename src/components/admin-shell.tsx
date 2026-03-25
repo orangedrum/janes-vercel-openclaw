@@ -29,20 +29,33 @@ const TABS = [
   { id: "snapshots", label: "Snapshots" },
 ] as const;
 
+const CHECK_HEALTH_PENDING_ACTION = "Check health";
+
+export function getStatusRequestPath(health = false): string {
+  return health ? "/api/status?health=1" : "/api/status";
+}
+
 export function AdminShell({
   initialStatus = null,
 }: {
   initialStatus?: StatusPayload | null;
 }) {
   const [status, setStatus] = useState<StatusPayload | null>(initialStatus);
+  const [statusVersion, setStatusVersion] = useState(0);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [loginSecret, setLoginSecret] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const fetchStatus = useCallback(async ({
+    health = false,
+    userInitiated = false,
+  }: {
+    health?: boolean;
+    userInitiated?: boolean;
+  } = {}) => {
     try {
-      const response = await fetch("/api/status?health=1", {
+      const response = await fetch(getStatusRequestPath(health), {
         cache: "no-store",
         headers: { accept: "application/json" },
       });
@@ -58,15 +71,36 @@ export function AdminShell({
 
       const payload = (await response.json()) as StatusPayload;
       setStatus(payload);
+      setStatusVersion((current) => current + 1);
     } catch (error) {
       if (error instanceof TypeError || error instanceof DOMException) {
+        if (userInitiated) {
+          toast.error("Unable to reach the status endpoint");
+        }
         return; // Network-level failure; next poll will recover.
       }
-      toast.error(
-        error instanceof Error ? error.message : "Failed to load status",
-      );
+      if (userInitiated) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to load status",
+        );
+      }
     }
   }, []);
+
+  const refreshPassive = useCallback(async () => {
+    await fetchStatus();
+  }, [fetchStatus]);
+
+  const checkHealth = useCallback(async () => {
+    setPendingAction(CHECK_HEALTH_PENDING_ACTION);
+    try {
+      await fetchStatus({ health: true, userInitiated: true });
+    } finally {
+      setPendingAction((current) =>
+        current === CHECK_HEALTH_PENDING_ACTION ? null : current,
+      );
+    }
+  }, [fetchStatus]);
 
   const ingestFirewallLearning = useCallback(async () => {
     try {
@@ -95,8 +129,8 @@ export function AdminShell({
       await ingestFirewallLearning();
     }
 
-    await refresh();
-  }, [ingestFirewallLearning, refresh, shouldPollFirewallIngest]);
+    await refreshPassive();
+  }, [ingestFirewallLearning, refreshPassive, shouldPollFirewallIngest]);
 
   useEffect(() => {
     startTransition(() => {
@@ -143,7 +177,7 @@ export function AdminShell({
 
       const payload = (await response.json().catch(() => null)) as T | null;
       if (input.refreshAfter !== false) {
-        await refresh();
+        await refreshPassive();
       }
       toast.success(input.successMessage ?? input.label);
       return payload;
@@ -186,7 +220,7 @@ export function AdminShell({
 
       if (response.ok) {
         setLoginSecret("");
-        await refresh();
+        await refreshPassive();
       } else {
         const body = await response.json().catch(() => null) as { message?: string } | null;
         setLoginError(body?.message ?? "Invalid admin secret.");
@@ -274,9 +308,11 @@ export function AdminShell({
               {activeTab === "status" && (
                 <StatusPanel
                   status={status}
+                  statusVersion={statusVersion}
                   busy={busy}
                   pendingAction={pendingAction}
                   runAction={runAction}
+                  checkHealth={checkHealth}
                 />
               )}
               {activeTab === "firewall" && (
@@ -285,7 +321,7 @@ export function AdminShell({
                   busy={busy}
                   runAction={runAction}
                   requestJson={requestJson}
-                  refresh={refresh}
+                  refresh={refreshPassive}
                 />
               )}
               {activeTab === "channels" && (
@@ -295,7 +331,7 @@ export function AdminShell({
                     busy={busy}
                     runAction={runAction}
                     requestJson={requestJson}
-                    refresh={refresh}
+                    refresh={refreshPassive}
                   />
                   <LaunchPanel
                     status={status}
