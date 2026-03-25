@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { SingleMeta } from "@/shared/types";
+import { metaKey as resolveMetaKey } from "@/server/store/keyspace";
 
 type MemoryLock = {
   token: string;
@@ -15,44 +16,72 @@ type MemoryValue = {
 export class MemoryStore {
   readonly name = "memory";
 
-  private meta: SingleMeta | null = null;
-
   private readonly values = new Map<string, MemoryValue>();
 
   private readonly locks = new Map<string, MemoryLock>();
 
+  constructor(private readonly configuredMetaKey?: string) {}
+
+  private getMetaKey(): string {
+    return this.configuredMetaKey ?? resolveMetaKey();
+  }
+
+  private readStoredMeta(): SingleMeta | null {
+    const entry = this.values.get(this.getMetaKey());
+    if (!entry) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(entry.value) as SingleMeta;
+    } catch {
+      return null;
+    }
+  }
+
   async getMeta(): Promise<SingleMeta | null> {
-    return this.meta ? structuredClone(this.meta) : null;
+    const meta = this.readStoredMeta();
+    return meta ? structuredClone(meta) : null;
   }
 
   async setMeta(meta: SingleMeta): Promise<void> {
-    this.meta = structuredClone(meta);
+    this.values.set(this.getMetaKey(), {
+      value: JSON.stringify(meta),
+      expiresAt: null,
+    });
   }
 
   async createMetaIfAbsent(meta: SingleMeta): Promise<boolean> {
-    if (this.meta) {
+    if (this.values.has(this.getMetaKey())) {
       return false;
     }
 
-    this.meta = structuredClone(meta);
+    this.values.set(this.getMetaKey(), {
+      value: JSON.stringify(meta),
+      expiresAt: null,
+    });
     return true;
   }
 
   async compareAndSetMeta(expectedVersion: number, next: SingleMeta): Promise<boolean> {
-    if (!this.meta) {
+    const current = this.readStoredMeta();
+    if (!current) {
       return false;
     }
 
     const currentVersion =
-      typeof this.meta.version === "number" && Number.isSafeInteger(this.meta.version)
-        ? this.meta.version
+      typeof current.version === "number" && Number.isSafeInteger(current.version)
+        ? current.version
         : 1;
 
     if (currentVersion !== expectedVersion) {
       return false;
     }
 
-    this.meta = structuredClone(next);
+    this.values.set(this.getMetaKey(), {
+      value: JSON.stringify(next),
+      expiresAt: null,
+    });
     return true;
   }
 

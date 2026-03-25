@@ -9,14 +9,41 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDefaultMeta } from "@/shared/types";
+import { _setInstanceIdOverrideForTesting } from "@/server/env";
 import { MemoryStore } from "@/server/store/memory-store";
 
 function makeStore(): MemoryStore {
   return new MemoryStore();
 }
 
-function makeMeta(version = 1) {
-  const meta = createDefaultMeta(Date.now(), "test-token");
+function withInstanceId<T>(
+  instanceId: string | null,
+  fn: () => T | Promise<T>,
+): T | Promise<T> {
+  _setInstanceIdOverrideForTesting(instanceId);
+
+  const restore = () => {
+    _setInstanceIdOverrideForTesting(null);
+  };
+
+  let result: T | Promise<T>;
+  try {
+    result = fn();
+  } catch (error) {
+    restore();
+    throw error;
+  }
+
+  if (result instanceof Promise) {
+    return result.finally(restore);
+  }
+
+  restore();
+  return result;
+}
+
+function makeMeta(version = 1, instanceId?: string) {
+  const meta = createDefaultMeta(Date.now(), "test-token", instanceId);
   meta.version = version;
   return meta;
 }
@@ -89,6 +116,39 @@ test("memory-store: compareAndSetMeta fails when no meta exists", async () => {
   const store = makeStore();
   const ok = await store.compareAndSetMeta(1, makeMeta());
   assert.equal(ok, false);
+});
+
+test("memory-store: default meta key follows instance id lazily", async () => {
+  await withInstanceId("fork-a", async () => {
+    const store = makeStore();
+    await store.setMeta(makeMeta(1));
+
+    const forkAMeta = await store.getMeta();
+    assert.equal(forkAMeta?.id, "fork-a");
+
+    _setInstanceIdOverrideForTesting("fork-b");
+    assert.equal(await store.getMeta(), null);
+
+    await store.setMeta(makeMeta(1));
+    const forkBMeta = await store.getMeta();
+    assert.equal(forkBMeta?.id, "fork-b");
+
+    _setInstanceIdOverrideForTesting("fork-a");
+    const restoredForkAMeta = await store.getMeta();
+    assert.equal(restoredForkAMeta?.id, "fork-a");
+  });
+});
+
+test("memory-store: configured meta key stays pinned across instance changes", async () => {
+  await withInstanceId("fork-a", async () => {
+    const store = new MemoryStore("pinned:meta");
+    const meta = makeMeta(1, "pinned");
+    await store.setMeta(meta);
+
+    _setInstanceIdOverrideForTesting("fork-b");
+    const retrieved = await store.getMeta();
+    assert.equal(retrieved?.id, "pinned");
+  });
 });
 
 // ---------------------------------------------------------------------------

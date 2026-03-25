@@ -7,6 +7,11 @@ import {
   CURRENT_SCHEMA_VERSION,
 } from "@/shared/types";
 import {
+  _setInstanceIdOverrideForTesting,
+  getOpenclawInstanceId,
+} from "@/server/env";
+import { initLockKey, metaKey } from "@/server/store/keyspace";
+import {
   getInitializedMeta,
   getStore,
   setMeta,
@@ -36,6 +41,7 @@ function withEnv<T>(
         process.env[key] = originals[key];
       }
     }
+    _setInstanceIdOverrideForTesting(null);
     _resetStoreForTesting();
   };
 
@@ -67,6 +73,7 @@ test("getStore: allows memory store when NODE_ENV=production without Vercel mark
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       assert.equal(getStore().name, "memory");
@@ -86,6 +93,7 @@ test("getStore: throws when Upstash missing and VERCEL=1", () => {
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       assert.throws(() => getStore(), /Upstash Redis is required on Vercel deployments/);
@@ -102,6 +110,7 @@ test("getStore: falls back to MemoryStore in development", () => {
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       const store = getStore();
@@ -119,6 +128,7 @@ test("getStore: falls back to MemoryStore when NODE_ENV is test", () => {
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       const store = getStore();
@@ -136,6 +146,7 @@ test("getStore: compareAndSetMeta rejects stale versions and accepts current", a
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     async () => {
       const store = getStore();
@@ -173,6 +184,7 @@ test("mutateMeta: increments persisted version after initialization", async () =
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     async () => {
       const initial = await getInitializedMeta();
@@ -300,6 +312,24 @@ test("ensureMetaShape: handles completely empty object (worst-case legacy data)"
     discord: null,
   });
   assert.deepStrictEqual(result.snapshotHistory, []);
+});
+
+test("ensureMetaShape: fills missing id with current instance id", () => {
+  try {
+    _setInstanceIdOverrideForTesting("fork-shape");
+    const result = ensureMetaShape({ gatewayToken: "tok-shape" });
+    assert.ok(result);
+    assert.equal(result.id, "fork-shape");
+  } finally {
+    _setInstanceIdOverrideForTesting(null);
+  }
+});
+
+test("ensureMetaShape: rejects mismatched ids", () => {
+  assert.throws(
+    () => ensureMetaShape({ id: "fork-a", gatewayToken: "tok-mismatch" }, "fork-b"),
+    /Refusing to hydrate meta for instance "fork-a" while expecting "fork-b"/,
+  );
 });
 
 test("ensureMetaShape: returns null for non-object inputs", () => {
@@ -439,6 +469,7 @@ const TEST_ENV: Record<string, string | undefined> = {
   UPSTASH_REDIS_REST_TOKEN: undefined,
   KV_REST_API_URL: undefined,
   KV_REST_API_TOKEN: undefined,
+  OPENCLAW_INSTANCE_ID: undefined,
 };
 
 test("[store] setMeta round-trip -> persists and reads back identical meta", async () => {
@@ -513,14 +544,14 @@ test("[store] getInitializedMeta lock contention -> retries and reads meta from 
     await store.setMeta(meta);
 
     // Now lock the init key so getInitializedMeta can't acquire it
-    const lockToken = await store.acquireLock("openclaw-single:lock:init", 60);
+    const lockToken = await store.acquireLock(initLockKey(), 60);
     assert.ok(lockToken);
 
     // getInitializedMeta should find existing meta on first read (before lock)
     const result = await getInitializedMeta();
     assert.equal(result.gatewayToken, "pre-written-token");
 
-    await store.releaseLock("openclaw-single:lock:init", lockToken);
+    await store.releaseLock(initLockKey(), lockToken);
   });
 });
 
@@ -533,14 +564,14 @@ test("[store] getInitializedMeta lock miss with no meta -> retries until meta ap
     const store = getStore();
 
     // Acquire the init lock to force the retry loop
-    const lockToken = await store.acquireLock("openclaw-single:lock:init", 60);
+    const lockToken = await store.acquireLock(initLockKey(), 60);
     assert.ok(lockToken);
 
     // After a short delay, write meta and release the lock
     const writeDelay = setTimeout(async () => {
       const meta = createDefaultMeta(Date.now(), "delayed-token");
       await store.setMeta(meta);
-      await store.releaseLock("openclaw-single:lock:init", lockToken);
+      await store.releaseLock(initLockKey(), lockToken);
     }, 100);
 
     try {
@@ -731,6 +762,82 @@ test("[types] createDefaultMeta produces valid defaults for all required fields"
   assert.equal(roundTripped.gatewayToken, "test-gw-token");
   assert.equal(roundTripped.status, "uninitialized");
   assert.equal(roundTripped._schemaVersion, CURRENT_SCHEMA_VERSION);
+});
+
+test("[types] createDefaultMeta uses current instance id by default", () => {
+  try {
+    _setInstanceIdOverrideForTesting("fork-meta");
+    const meta = createDefaultMeta(Date.now(), "fork-token");
+    assert.equal(meta.id, "fork-meta");
+  } finally {
+    _setInstanceIdOverrideForTesting(null);
+  }
+});
+
+test("[store] keyspace default matches legacy hardcoded keys byte-for-byte", () => {
+  _setInstanceIdOverrideForTesting(null);
+  assert.equal(getOpenclawInstanceId(), "openclaw-single");
+  assert.equal(metaKey(), "openclaw-single:meta");
+  assert.equal(initLockKey(), "openclaw-single:lock:init");
+});
+
+test("[store] custom instance id isolates initialized meta and lock keyspace", async () => {
+  await withEnv(
+    {
+      ...TEST_ENV,
+      OPENCLAW_INSTANCE_ID: "fork-a",
+    },
+    async () => {
+      const first = await getInitializedMeta();
+      assert.equal(first.id, "fork-a");
+
+      const defaultMetaKey = metaKey();
+      const defaultInitLockKey = initLockKey();
+      assert.equal(defaultMetaKey, "fork-a:meta");
+      assert.equal(defaultInitLockKey, "fork-a:lock:init");
+
+      _setInstanceIdOverrideForTesting("fork-b");
+      const store = getStore();
+      assert.equal(await store.getMeta(), null);
+
+      const second = await getInitializedMeta();
+      assert.equal(second.id, "fork-b");
+      assert.notDeepEqual(second.gatewayToken, first.gatewayToken);
+
+      _setInstanceIdOverrideForTesting("fork-a");
+      const restored = await getInitializedMeta();
+      assert.equal(restored.id, "fork-a");
+      assert.equal(restored.gatewayToken, first.gatewayToken);
+    },
+  );
+});
+
+test("[store] blank OPENCLAW_INSTANCE_ID throws instead of falling back", () => {
+  withEnv(
+    {
+      ...TEST_ENV,
+      OPENCLAW_INSTANCE_ID: "   ",
+    },
+    () => {
+      assert.throws(() => getOpenclawInstanceId(), /OPENCLAW_INSTANCE_ID must not be blank/);
+      assert.throws(() => metaKey(), /OPENCLAW_INSTANCE_ID must not be blank/);
+      assert.throws(() => ensureMetaShape({ gatewayToken: "tok-blank" }), /OPENCLAW_INSTANCE_ID must not be blank/);
+    },
+  );
+});
+
+test("[store] OPENCLAW_INSTANCE_ID rejects embedded separators", () => {
+  withEnv(
+    {
+      ...TEST_ENV,
+      OPENCLAW_INSTANCE_ID: "fork-a:meta",
+    },
+    () => {
+      assert.throws(() => getOpenclawInstanceId(), /OPENCLAW_INSTANCE_ID must not contain ':'/);
+      assert.throws(() => metaKey(), /OPENCLAW_INSTANCE_ID must not contain ':'/);
+      assert.throws(() => createDefaultMeta(Date.now(), "tok-bad"), /OPENCLAW_INSTANCE_ID must not contain ':'/);
+    },
+  );
 });
 
 // ===========================================================================

@@ -94,6 +94,52 @@ export function getStoreEnv():
   return { url, token };
 }
 
+const DEFAULT_OPENCLAW_INSTANCE_ID = "openclaw-single";
+const INSTANCE_ID_OVERRIDE_GLOBAL_KEY = "__openclawInstanceIdOverrideForTesting";
+
+let _instanceIdOverrideForTesting: string | null = null;
+
+function readInstanceIdOverrideFromGlobal(): string | null | undefined {
+  return (
+    globalThis as typeof globalThis & {
+      [INSTANCE_ID_OVERRIDE_GLOBAL_KEY]?: string | null;
+    }
+  )[INSTANCE_ID_OVERRIDE_GLOBAL_KEY];
+}
+
+function resolveOpenclawInstanceId(raw: string | null | undefined): string {
+  if (raw == null) {
+    return DEFAULT_OPENCLAW_INSTANCE_ID;
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error("OPENCLAW_INSTANCE_ID must not be blank.");
+  }
+  if (trimmed.includes(":")) {
+    throw new Error("OPENCLAW_INSTANCE_ID must not contain ':'.");
+  }
+
+  return trimmed;
+}
+
+export function getOpenclawInstanceId(): string {
+  return resolveOpenclawInstanceId(
+    _instanceIdOverrideForTesting ??
+      readInstanceIdOverrideFromGlobal() ??
+      process.env.OPENCLAW_INSTANCE_ID,
+  );
+}
+
+export function _setInstanceIdOverrideForTesting(id: string | null): void {
+  _instanceIdOverrideForTesting = id;
+  (
+    globalThis as typeof globalThis & {
+      [INSTANCE_ID_OVERRIDE_GLOBAL_KEY]?: string | null;
+    }
+  )[INSTANCE_ID_OVERRIDE_GLOBAL_KEY] = id;
+}
+
 export function getCronSecret(): string | null {
   const secret = process.env.CRON_SECRET?.trim();
   if (secret) return secret;

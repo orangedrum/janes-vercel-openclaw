@@ -6,6 +6,35 @@ import {
   type ChannelConfigs,
 } from "@/shared/channels";
 
+const DEFAULT_OPENCLAW_INSTANCE_ID = "openclaw-single";
+const INSTANCE_ID_OVERRIDE_GLOBAL_KEY = "__openclawInstanceIdOverrideForTesting";
+
+function resolveDefaultInstanceId(raw: string | null | undefined): string {
+  if (raw == null) {
+    return DEFAULT_OPENCLAW_INSTANCE_ID;
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error("OPENCLAW_INSTANCE_ID must not be blank.");
+  }
+  if (trimmed.includes(":")) {
+    throw new Error("OPENCLAW_INSTANCE_ID must not contain ':'.");
+  }
+
+  return trimmed;
+}
+
+function getDefaultInstanceId(): string {
+  return resolveDefaultInstanceId(
+    (
+      globalThis as typeof globalThis & {
+        [INSTANCE_ID_OVERRIDE_GLOBAL_KEY]?: string | null;
+      }
+    )[INSTANCE_ID_OVERRIDE_GLOBAL_KEY] ?? process.env.OPENCLAW_INSTANCE_ID,
+  );
+}
+
 export type FirewallMode = "disabled" | "learning" | "enforcing";
 
 export type SingleStatus =
@@ -254,7 +283,7 @@ export const MAX_RESTORE_HISTORY = 50;
 export type SingleMeta = {
   _schemaVersion: number;
   version: number;
-  id: "openclaw-single";
+  id: string;
   sandboxId: string | null;
   snapshotId: string | null;
   /** SHA-256 of the gateway config baked into the current snapshot.
@@ -297,11 +326,15 @@ export type SingleMeta = {
 
 export const CURRENT_SCHEMA_VERSION = 3;
 
-export function createDefaultMeta(now: number, gatewayToken: string): SingleMeta {
+export function createDefaultMeta(
+  now: number,
+  gatewayToken: string,
+  instanceId = getDefaultInstanceId(),
+): SingleMeta {
   return {
     _schemaVersion: CURRENT_SCHEMA_VERSION,
     version: 1,
-    id: "openclaw-single",
+    id: instanceId,
     sandboxId: null,
     snapshotId: null,
     snapshotConfigHash: null,
@@ -343,7 +376,10 @@ export function createDefaultMeta(now: number, gatewayToken: string): SingleMeta
   };
 }
 
-export function ensureMetaShape(input: unknown): SingleMeta | null {
+export function ensureMetaShape(
+  input: unknown,
+  expectedInstanceId = getDefaultInstanceId(),
+): SingleMeta | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return null;
   }
@@ -351,6 +387,11 @@ export function ensureMetaShape(input: unknown): SingleMeta | null {
   const raw = input as Partial<SingleMeta> & {
     firewall?: Partial<FirewallState>;
   };
+  if (typeof raw.id === "string" && raw.id !== expectedInstanceId) {
+    throw new Error(
+      `Refusing to hydrate meta for instance "${raw.id}" while expecting "${expectedInstanceId}".`,
+    );
+  }
   const now = Date.now();
   const createdAt = typeof raw.createdAt === "number" ? raw.createdAt : now;
 
@@ -362,7 +403,7 @@ export function ensureMetaShape(input: unknown): SingleMeta | null {
       raw.version >= 1
         ? raw.version
         : 1,
-    id: "openclaw-single",
+    id: typeof raw.id === "string" ? raw.id : expectedInstanceId,
     sandboxId: typeof raw.sandboxId === "string" ? raw.sandboxId : null,
     snapshotId: typeof raw.snapshotId === "string" ? raw.snapshotId : null,
     snapshotConfigHash:

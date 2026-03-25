@@ -5,12 +5,16 @@ import {
   ensureMetaShape,
   type SingleMeta,
 } from "@/shared/types";
-import { isVercelDeployment, requiresDurableStore } from "@/server/env";
+import {
+  getOpenclawInstanceId,
+  isVercelDeployment,
+  requiresDurableStore,
+} from "@/server/env";
 import { logInfo, logWarn } from "@/server/log";
+import { initLockKey } from "@/server/store/keyspace";
 import { MemoryStore } from "@/server/store/memory-store";
 import { UpstashStore } from "@/server/store/upstash-store";
 
-const INIT_LOCK_KEY = "openclaw-single:lock:init";
 const INIT_LOCK_TTL_SECONDS = 10;
 const INIT_READ_RETRY_COUNT = 20;
 const INIT_READ_RETRY_DELAY_MS = 50;
@@ -75,7 +79,7 @@ export function getStore(): Store {
 }
 
 function validateMetaOrThrow(input: unknown): SingleMeta {
-  const hydrated = ensureMetaShape(input);
+  const hydrated = ensureMetaShape(input, getOpenclawInstanceId());
   if (!hydrated?.gatewayToken) {
     throw new Error("Refusing to use invalid meta state.");
   }
@@ -99,7 +103,8 @@ export async function getInitializedMeta(): Promise<SingleMeta> {
   }
 
   const store = getStore();
-  const initToken = await store.acquireLock(INIT_LOCK_KEY, INIT_LOCK_TTL_SECONDS);
+  const initKey = initLockKey();
+  const initToken = await store.acquireLock(initKey, INIT_LOCK_TTL_SECONDS);
   if (initToken) {
     try {
       const rechecked = await readPersistedMetaOrThrow();
@@ -107,7 +112,11 @@ export async function getInitializedMeta(): Promise<SingleMeta> {
         return rechecked;
       }
 
-      const created = createDefaultMeta(Date.now(), randomUUID());
+      const created = createDefaultMeta(
+        Date.now(),
+        randomUUID(),
+        getOpenclawInstanceId(),
+      );
       const initialized = await store.createMetaIfAbsent(created);
       if (initialized) {
         return created;
@@ -120,7 +129,7 @@ export async function getInitializedMeta(): Promise<SingleMeta> {
 
       throw new Error("Meta state exists but could not be loaded safely.");
     } finally {
-      await store.releaseLock(INIT_LOCK_KEY, initToken);
+      await store.releaseLock(initKey, initToken);
     }
   }
 

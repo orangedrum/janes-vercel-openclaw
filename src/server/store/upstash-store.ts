@@ -4,8 +4,7 @@ import { Redis } from "@upstash/redis";
 
 import type { SingleMeta } from "@/shared/types";
 import { getStoreEnv } from "@/server/env";
-
-const META_KEY = "openclaw-single:meta";
+import { metaKey as resolveMetaKey } from "@/server/store/keyspace";
 
 const RELEASE_LOCK_LUA = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -59,7 +58,14 @@ function toNumber(value: unknown): number {
 export class UpstashStore {
   readonly name = "upstash";
 
-  constructor(private readonly redis: Redis) {}
+  constructor(
+    private readonly redis: Redis,
+    private readonly configuredMetaKey?: string,
+  ) {}
+
+  private getMetaKey(): string {
+    return this.configuredMetaKey ?? resolveMetaKey();
+  }
 
   static fromEnv(): UpstashStore | null {
     const env = getStoreEnv();
@@ -76,7 +82,7 @@ export class UpstashStore {
   }
 
   async getMeta(): Promise<SingleMeta | null> {
-    const raw = await this.redis.get<SingleMeta | string>(META_KEY);
+    const raw = await this.redis.get<SingleMeta | string>(this.getMetaKey());
     if (!raw) {
       return null;
     }
@@ -93,18 +99,18 @@ export class UpstashStore {
   }
 
   async setMeta(meta: SingleMeta): Promise<void> {
-    await this.redis.set(META_KEY, JSON.stringify(meta));
+    await this.redis.set(this.getMetaKey(), JSON.stringify(meta));
   }
 
   async createMetaIfAbsent(meta: SingleMeta): Promise<boolean> {
-    const result = await this.redis.set(META_KEY, JSON.stringify(meta), { nx: true });
+    const result = await this.redis.set(this.getMetaKey(), JSON.stringify(meta), { nx: true });
     return result === "OK";
   }
 
   async compareAndSetMeta(expectedVersion: number, next: SingleMeta): Promise<boolean> {
     const result = await this.redis.eval<[string, string], number>(
       CAS_META_LUA,
-      [META_KEY],
+      [this.getMetaKey()],
       [String(expectedVersion), JSON.stringify(next)],
     );
 

@@ -2,15 +2,38 @@ import { Redis } from "@upstash/redis";
 import { readFileSync } from "fs";
 
 const lines = readFileSync(".env.local", "utf8").split("\n");
-const env = {};
+const env = { ...process.env };
 for (const l of lines) {
   if (l.startsWith("#") || !l.includes("=")) continue;
   const i = l.indexOf("=");
   env[l.slice(0, i).trim()] = l.slice(i + 1).trim().replace(/^"|"$/g, "");
 }
 
-const redis = new Redis({ url: env.KV_REST_API_URL, token: env.KV_REST_API_TOKEN });
-const raw = await redis.get("openclaw-single:meta");
+function getOpenclawInstanceId() {
+  const raw = env.OPENCLAW_INSTANCE_ID;
+  if (raw == null) {
+    return "openclaw-single";
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error("OPENCLAW_INSTANCE_ID must not be blank.");
+  }
+  if (trimmed.includes(":")) {
+    throw new Error("OPENCLAW_INSTANCE_ID must not contain ':'.");
+  }
+
+  return trimmed;
+}
+
+const targetMetaKey = `${getOpenclawInstanceId()}:meta`;
+
+const redis = new Redis({
+  url: env.UPSTASH_REDIS_REST_URL ?? env.KV_REST_API_URL,
+  token: env.UPSTASH_REDIS_REST_TOKEN ?? env.KV_REST_API_TOKEN,
+});
+console.log("Target key:", targetMetaKey);
+const raw = await redis.get(targetMetaKey);
 console.log("Raw type:", typeof raw);
 console.log("Raw value (first 200):", JSON.stringify(raw).slice(0, 200));
 
@@ -30,5 +53,5 @@ meta.status = "uninitialized";
 meta.lastError = null;
 meta.portUrls = {};
 
-await redis.set("openclaw-single:meta", JSON.stringify(meta));
+await redis.set(targetMetaKey, JSON.stringify(meta));
 console.log("Reset to stopped — will create fresh v2 sandbox on next ensure");

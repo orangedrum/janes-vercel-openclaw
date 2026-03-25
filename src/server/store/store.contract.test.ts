@@ -62,6 +62,7 @@ test("[contract] memory store allowed outside Vercel even in production mode", (
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       _resetStoreForTesting();
@@ -89,6 +90,7 @@ test("[contract] getStore() throws on Vercel without Upstash", () => {
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       _resetStoreForTesting();
@@ -119,6 +121,7 @@ test("[contract] getStore() throws when only VERCEL_ENV is set (no VERCEL=1)", (
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       _resetStoreForTesting();
@@ -149,6 +152,7 @@ test("[contract] getStore() throws when only VERCEL_PROJECT_PRODUCTION_URL is se
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
     },
     () => {
       _resetStoreForTesting();
