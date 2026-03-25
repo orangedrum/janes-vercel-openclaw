@@ -368,6 +368,43 @@ a[href]:focus-visible {
   word-break: break-word;
 }
 
+.status-progress {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+}
+
+.status-progress-label {
+  margin: 0 0 8px;
+  color: var(--foreground-subtle);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.status-progress-title {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.status-progress-detail {
+  max-width: 72ch;
+  margin: 6px 0 0;
+  color: var(--foreground-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
 /* ────── Pills ────── */
 
 .mode-pills {

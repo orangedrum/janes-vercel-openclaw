@@ -320,30 +320,15 @@ export function StatusPanel({
       </div>
 
       {isLifecycleTransition && (progressLabel || progressDetail) ? (
-        <div
-          className="border border-zinc-800 bg-zinc-900/50 rounded-lg p-4"
-          style={{
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            background: "rgba(24, 24, 27, 0.35)",
-            padding: 16,
-          }}
-        >
+        <section className="status-progress" aria-live="polite">
+          <p className="status-progress-label">Lifecycle</p>
           {progressLabel ? (
-            <p style={{ margin: 0, fontWeight: 600 }}>{progressLabel}</p>
+            <p className="status-progress-title">{progressLabel}</p>
           ) : null}
           {progressDetail ? (
-            <p
-              style={{
-                margin: progressLabel ? "8px 0 0" : 0,
-                color: "var(--foreground-muted)",
-                lineHeight: 1.5,
-              }}
-            >
-              {progressDetail}
-            </p>
+            <p className="status-progress-detail">{progressDetail}</p>
           ) : null}
-        </div>
+        </section>
       ) : null}
 
       {errorCopy ? (
