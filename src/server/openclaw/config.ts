@@ -133,12 +133,51 @@ ${buildGatewayLaunchShell()}
 `;
 }
 
+export type WhatsAppGatewayConfig = {
+  enabled: boolean;
+  pluginSpec?: string;
+  dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
+  allowFrom?: string[];
+  groupPolicy?: "open" | "allowlist" | "disabled";
+  groupAllowFrom?: string[];
+  groups?: string[];
+};
+
+/**
+ * Extract gateway-relevant fields from a WhatsAppChannelConfig.
+ * Returns undefined when the config is null or not enabled,
+ * so callers can pass the result directly to buildGatewayConfig / hash helpers.
+ */
+export function toWhatsAppGatewayConfig(
+  config: {
+    enabled: boolean;
+    pluginSpec?: string;
+    dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
+    allowFrom?: string[];
+    groupPolicy?: "open" | "allowlist" | "disabled";
+    groupAllowFrom?: string[];
+    groups?: string[];
+  } | null | undefined,
+): WhatsAppGatewayConfig | undefined {
+  if (!config?.enabled) return undefined;
+  return {
+    enabled: true,
+    ...(config.pluginSpec ? { pluginSpec: config.pluginSpec } : {}),
+    dmPolicy: config.dmPolicy,
+    allowFrom: config.allowFrom,
+    groupPolicy: config.groupPolicy,
+    groupAllowFrom: config.groupAllowFrom,
+    groups: config.groups,
+  };
+}
+
 export function buildGatewayConfig(
   apiKey?: string,
   proxyOrigin?: string,
   telegramBotToken?: string,
   slackCredentials?: { botToken: string; signingSecret: string },
   telegramWebhookSecret?: string,
+  whatsappConfig?: WhatsAppGatewayConfig,
 ): string {
   const controlUi: Record<string, unknown> = {
     allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", false),
@@ -303,6 +342,22 @@ export function buildGatewayConfig(
     config.channels = channels;
   }
 
+  // WhatsApp gateway-native config: policy fields only — no credentials,
+  // no webhook setup.  Auth lives on the sandbox filesystem; the gateway
+  // plugin owns the socket lifecycle.
+  if (whatsappConfig?.enabled) {
+    const channels = (config.channels as Record<string, unknown>) ?? {};
+    channels.whatsapp = {
+      enabled: true,
+      dmPolicy: whatsappConfig.dmPolicy ?? "pairing",
+      allowFrom: whatsappConfig.allowFrom ?? [],
+      groupPolicy: whatsappConfig.groupPolicy ?? "allowlist",
+      groupAllowFrom: whatsappConfig.groupAllowFrom ?? [],
+      ...(whatsappConfig.groups ? { groups: whatsappConfig.groups } : {}),
+    };
+    config.channels = channels;
+  }
+
   return JSON.stringify(config);
 }
 
@@ -313,6 +368,7 @@ export type GatewayConfigHashInput = {
   telegramBotToken?: string;
   telegramWebhookSecret?: string;
   slackCredentials?: { botToken: string; signingSecret: string };
+  whatsappConfig?: WhatsAppGatewayConfig;
 };
 
 export function computeGatewayConfigHash(input: GatewayConfigHashInput): string {
@@ -322,6 +378,7 @@ export function computeGatewayConfigHash(input: GatewayConfigHashInput): string 
     input.telegramBotToken,
     input.slackCredentials,
     input.telegramWebhookSecret,
+    input.whatsappConfig,
   );
   return createHash("sha256")
     .update(`gateway-config-hash:v${GATEWAY_CONFIG_HASH_VERSION}\0`)

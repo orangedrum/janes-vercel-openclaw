@@ -1,4 +1,4 @@
-import type { ChannelName } from "@/shared/channels";
+import type { ChannelMode, ChannelName } from "@/shared/channels";
 import type {
   ChannelConnectability,
   ChannelConnectabilityIssue,
@@ -12,13 +12,24 @@ import {
 import { logInfo } from "@/server/log";
 import { buildChannelDisplayWebhookUrl } from "@/server/channels/webhook-urls";
 
-const ALL_CHANNELS: ChannelName[] = ["slack", "telegram", "discord"];
+const ALL_CHANNELS: ChannelName[] = ["slack", "telegram", "discord", "whatsapp"];
 
-const CHANNEL_LABELS: Record<ChannelName, string> = {
-  slack: "Slack",
-  telegram: "Telegram",
-  discord: "Discord",
+type ChannelDefinition = {
+  label: string;
+  mode: ChannelMode;
+  requiresPublicWebhook: boolean;
 };
+
+const CHANNEL_DEFINITIONS: Record<ChannelName, ChannelDefinition> = {
+  slack: { label: "Slack", mode: "webhook-proxied", requiresPublicWebhook: true },
+  telegram: { label: "Telegram", mode: "webhook-proxied", requiresPublicWebhook: true },
+  discord: { label: "Discord", mode: "webhook-proxied", requiresPublicWebhook: true },
+  whatsapp: { label: "WhatsApp", mode: "gateway-native", requiresPublicWebhook: false },
+};
+
+const CHANNEL_LABELS: Record<ChannelName, string> = Object.fromEntries(
+  ALL_CHANNELS.map((ch) => [ch, CHANNEL_DEFINITIONS[ch].label]),
+) as Record<ChannelName, string>;
 
 const PUBLIC_ORIGIN_ENVS = [
   "NEXT_PUBLIC_APP_URL",
@@ -81,6 +92,7 @@ function buildResult(
 ): ChannelConnectability {
   return {
     channel,
+    mode: CHANNEL_DEFINITIONS[channel].mode,
     canConnect: !issues.some((issue) => issue.status === "fail"),
     status: summarizeStatus(issues),
     webhookUrl,
@@ -148,8 +160,36 @@ export async function buildChannelPrerequisite(
   webhookUrlOverride?: string,
   shared: SharedConnectabilityInputs = {},
 ): Promise<ChannelConnectability> {
-  const label = CHANNEL_LABELS[channel];
+  const def = CHANNEL_DEFINITIONS[channel];
+  const label = def.label;
   const contract = shared.contract ?? await buildDeploymentContract({ request });
+
+  // Gateway-native channels skip contract and webhook checks entirely.
+  if (def.mode === "gateway-native") {
+    const issues: ChannelConnectabilityIssue[] = [
+      {
+        id: "running-only",
+        status: "warn",
+        message: `${label} requires a running sandbox; stopped sandboxes cannot receive messages.`,
+        remediation:
+          "Treat WhatsApp as experimental until a wake-compatible ingress strategy exists.",
+        env: [],
+      },
+    ];
+
+    logInfo("channel_prerequisite.built", {
+      channel,
+      mode: def.mode,
+      status: summarizeStatus(issues),
+      issueCount: issues.length,
+      issueIds: issues.map((i) => i.id),
+      excludedContractIds: [],
+    });
+
+    return buildResult(channel, null, issues);
+  }
+
+  // Webhook-proxied channels: contract + webhook URL checks.
   const issues: ChannelConnectabilityIssue[] = collectContractIssues(
     channel,
     contract,
@@ -195,6 +235,7 @@ export async function buildChannelPrerequisite(
 
   logInfo("channel_prerequisite.built", {
     channel,
+    mode: def.mode,
     status: summarizeStatus(issues),
     issueCount: issues.length,
     issueIds: issues.map((i) => i.id),
@@ -208,8 +249,8 @@ export async function buildChannelPrerequisite(
  * Shared connectability map builder — single implementation consumed by both
  * `buildChannelPrerequisiteReport` and `buildChannelConnectabilityReport`.
  *
- * Resolves the deployment contract once and threads it through all three
- * channel prerequisite checks. Accepts optional webhook URL overrides for
+ * Resolves the deployment contract once and threads it through all channel
+ * prerequisite checks. Accepts optional webhook URL overrides for
  * callers that have already resolved display URLs.
  */
 export async function buildChannelConnectabilityMap(
@@ -228,22 +269,28 @@ export async function buildChannelConnectabilityMap(
   };
 
   const results = await Promise.all(
-    ALL_CHANNELS.map((channel) =>
-      buildChannelPrerequisite(
+    ALL_CHANNELS.map((channel) => {
+      const def = CHANNEL_DEFINITIONS[channel];
+      // Gateway-native channels have no webhook URL to override or resolve.
+      const webhookOverride =
+        def.mode === "gateway-native"
+          ? undefined
+          : options.webhookUrlOverrides?.[channel] ??
+            buildChannelDisplayWebhookUrl(channel, request) ??
+            undefined;
+
+      return buildChannelPrerequisite(
         channel,
         request,
-        options.webhookUrlOverrides?.[channel] ??
-          buildChannelDisplayWebhookUrl(channel, request),
+        webhookOverride,
         nextShared,
-      ),
-    ),
+      );
+    }),
   );
 
-  const map: Record<ChannelName, ChannelConnectability> = {
-    slack: results[0],
-    telegram: results[1],
-    discord: results[2],
-  };
+  const map = Object.fromEntries(
+    ALL_CHANNELS.map((ch, i) => [ch, results[i]]),
+  ) as Record<ChannelName, ChannelConnectability>;
 
   logInfo("channel_connectability_map.built", {
     contractSource,

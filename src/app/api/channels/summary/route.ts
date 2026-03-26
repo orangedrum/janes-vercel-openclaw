@@ -8,10 +8,16 @@ type ChannelSummaryEntry = {
   lastError: string | null;
 };
 
+type WhatsAppSummaryEntry = ChannelSummaryEntry & {
+  deliveryMode: "gateway-native";
+  requiresRunningSandbox: true;
+};
+
 type ChannelSummaryResponse = {
   slack: ChannelSummaryEntry;
   telegram: ChannelSummaryEntry;
   discord: ChannelSummaryEntry;
+  whatsapp: WhatsAppSummaryEntry;
 };
 
 export async function GET(request: Request): Promise<Response> {
@@ -35,6 +41,12 @@ export async function GET(request: Request): Promise<Response> {
       discord: {
         connected: meta.channels.discord !== null,
         lastError: meta.channels.discord?.endpointError ?? null,
+      },
+      whatsapp: {
+        connected: meta.channels.whatsapp?.enabled === true,
+        lastError: meta.channels.whatsapp?.lastError ?? null,
+        deliveryMode: "gateway-native",
+        requiresRunningSandbox: true,
       },
     };
 

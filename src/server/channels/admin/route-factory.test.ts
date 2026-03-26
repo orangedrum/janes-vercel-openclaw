@@ -3,7 +3,7 @@ import { afterEach, test } from "node:test";
 
 import { createChannelAdminRouteHandlers } from "@/server/channels/admin/route-factory";
 import { withHarness } from "@/test-utils/harness";
-import { buildAuthPutRequest, callRoute } from "@/test-utils/route-caller";
+import { buildAuthPutRequest, buildAuthDeleteRequest, callRoute } from "@/test-utils/route-caller";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
 
 const ORIGINAL_APP_URL = process.env.NEXT_PUBLIC_APP_URL;
@@ -146,5 +146,73 @@ test("PUT handler wraps ApiError with correct status code", async () => {
     const body = result.json as { error: string; message: string };
     assert.equal(body.error, "BAD_INPUT");
     assert.equal(body.message, "invalid field");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp (gateway-native): PUT is never 409-blocked because canConnect
+// is always true — no public webhook URL requirement.
+// ---------------------------------------------------------------------------
+
+test("PUT handler for gateway-native channel (whatsapp) is not 409-blocked on localhost", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+    // Even without a public origin, WhatsApp should pass connectability
+    delete process.env.NEXT_PUBLIC_APP_URL;
+
+    let putCalled = false;
+
+    const { PUT } = createChannelAdminRouteHandlers({
+      channel: "whatsapp",
+      selectState: (s) => s.whatsapp,
+      async put() {
+        putCalled = true;
+      },
+      async delete() {},
+    });
+
+    const request = buildAuthPutRequest(
+      "/api/channels/whatsapp",
+      JSON.stringify({ enabled: true }),
+    );
+
+    const result = await callRoute(PUT, request);
+
+    // Gateway-native channels don't require public webhook URL
+    assert.notEqual(result.status, 409, "whatsapp PUT must not be 409-blocked");
+    assert.equal(putCalled, true, "spec.put must be called for gateway-native channel");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Route factory: DELETE calls syncGatewayConfigToSandbox after spec.delete
+// ---------------------------------------------------------------------------
+
+test("DELETE handler calls spec.delete and returns updated state", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+    let deleteCalled = false;
+
+    const { DELETE } = createChannelAdminRouteHandlers({
+      channel: "whatsapp",
+      selectState: (s) => s.whatsapp,
+      async put() {},
+      async delete() {
+        deleteCalled = true;
+      },
+    });
+
+    const request = buildAuthDeleteRequest(
+      "/api/channels/whatsapp",
+      "{}",
+    );
+
+    const result = await callRoute(DELETE, request);
+
+    assert.equal(result.status, 200);
+    assert.equal(deleteCalled, true, "spec.delete must be called");
+    const body = result.json as { configured: boolean; mode: string };
+    assert.equal(body.mode, "gateway-native");
   });
 });

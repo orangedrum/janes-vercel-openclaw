@@ -4,6 +4,7 @@ import {
   createDefaultChannelConfigs,
   ensureChannelConfigs,
   type ChannelConfigs,
+  type ChannelName,
 } from "@/shared/channels";
 
 const DEFAULT_OPENCLAW_INSTANCE_ID = "openclaw-single";
@@ -78,7 +79,7 @@ export type OperationContext = {
   trigger: OperationTrigger;
   reason: string;
   requestId: string | null;
-  channel: "slack" | "telegram" | "discord" | null;
+  channel: ChannelName | null;
   messageId: string | null;
   dedupId: string | null;
   deliveryCount: number | null;

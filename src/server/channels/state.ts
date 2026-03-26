@@ -4,6 +4,7 @@ import type {
   DiscordChannelConfig,
   SlackChannelConfig,
   TelegramChannelConfig,
+  WhatsAppChannelConfig,
 } from "@/shared/channels";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
 import type { SingleMeta } from "@/shared/types";
@@ -25,6 +26,7 @@ export type {
   PublicSlackState,
   PublicTelegramState,
   PublicDiscordState,
+  PublicWhatsAppState,
   PublicChannelState,
 } from "@/shared/channel-admin-state";
 
@@ -32,19 +34,20 @@ import type {
   PublicSlackState,
   PublicTelegramState,
   PublicDiscordState,
+  PublicWhatsAppState,
   PublicChannelState,
 } from "@/shared/channel-admin-state";
 
 export function buildSlackWebhookUrl(request?: Request): string {
-  return buildChannelWebhookUrl("slack", request);
+  return buildChannelWebhookUrl("slack", request)!;
 }
 
 export function buildTelegramWebhookUrl(request?: Request): string {
-  return buildChannelWebhookUrl("telegram", request);
+  return buildChannelWebhookUrl("telegram", request)!;
 }
 
 export function buildDiscordPublicWebhookUrl(request?: Request): string {
-  return buildChannelWebhookUrl("discord", request);
+  return buildChannelWebhookUrl("discord", request)!;
 }
 
 export function createTelegramWebhookSecret(): string {
@@ -59,9 +62,9 @@ export async function getPublicChannelState(
 
   // Display URLs (without bypass secret) — safe for admin-visible state.
   // Resolved once and threaded through to both public state and connectability.
-  const slackDisplayUrl = buildChannelDisplayWebhookUrl("slack", request);
-  const telegramDisplayUrl = buildChannelDisplayWebhookUrl("telegram", request);
-  const discordDisplayUrl = buildChannelDisplayWebhookUrl("discord", request);
+  const slackDisplayUrl = buildChannelDisplayWebhookUrl("slack", request)!;
+  const telegramDisplayUrl = buildChannelDisplayWebhookUrl("telegram", request)!;
+  const discordDisplayUrl = buildChannelDisplayWebhookUrl("discord", request)!;
 
   // Single contract + single connectability map — no redundant builds.
   const contract = await buildDeploymentContract({ request });
@@ -76,7 +79,7 @@ export async function getPublicChannelState(
 
   logInfo("public_channel_state.built", {
     contractSource: "fresh",
-    channels: (["slack", "telegram", "discord"] as const).map(
+    channels: (["slack", "telegram", "discord", "whatsapp"] as const).map(
       (ch) => `${ch}:${connectability[ch].status}`,
     ),
   });
@@ -97,6 +100,10 @@ export async function getPublicChannelState(
       discordDisplayUrl,
       isPublicUrl(discordDisplayUrl),
       connectability.discord,
+    ),
+    whatsapp: toPublicWhatsAppState(
+      resolvedMeta.channels.whatsapp,
+      connectability.whatsapp,
     ),
   };
 }
@@ -122,6 +129,14 @@ export async function setDiscordChannelConfig(
 ): Promise<SingleMeta> {
   return mutateMeta((meta) => {
     meta.channels.discord = config;
+  });
+}
+
+export async function setWhatsAppChannelConfig(
+  config: WhatsAppChannelConfig | null,
+): Promise<SingleMeta> {
+  return mutateMeta((meta) => {
+    meta.channels.whatsapp = config;
   });
 }
 
@@ -192,6 +207,24 @@ function toPublicDiscordState(
     commandId: config?.commandId ?? null,
     inviteUrl,
     isPublicUrl: publicUrl,
+    connectability,
+  };
+}
+
+function toPublicWhatsAppState(
+  config: WhatsAppChannelConfig | null,
+  connectability: ChannelConnectability,
+): PublicWhatsAppState {
+  return {
+    configured: config?.enabled === true,
+    mode: "gateway-native",
+    status: config?.lastKnownLinkState ?? "unconfigured",
+    configuredAt: config?.configuredAt ?? null,
+    displayName: config?.displayName ?? null,
+    linkedPhone: config?.linkedPhone ?? null,
+    lastError: config?.lastError ?? null,
+    requiresRunningSandbox: true,
+    loginVia: "/gateway",
     connectability,
   };
 }

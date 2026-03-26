@@ -77,7 +77,7 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
 // GET /api/channels/summary
 // ===========================================================================
 
-test("GET /api/channels/summary: returns summary for all three channels", async () => {
+test("GET /api/channels/summary: returns summary for all channels including whatsapp", async () => {
   await withTestEnv(async () => {
     const route = getChannelsSummaryRoute();
     const request = buildAuthGetRequest("/api/channels/summary");
@@ -88,12 +88,21 @@ test("GET /api/channels/summary: returns summary for all three channels", async 
       slack: { connected: boolean; lastError: string | null };
       telegram: { connected: boolean; lastError: string | null };
       discord: { connected: boolean; lastError: string | null };
+      whatsapp: {
+        connected: boolean;
+        lastError: string | null;
+        deliveryMode: string;
+        requiresRunningSandbox: boolean;
+      };
     };
 
     // All channels disconnected by default
     assert.equal(body.slack.connected, false);
     assert.equal(body.telegram.connected, false);
     assert.equal(body.discord.connected, false);
+    assert.equal(body.whatsapp.connected, false);
+    assert.equal(body.whatsapp.deliveryMode, "gateway-native");
+    assert.equal(body.whatsapp.requiresRunningSandbox, true);
   });
 });
 
@@ -125,6 +134,55 @@ test("GET /api/channels/summary: reflects connected channel state", async () => 
     assert.equal(body.slack.lastError, null);
     assert.equal(body.telegram.connected, false);
     assert.equal(body.discord.connected, false);
+  });
+});
+
+test("GET /api/channels/summary: whatsapp connected reflects enabled config", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "linked",
+        linkedPhone: "+1234567890",
+        dmPolicy: "pairing",
+      };
+    });
+
+    const route = getChannelsSummaryRoute();
+    const request = buildAuthGetRequest("/api/channels/summary");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      whatsapp: {
+        connected: boolean;
+        deliveryMode: string;
+        requiresRunningSandbox: boolean;
+        lastError: string | null;
+      };
+    };
+
+    assert.equal(body.whatsapp.connected, true);
+    assert.equal(body.whatsapp.deliveryMode, "gateway-native");
+    assert.equal(body.whatsapp.requiresRunningSandbox, true);
+    assert.equal(body.whatsapp.lastError, null);
+  });
+});
+
+test("GET /api/channels/summary: whatsapp response has no webhookUrl field", async () => {
+  await withTestEnv(async () => {
+    const route = getChannelsSummaryRoute();
+    const request = buildAuthGetRequest("/api/channels/summary");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as Record<string, Record<string, unknown>>;
+    assert.equal(
+      "webhookUrl" in body.whatsapp,
+      false,
+      "whatsapp summary must not contain webhookUrl",
+    );
   });
 });
 

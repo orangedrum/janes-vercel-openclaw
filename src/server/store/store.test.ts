@@ -224,6 +224,7 @@ test("ensureMetaShape: fills missing channels with empty channel configs", () =>
     slack: null,
     telegram: null,
     discord: null,
+    whatsapp: null,
   });
 });
 
@@ -287,6 +288,7 @@ test("ensureMetaShape: preserves existing fields when all present", () => {
     slack: null,
     telegram: null,
     discord: null,
+    whatsapp: null,
   });
 });
 
@@ -310,6 +312,7 @@ test("ensureMetaShape: handles completely empty object (worst-case legacy data)"
     slack: null,
     telegram: null,
     discord: null,
+    whatsapp: null,
   });
   assert.deepStrictEqual(result.snapshotHistory, []);
 });
@@ -454,6 +457,7 @@ test("ensureMetaShape: produces clean default for deeply corrupted input", () =>
     slack: null,
     telegram: null,
     discord: null,
+    whatsapp: null,
   });
   assert.deepStrictEqual(result.snapshotHistory, []);
 });

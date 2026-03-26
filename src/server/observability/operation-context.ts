@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 
+import type { ChannelName } from "@/shared/channels";
 import type { OperationContext, OperationTrigger, SingleStatus } from "@/shared/types";
 
 /**
@@ -21,7 +22,7 @@ export function createOperationContext(input: {
   reason: string;
   requestId?: string | null;
   parentOpId?: string | null;
-  channel?: "slack" | "telegram" | "discord" | null;
+  channel?: ChannelName | null;
   messageId?: string | null;
   dedupId?: string | null;
   deliveryCount?: number | null;

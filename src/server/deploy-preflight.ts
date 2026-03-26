@@ -6,6 +6,7 @@ import { getConfiguredAdminSecret } from "@/server/auth/admin-secret";
 import { isPublicUrl } from "@/server/channels/discord/application";
 import { buildChannelPrerequisiteReport } from "@/server/channels/connectability";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
+import type { ChannelName } from "@/shared/channels";
 import {
   buildDeploymentContract,
   type DeploymentContract,
@@ -81,7 +82,7 @@ export type PreflightPayload = {
   cronSecretConfigured: boolean;
   publicOriginResolution: PublicOriginResolution | null;
   webhookDiagnostics: PreflightWebhookDiagnostics;
-  channels: Record<"slack" | "telegram" | "discord", ChannelConnectability>;
+  channels: Record<ChannelName, ChannelConnectability>;
   actions: PreflightAction[];
   checks: PreflightCheck[];
   nextSteps: PreflightNextStep[];
@@ -234,7 +235,7 @@ function buildActions(input: {
 
 function buildNextSteps(input: {
   ok: boolean;
-  channels: Record<"slack" | "telegram" | "discord", ChannelConnectability>;
+  channels: Record<ChannelName, ChannelConnectability>;
   actions: PreflightAction[];
 }): PreflightNextStep[] {
   const steps: PreflightNextStep[] = [];
@@ -259,7 +260,7 @@ function buildNextSteps(input: {
   });
 
   const channelEntries = Object.entries(input.channels) as Array<
-    ["slack" | "telegram" | "discord", ChannelConnectability]
+    [ChannelName, ChannelConnectability]
   >;
   const connectable = channelEntries.filter(([, ch]) => ch.canConnect);
 

@@ -233,6 +233,7 @@ let _discordWebhookRoute: ChannelRouteModule | null = null;
 let _slackChannelRoute: SimpleRouteModule | null = null;
 let _telegramChannelRoute: SimpleRouteModule | null = null;
 let _discordChannelRoute: SimpleRouteModule | null = null;
+let _whatsappChannelRoute: SimpleRouteModule | null = null;
 
 export function getSlackWebhookRoute(): ChannelRouteModule {
   if (!_slackWebhookRoute) {
@@ -286,6 +287,15 @@ export function getDiscordChannelRoute(): SimpleRouteModule {
     _discordChannelRoute = require("@/app/api/channels/discord/route") as SimpleRouteModule;
   }
   return _discordChannelRoute;
+}
+
+export function getWhatsAppChannelRoute(): SimpleRouteModule {
+  if (!_whatsappChannelRoute) {
+    patchNextServerAfter();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _whatsappChannelRoute = require("@/app/api/channels/whatsapp/route") as SimpleRouteModule;
+  }
+  return _whatsappChannelRoute;
 }
 
 // ---------------------------------------------------------------------------

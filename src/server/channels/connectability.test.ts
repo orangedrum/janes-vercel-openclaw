@@ -472,7 +472,7 @@ for (const { name, env, oidc } of PARITY_MATRIX) {
 // buildChannelConnectabilityMap — shared map builder
 // ---------------------------------------------------------------------------
 
-test("buildChannelConnectabilityMap returns all three channels", async () => {
+test("buildChannelConnectabilityMap returns all four channels", async () => {
   process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
   process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
   process.env.UPSTASH_REDIS_REST_TOKEN = "token";
@@ -484,9 +484,11 @@ test("buildChannelConnectabilityMap returns all three channels", async () => {
   assert.ok(map.slack, "map must include slack");
   assert.ok(map.telegram, "map must include telegram");
   assert.ok(map.discord, "map must include discord");
+  assert.ok(map.whatsapp, "map must include whatsapp");
   assert.equal(map.slack.channel, "slack");
   assert.equal(map.telegram.channel, "telegram");
   assert.equal(map.discord.channel, "discord");
+  assert.equal(map.whatsapp.channel, "whatsapp");
 });
 
 test("buildChannelConnectabilityMap reuses shared contract", async () => {
@@ -500,7 +502,7 @@ test("buildChannelConnectabilityMap reuses shared contract", async () => {
   });
 
   // All channels should reference the same contract-derived issues
-  for (const channel of ["slack", "telegram", "discord"] as const) {
+  for (const channel of ["slack", "telegram", "discord", "whatsapp"] as const) {
     assert.equal(map[channel].channel, channel);
     assert.ok(typeof map[channel].canConnect === "boolean");
   }
@@ -557,5 +559,116 @@ test("buildChannelConnectabilityMap respects webhookUrlOverrides", async () => {
     map.telegram.webhookUrl,
     `${PUBLIC_ORIGIN}/api/channels/telegram/webhook`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp — gateway-native channel
+// ---------------------------------------------------------------------------
+
+test("whatsapp connectability uses gateway-native mode with no webhook URL", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const result = await buildChannelConnectability(
+    "whatsapp",
+    makeRequest(PUBLIC_ORIGIN),
+  );
+
+  assert.equal(result.channel, "whatsapp");
+  assert.equal(result.mode, "gateway-native");
+  assert.equal(result.webhookUrl, null, "whatsapp must not have a webhook URL");
+  assert.equal(result.canConnect, true, "whatsapp should be connectable (no hard blockers)");
+  assert.equal(result.status, "warn");
+
+  const runningOnly = result.issues.find((i) => i.id === "running-only");
+  assert.ok(runningOnly, "expected running-only issue");
+  assert.equal(runningOnly.status, "warn");
+  assert.ok(
+    runningOnly.message.includes("running sandbox"),
+    "running-only message should mention running sandbox",
+  );
+});
+
+test("whatsapp connectability does not require public webhook URL", async () => {
+  // Even without a public origin, whatsapp should not fail on webhook URL
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const result = await buildChannelConnectability(
+    "whatsapp",
+    makeRequest(LOCAL_ORIGIN),
+  );
+
+  assert.equal(result.canConnect, true, "whatsapp should not fail for missing public URL");
+  assert.equal(result.webhookUrl, null);
+  const webhookIssue = result.issues.find((i) => i.id === "public-webhook-url");
+  assert.equal(webhookIssue, undefined, "whatsapp must not have public-webhook-url issue");
+});
+
+test("whatsapp does not surface contract issues (store, ai-gateway)", async () => {
+  process.env.VERCEL = "1";
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+  delete process.env.AI_GATEWAY_API_KEY;
+  _setAiGatewayTokenOverrideForTesting(undefined);
+
+  const result = await buildChannelConnectability(
+    "whatsapp",
+    makeRequest(PUBLIC_ORIGIN),
+  );
+
+  // WhatsApp is gateway-native: contract issues (store, ai-gateway) are not surfaced.
+  const storeIssue = result.issues.find((i) => i.id === "store");
+  assert.equal(storeIssue, undefined, "whatsapp must not surface store contract issue");
+  const aiGatewayIssue = result.issues.find((i) => i.id === "ai-gateway");
+  assert.equal(aiGatewayIssue, undefined, "whatsapp must not surface ai-gateway contract issue");
+
+  // Only the running-only warning should be present
+  assert.equal(result.issues.length, 1);
+  assert.equal(result.issues[0].id, "running-only");
+});
+
+// ---------------------------------------------------------------------------
+// Guardrails: WhatsApp must never produce fake webhook paths or ingress URLs
+// ---------------------------------------------------------------------------
+
+test("whatsapp is excluded from CHANNEL_WEBHOOK_PATHS and never appears in webhook URL builders", () => {
+  // This is a compile-time constraint via WebhookProxiedChannel, but also
+  // verify at runtime to guard against accidental additions.
+  const displayUrl = buildChannelDisplayWebhookUrl("whatsapp");
+  const deliveryUrl = buildChannelWebhookUrl("whatsapp");
+
+  assert.equal(displayUrl, null, "whatsapp display URL must be null");
+  assert.equal(deliveryUrl, null, "whatsapp delivery URL must be null");
+});
+
+test("whatsapp connectability report webhookUrl is null in full report", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const request = makeRequest(PUBLIC_ORIGIN);
+  const report = await buildChannelConnectabilityReport(request);
+
+  assert.equal(report.whatsapp.webhookUrl, null, "report whatsapp webhookUrl must be null");
+  assert.equal(report.whatsapp.mode, "gateway-native");
+  // Webhook-proxied channels should have URLs
+  assert.ok(report.slack.webhookUrl, "slack must have a webhookUrl in report");
+  assert.ok(report.telegram.webhookUrl, "telegram must have a webhookUrl in report");
+  assert.ok(report.discord.webhookUrl, "discord must have a webhookUrl in report");
+});
+
+test("webhook-proxied channels include mode field", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const request = makeRequest(PUBLIC_ORIGIN);
+  for (const channel of ["slack", "telegram", "discord"] as const) {
+    const result = await buildChannelConnectability(channel, request);
+    assert.equal(result.mode, "webhook-proxied", `${channel} should be webhook-proxied`);
+  }
 });
 

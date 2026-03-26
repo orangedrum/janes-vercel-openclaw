@@ -1,4 +1,4 @@
-import type { ChannelName } from "@/shared/channels";
+import type { ChannelMode, ChannelName } from "@/shared/channels";
 import type { DeploymentRequirementId } from "@/shared/deployment-requirements";
 
 export type ChannelConnectabilityStatus = "pass" | "warn" | "fail";
@@ -7,7 +7,10 @@ export type ChannelConnectabilityStatus = "pass" | "warn" | "fail";
  * Channel-only issue IDs that do not originate from the deployment contract.
  * Keep this set small — most blocking logic should live in the contract.
  */
-export type ChannelOnlyIssueId = "public-webhook-url" | "launch-verification";
+export type ChannelOnlyIssueId =
+  | "public-webhook-url"
+  | "launch-verification"
+  | "running-only";
 
 /**
  * Union of deployment-contract requirement IDs and channel-specific IDs.
@@ -28,6 +31,7 @@ export type ChannelConnectabilityIssue = {
 
 export type ChannelConnectability = {
   channel: ChannelName;
+  mode: ChannelMode;
   canConnect: boolean;
   status: ChannelConnectabilityStatus;
   webhookUrl: string | null;

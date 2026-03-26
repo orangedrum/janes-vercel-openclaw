@@ -7,6 +7,7 @@ import type {
   SlackChannelConfig,
   TelegramChannelConfig,
   DiscordChannelConfig,
+  WhatsAppChannelConfig,
 } from "@/shared/channels";
 import { withHarness } from "@/test-utils/harness";
 import {
@@ -18,6 +19,7 @@ import {
   setSlackChannelConfig,
   setTelegramChannelConfig,
   setDiscordChannelConfig,
+  setWhatsAppChannelConfig,
 } from "@/server/channels/state";
 
 function makeRequest(url = "https://app.example.com"): Request {
@@ -56,7 +58,7 @@ function makeDiscordConfig(overrides: Partial<DiscordChannelConfig> = {}): Disco
   };
 }
 
-test("unconfigured channels return configured: false", async () => {
+test("unconfigured channels return configured: false for all four channels", async () => {
   await withHarness(async (h) => {
     const meta = await h.getMeta();
     const state = await getPublicChannelState(makeRequest(), meta);
@@ -64,6 +66,7 @@ test("unconfigured channels return configured: false", async () => {
     assert.equal(state.slack.configured, false);
     assert.equal(state.telegram.configured, false);
     assert.equal(state.discord.configured, false);
+    assert.equal(state.whatsapp.configured, false);
   });
 });
 
@@ -82,6 +85,10 @@ test("each channel includes a connectability field", async () => {
 
     assert.ok(state.discord.connectability, "discord missing connectability");
     assert.equal(state.discord.connectability.channel, "discord");
+
+    assert.ok(state.whatsapp.connectability, "whatsapp missing connectability");
+    assert.equal(state.whatsapp.connectability.channel, "whatsapp");
+    assert.equal(state.whatsapp.connectability.mode, "gateway-native");
   });
 });
 
@@ -521,6 +528,120 @@ test("[security] connectability.webhookUrl never contains bypass secret", async 
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// WhatsApp — gateway-native public state
+// ---------------------------------------------------------------------------
+
+function makeWhatsAppConfig(overrides: Partial<WhatsAppChannelConfig> = {}): WhatsAppChannelConfig {
+  return {
+    enabled: true,
+    configuredAt: 4000,
+    ...overrides,
+  };
+}
+
+test("[state] unconfigured whatsapp returns gateway-native defaults", async () => {
+  await withHarness(async (h) => {
+    const meta = await h.getMeta();
+    const state = await getPublicChannelState(makeRequest(), meta);
+
+    assert.equal(state.whatsapp.configured, false);
+    assert.equal(state.whatsapp.mode, "gateway-native");
+    assert.equal(state.whatsapp.status, "unconfigured");
+    assert.equal(state.whatsapp.requiresRunningSandbox, true);
+    assert.equal(state.whatsapp.loginVia, "/gateway");
+    assert.equal(state.whatsapp.configuredAt, null);
+    assert.equal(state.whatsapp.displayName, null);
+    assert.equal(state.whatsapp.linkedPhone, null);
+    assert.equal(state.whatsapp.lastError, null);
+  });
+});
+
+test("[state] configured whatsapp returns correct public shape", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.channels.whatsapp = makeWhatsAppConfig({
+        lastKnownLinkState: "linked",
+        linkedPhone: "+1234567890",
+        displayName: "Test Account",
+        dmPolicy: "pairing",
+      });
+    });
+    const meta = await h.getMeta();
+    const state = await getPublicChannelState(makeRequest(), meta);
+
+    assert.equal(state.whatsapp.configured, true);
+    assert.equal(state.whatsapp.mode, "gateway-native");
+    assert.equal(state.whatsapp.status, "linked");
+    assert.equal(state.whatsapp.configuredAt, 4000);
+    assert.equal(state.whatsapp.displayName, "Test Account");
+    assert.equal(state.whatsapp.linkedPhone, "+1234567890");
+    assert.equal(state.whatsapp.requiresRunningSandbox, true);
+    assert.equal(state.whatsapp.loginVia, "/gateway");
+  });
+});
+
+test("[state] whatsapp with error shows lastError", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.channels.whatsapp = makeWhatsAppConfig({
+        lastKnownLinkState: "error",
+        lastError: "connection timeout",
+      });
+    });
+    const meta = await h.getMeta();
+    const state = await getPublicChannelState(makeRequest(), meta);
+
+    assert.equal(state.whatsapp.status, "error");
+    assert.equal(state.whatsapp.lastError, "connection timeout");
+  });
+});
+
+test("[state] whatsapp public state never exposes a webhook URL", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.channels.whatsapp = makeWhatsAppConfig({ lastKnownLinkState: "linked" });
+    });
+    const meta = await h.getMeta();
+    const state = await getPublicChannelState(makeRequest(), meta);
+
+    // WhatsApp is gateway-native: no webhook URL in public state
+    assert.equal("webhookUrl" in state.whatsapp, false, "whatsapp must not have a webhookUrl field");
+    assert.equal(state.whatsapp.connectability.webhookUrl, null, "whatsapp connectability webhookUrl must be null");
+  });
+});
+
+test("[state] setWhatsAppChannelConfig -> persists and clears whatsapp config", async () => {
+  await withHarness(async (h) => {
+    const config = makeWhatsAppConfig({ displayName: "SetBot", dmPolicy: "allowlist" });
+    await setWhatsAppChannelConfig(config);
+    const meta = await h.getMeta();
+    assert.equal(meta.channels.whatsapp?.displayName, "SetBot");
+    assert.equal(meta.channels.whatsapp?.dmPolicy, "allowlist");
+
+    // Clear it
+    await setWhatsAppChannelConfig(null);
+    const cleared = await h.getMeta();
+    assert.equal(cleared.channels.whatsapp, null);
+  });
+});
+
+test("[state] whatsapp enabled:false returns configured:false", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.channels.whatsapp = makeWhatsAppConfig({ enabled: false });
+    });
+    const meta = await h.getMeta();
+    const state = await getPublicChannelState(makeRequest(), meta);
+
+    assert.equal(state.whatsapp.configured, false, "enabled:false should mean configured:false");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-branch: delivery URLs bypass secret
+// ---------------------------------------------------------------------------
 
 test("[security] delivery URLs still contain bypass secret for actual registration", async () => {
   await withEnv(

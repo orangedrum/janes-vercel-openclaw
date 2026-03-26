@@ -1,3 +1,4 @@
+import type { ChannelName } from "@/shared/channels";
 import type { LogEntry, LogLevel, LogSource } from "@/shared/types";
 
 const RING_BUFFER_SIZE = 1000;
@@ -135,7 +136,7 @@ export type LogFilters = {
   search?: string;
   opId?: string;
   requestId?: string;
-  channel?: "slack" | "telegram" | "discord";
+  channel?: ChannelName;
   sandboxId?: string;
   messageId?: string;
 };

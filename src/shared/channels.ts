@@ -1,4 +1,6 @@
-export type ChannelName = "slack" | "telegram" | "discord";
+export type ChannelName = "slack" | "telegram" | "discord" | "whatsapp";
+
+export type ChannelMode = "webhook-proxied" | "gateway-native";
 
 export type SlackChannelConfig = {
   signingSecret: string;
@@ -39,10 +41,35 @@ export type DiscordChannelConfig = {
   commandRegisteredAt?: number;
 };
 
+export type WhatsAppLinkState =
+  | "unconfigured"
+  | "needs-plugin"
+  | "needs-login"
+  | "linked"
+  | "disconnected"
+  | "error";
+
+export type WhatsAppChannelConfig = {
+  enabled: boolean;
+  configuredAt: number;
+  pluginSpec?: string;
+  accountId?: string;
+  dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
+  allowFrom?: string[];
+  groupPolicy?: "open" | "allowlist" | "disabled";
+  groupAllowFrom?: string[];
+  groups?: string[];
+  lastKnownLinkState?: WhatsAppLinkState;
+  linkedPhone?: string;
+  displayName?: string;
+  lastError?: string;
+};
+
 export type ChannelConfigs = {
   slack: SlackChannelConfig | null;
   telegram: TelegramChannelConfig | null;
   discord: DiscordChannelConfig | null;
+  whatsapp: WhatsAppChannelConfig | null;
 };
 
 export function createDefaultChannelConfigs(): ChannelConfigs {
@@ -50,6 +77,7 @@ export function createDefaultChannelConfigs(): ChannelConfigs {
     slack: null,
     telegram: null,
     discord: null,
+    whatsapp: null,
   };
 }
 
@@ -63,6 +91,7 @@ export function ensureChannelConfigs(input: unknown): ChannelConfigs {
     slack: isSlackChannelConfig(raw.slack) ? raw.slack : null,
     telegram: isTelegramChannelConfig(raw.telegram) ? raw.telegram : null,
     discord: isDiscordChannelConfig(raw.discord) ? raw.discord : null,
+    whatsapp: isWhatsAppChannelConfig(raw.whatsapp) ? raw.whatsapp : null,
   };
 }
 
@@ -113,6 +142,18 @@ function isDiscordChannelConfig(value: unknown): value is DiscordChannelConfig {
     typeof raw.publicKey === "string" &&
     typeof raw.applicationId === "string" &&
     typeof raw.botToken === "string" &&
+    typeof raw.configuredAt === "number"
+  );
+}
+
+function isWhatsAppChannelConfig(value: unknown): value is WhatsAppChannelConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const raw = value as Partial<WhatsAppChannelConfig>;
+  return (
+    typeof raw.enabled === "boolean" &&
     typeof raw.configuredAt === "number"
   );
 }

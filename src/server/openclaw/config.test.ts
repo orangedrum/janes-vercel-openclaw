@@ -5,6 +5,7 @@ import {
   buildGatewayConfig,
   buildGatewayRestartScript,
   computeGatewayConfigHash,
+  toWhatsAppGatewayConfig,
   GATEWAY_CONFIG_HASH_VERSION,
   buildStartupScript,
   buildWebSearchSkill,
@@ -417,4 +418,150 @@ test("computeGatewayConfigHash changes when slack signing secret changes and use
 
   assert.equal(GATEWAY_CONFIG_HASH_VERSION, 1);
   assert.notEqual(baseline, changed);
+});
+
+// ---------------------------------------------------------------------------
+// buildGatewayConfig — WhatsApp gateway-native channel
+// ---------------------------------------------------------------------------
+
+test("buildGatewayConfig includes whatsapp policy config when enabled", () => {
+  const config = JSON.parse(
+    buildGatewayConfig(undefined, undefined, undefined, undefined, undefined, {
+      enabled: true,
+      dmPolicy: "open",
+      allowFrom: ["*"],
+      groupPolicy: "allowlist",
+      groupAllowFrom: ["+1234567890"],
+      groups: ["group-1"],
+    }),
+  ) as { channels?: { whatsapp?: Record<string, unknown> } };
+
+  assert.ok(config.channels?.whatsapp, "whatsapp channel should be present");
+  assert.equal(config.channels!.whatsapp!.enabled, true);
+  assert.equal(config.channels!.whatsapp!.dmPolicy, "open");
+  assert.deepEqual(config.channels!.whatsapp!.allowFrom, ["*"]);
+  assert.equal(config.channels!.whatsapp!.groupPolicy, "allowlist");
+  assert.deepEqual(config.channels!.whatsapp!.groupAllowFrom, ["+1234567890"]);
+  assert.deepEqual(config.channels!.whatsapp!.groups, ["group-1"]);
+});
+
+test("buildGatewayConfig uses default whatsapp policies when only enabled is set", () => {
+  const config = JSON.parse(
+    buildGatewayConfig(undefined, undefined, undefined, undefined, undefined, {
+      enabled: true,
+    }),
+  ) as { channels?: { whatsapp?: Record<string, unknown> } };
+
+  assert.ok(config.channels?.whatsapp);
+  assert.equal(config.channels!.whatsapp!.dmPolicy, "pairing");
+  assert.deepEqual(config.channels!.whatsapp!.allowFrom, []);
+  assert.equal(config.channels!.whatsapp!.groupPolicy, "allowlist");
+});
+
+test("buildGatewayConfig omits whatsapp when not enabled", () => {
+  const config = JSON.parse(
+    buildGatewayConfig(undefined, undefined, undefined, undefined, undefined, {
+      enabled: false,
+    }),
+  ) as { channels?: { whatsapp?: unknown } };
+
+  assert.equal(config.channels?.whatsapp, undefined);
+});
+
+test("buildGatewayConfig omits whatsapp when config is undefined", () => {
+  const config = JSON.parse(
+    buildGatewayConfig(),
+  ) as { channels?: { whatsapp?: unknown } };
+
+  assert.equal(config.channels?.whatsapp, undefined);
+});
+
+test("buildGatewayConfig omits whatsapp groups key when groups is not provided", () => {
+  const config = JSON.parse(
+    buildGatewayConfig(undefined, undefined, undefined, undefined, undefined, {
+      enabled: true,
+    }),
+  ) as { channels?: { whatsapp?: Record<string, unknown> } };
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(config.channels!.whatsapp!, "groups"),
+    false,
+    "groups key should not be present when undefined",
+  );
+});
+
+test("buildGatewayConfig includes whatsapp alongside telegram and slack", () => {
+  const config = JSON.parse(
+    buildGatewayConfig(
+      "api-key",
+      "https://app.example.com",
+      "telegram-token",
+      { botToken: "xoxb-test", signingSecret: "slack-secret" },
+      "telegram-secret",
+      { enabled: true, dmPolicy: "pairing" },
+    ),
+  ) as { channels?: Record<string, unknown> };
+
+  assert.ok(config.channels?.telegram, "telegram should be present");
+  assert.ok(config.channels?.slack, "slack should be present");
+  assert.ok(config.channels?.whatsapp, "whatsapp should be present");
+});
+
+// ---------------------------------------------------------------------------
+// computeGatewayConfigHash — WhatsApp
+// ---------------------------------------------------------------------------
+
+test("computeGatewayConfigHash changes when whatsapp config is added", () => {
+  const baseline = computeGatewayConfigHash({});
+  const withWhatsApp = computeGatewayConfigHash({
+    whatsappConfig: { enabled: true, dmPolicy: "open" },
+  });
+
+  assert.notEqual(baseline, withWhatsApp);
+});
+
+test("computeGatewayConfigHash changes when whatsapp policy changes", () => {
+  const a = computeGatewayConfigHash({
+    whatsappConfig: { enabled: true, dmPolicy: "pairing" },
+  });
+  const b = computeGatewayConfigHash({
+    whatsappConfig: { enabled: true, dmPolicy: "open" },
+  });
+
+  assert.notEqual(a, b);
+});
+
+// ---------------------------------------------------------------------------
+// toWhatsAppGatewayConfig helper
+// ---------------------------------------------------------------------------
+
+test("toWhatsAppGatewayConfig returns undefined for null input", () => {
+  assert.equal(toWhatsAppGatewayConfig(null), undefined);
+});
+
+test("toWhatsAppGatewayConfig returns undefined when not enabled", () => {
+  assert.equal(
+    toWhatsAppGatewayConfig({ enabled: false }),
+    undefined,
+  );
+});
+
+test("toWhatsAppGatewayConfig extracts gateway-relevant fields", () => {
+  const result = toWhatsAppGatewayConfig({
+    enabled: true,
+    dmPolicy: "open",
+    allowFrom: ["*"],
+    groupPolicy: "allowlist",
+    groupAllowFrom: ["+1"],
+    groups: ["g1"],
+  });
+
+  assert.deepEqual(result, {
+    enabled: true,
+    dmPolicy: "open",
+    allowFrom: ["*"],
+    groupPolicy: "allowlist",
+    groupAllowFrom: ["+1"],
+    groups: ["g1"],
+  });
 });

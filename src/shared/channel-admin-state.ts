@@ -1,4 +1,5 @@
 import type { ChannelConnectability } from "@/shared/channel-connectability";
+import type { WhatsAppLinkState } from "@/shared/channels";
 
 export type PublicSlackState = {
   configured: boolean;
@@ -44,8 +45,22 @@ export type PublicDiscordState = {
   connectability: ChannelConnectability;
 };
 
+export type PublicWhatsAppState = {
+  configured: boolean;
+  mode: "gateway-native";
+  status: WhatsAppLinkState;
+  configuredAt: number | null;
+  displayName: string | null;
+  linkedPhone: string | null;
+  lastError: string | null;
+  requiresRunningSandbox: true;
+  loginVia: "/gateway";
+  connectability: ChannelConnectability;
+};
+
 export type PublicChannelState = {
   slack: PublicSlackState;
   telegram: PublicTelegramState;
   discord: PublicDiscordState;
+  whatsapp: PublicWhatsAppState;
 };

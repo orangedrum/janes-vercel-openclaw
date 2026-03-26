@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import type { WhatsAppGatewayConfig } from "@/server/openclaw/config";
 import {
   buildFastRestoreScript,
   buildForcePairScript,
@@ -79,6 +80,7 @@ export function buildDynamicRestoreFiles(options: {
   telegramBotToken?: string;
   telegramWebhookSecret?: string;
   slackCredentials?: { botToken: string; signingSecret: string };
+  whatsappConfig?: WhatsAppGatewayConfig;
 }): { path: string; content: Buffer }[] {
   const files: { path: string; content: Buffer }[] = [
     {
@@ -90,6 +92,7 @@ export function buildDynamicRestoreFiles(options: {
           options.telegramBotToken,
           options.slackCredentials,
           options.telegramWebhookSecret,
+          options.whatsappConfig,
         ),
       ),
     },

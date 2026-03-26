@@ -1,3 +1,5 @@
+import type { ChannelName } from "@/shared/channels";
+
 export type LaunchVerificationPhaseId =
   | "preflight"
   | "queuePing"
@@ -48,11 +50,11 @@ export type LaunchVerificationDiagnostics = {
    * Historically named "warningChannelIds" even though it contains channels
    * whose prerequisite status is fail.
    */
-  warningChannelIds: Array<"slack" | "telegram" | "discord">;
+  warningChannelIds: ChannelName[];
   /**
    * Correct name for the same data. Prefer this field in new code.
    */
-  failingChannelIds?: Array<"slack" | "telegram" | "discord">;
+  failingChannelIds?: ChannelName[];
   skipPhaseIds: LaunchVerificationPhaseId[];
 };
 
@@ -116,7 +118,7 @@ export type LaunchVerifyCompletionLog = {
   failingCheckIds: string[];
   requiredActionIds: string[];
   recommendedActionIds: string[];
-  failingChannelIds: Array<"slack" | "telegram" | "discord">;
+  failingChannelIds: ChannelName[];
   dynamicConfigVerified: boolean | null;
   dynamicConfigReason?: "hash-match" | "hash-miss" | "no-snapshot-hash";
   repaired: boolean | null;

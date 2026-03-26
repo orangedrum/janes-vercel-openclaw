@@ -1,6 +1,7 @@
 import { logError, logInfo, logWarn } from "@/server/log";
 import { getOpenclawPackageSpec, isVercelDeployment } from "@/server/env";
 import { isPinnedPackageSpec } from "@/server/deployment-contract";
+import type { WhatsAppGatewayConfig } from "@/server/openclaw/config";
 import {
   buildFastRestoreScript,
   buildForcePairScript,
@@ -106,6 +107,7 @@ export async function setupOpenClaw(
     telegramBotToken?: string;
     slackCredentials?: { botToken: string; signingSecret: string };
     telegramWebhookSecret?: string;
+    whatsappConfig?: WhatsAppGatewayConfig;
   },
 ): Promise<{ startupScript: string; openclawVersion: string | null; runtime: BootstrapRuntime }> {
   const startupScript = buildStartupScript();
@@ -181,6 +183,35 @@ export async function setupOpenClaw(
   await assertCommandSuccess("npm cache cleanup", npmCacheCleanup);
   logInfo("openclaw.setup.npm_cache_cleared", { sandboxId: sandbox.sandboxId });
 
+  // Install WhatsApp plugin when enabled.  Idempotent — `openclaw plugins
+  // install` is a no-op when the plugin is already present.
+  if (options.whatsappConfig?.enabled) {
+    const pluginSpec = options.whatsappConfig.pluginSpec?.trim() || "@openclaw/whatsapp";
+    logInfo("openclaw.setup.whatsapp_plugin_install", {
+      sandboxId: sandbox.sandboxId,
+      pluginSpec,
+    });
+    const pluginResult = await sandbox.runCommand(OPENCLAW_BIN, [
+      "plugins",
+      "install",
+      pluginSpec,
+    ]);
+    if (pluginResult.exitCode === 0) {
+      logInfo("openclaw.setup.whatsapp_plugin_installed", {
+        sandboxId: sandbox.sandboxId,
+        pluginSpec,
+      });
+    } else {
+      const stderr = (await pluginResult.output("stderr")).trim();
+      logWarn("openclaw.setup.whatsapp_plugin_install_failed", {
+        sandboxId: sandbox.sandboxId,
+        pluginSpec,
+        exitCode: pluginResult.exitCode,
+        stderr: stderr.slice(-500),
+      });
+    }
+  }
+
   await sandbox.writeFiles([
     {
       path: OPENCLAW_CONFIG_PATH,
@@ -191,6 +222,7 @@ export async function setupOpenClaw(
           options.telegramBotToken,
           options.slackCredentials,
           options.telegramWebhookSecret,
+          options.whatsappConfig,
         ),
       ),
     },
