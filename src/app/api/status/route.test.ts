@@ -11,6 +11,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { computeGatewayConfigHash } from "@/server/openclaw/config";
+import { buildRestoreAssetManifest } from "@/server/openclaw/restore-assets";
 import { _setSandboxControllerForTesting } from "@/server/sandbox/controller";
 import {
   _resetSandboxSleepConfigCacheForTesting,
@@ -21,6 +23,7 @@ import {
   getInitializedMeta,
   mutateMeta,
 } from "@/server/store/store";
+import type { RestoreTargetAttestation } from "@/shared/launch-verification";
 import {
   callRoute,
   buildPostRequest,
@@ -617,5 +620,95 @@ test("GET /api/status: passive returns cached gateway status after live probe", 
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+// ===========================================================================
+// GET /api/status — restore target attestation
+// ===========================================================================
+
+test("GET /api/status: restoreTarget.attestation present with correct shape for default meta", async () => {
+  await withTestEnv(async () => {
+    const route = getStatusRoute();
+    const request = buildAuthGetRequest("/api/status");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      restoreTarget: {
+        restorePreparedStatus: string;
+        attestation: RestoreTargetAttestation;
+      };
+    };
+
+    assert.ok(body.restoreTarget, "should include restoreTarget");
+    assert.ok(body.restoreTarget.attestation, "should include restoreTarget.attestation");
+
+    const att = body.restoreTarget.attestation;
+    assert.equal(typeof att.desiredDynamicConfigHash, "string");
+    assert.equal(typeof att.desiredAssetSha256, "string");
+    assert.equal(typeof att.reusable, "boolean");
+    assert.equal(typeof att.needsPrepare, "boolean");
+    assert.ok(Array.isArray(att.reasons));
+  });
+});
+
+test("GET /api/status: restoreTarget.attestation for dirty restore target (runtime-fresh, snapshot-stale)", async () => {
+  await withTestEnv(async () => {
+    const desiredConfigHash = computeGatewayConfigHash({});
+    const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+    await mutateMeta((meta) => {
+      meta.runtimeDynamicConfigHash = desiredConfigHash;
+      meta.snapshotDynamicConfigHash = "stale-snapshot-hash";
+      meta.runtimeAssetSha256 = desiredAssetSha256;
+      meta.snapshotAssetSha256 = desiredAssetSha256;
+      meta.restorePreparedStatus = "dirty";
+      meta.restorePreparedReason = "dynamic-config-changed";
+      meta.restorePreparedAt = 123;
+    });
+
+    const route = getStatusRoute();
+    const request = buildAuthGetRequest("/api/status");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      restoreTarget: {
+        restorePreparedStatus: string;
+        restorePreparedReason: string;
+        restorePreparedAt: number;
+        snapshotDynamicConfigHash: string;
+        runtimeDynamicConfigHash: string;
+        snapshotAssetSha256: string;
+        runtimeAssetSha256: string;
+        attestation: RestoreTargetAttestation;
+      };
+    };
+
+    // Raw fields remain alongside attestation
+    assert.equal(body.restoreTarget.restorePreparedStatus, "dirty");
+    assert.equal(body.restoreTarget.restorePreparedReason, "dynamic-config-changed");
+    assert.equal(body.restoreTarget.restorePreparedAt, 123);
+    assert.equal(body.restoreTarget.snapshotDynamicConfigHash, "stale-snapshot-hash");
+    assert.equal(body.restoreTarget.runtimeDynamicConfigHash, desiredConfigHash);
+
+    // Attestation freshness
+    const att = body.restoreTarget.attestation;
+    assert.equal(att.desiredDynamicConfigHash, desiredConfigHash);
+    assert.equal(att.desiredAssetSha256, desiredAssetSha256);
+    assert.equal(att.runtimeConfigFresh, true);
+    assert.equal(att.snapshotConfigFresh, false);
+    assert.equal(att.runtimeAssetsFresh, true);
+    assert.equal(att.snapshotAssetsFresh, true);
+    assert.equal(att.reusable, false);
+    assert.equal(att.needsPrepare, true);
+    assert.deepEqual(att.reasons, [
+      "snapshot-config-stale",
+      "restore-target-dirty",
+    ]);
+    assert.equal(att.restorePreparedStatus, "dirty");
+    assert.equal(att.restorePreparedReason, "dynamic-config-changed");
+    assert.equal(att.restorePreparedAt, 123);
   });
 });

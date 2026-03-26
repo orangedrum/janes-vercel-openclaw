@@ -19,13 +19,18 @@ import {
   getAdminLaunchVerifyRoute,
   drainAfterCallbacks,
 } from "@/test-utils/route-caller";
-import { computeGatewayConfigHash } from "@/server/openclaw/config";
+import {
+  computeGatewayConfigHash,
+  toWhatsAppGatewayConfig,
+} from "@/server/openclaw/config";
+import { buildRestoreAssetManifest } from "@/server/openclaw/restore-assets";
 import type {
   LaunchVerificationPayload,
   LaunchVerificationPhaseId,
   LaunchVerificationRuntime,
   LaunchVerificationSandboxHealth,
   ChannelReadiness,
+  RestoreTargetAttestation,
 } from "@/shared/launch-verification";
 
 /**
@@ -1295,5 +1300,140 @@ test("launch-verify POST: new code reads failingChannelIds as canonical field", 
       body.diagnostics.warningChannelIds,
       "failingChannelIds must equal warningChannelIds (compat mirror)",
     );
+  });
+});
+
+// ===========================================================================
+// Restore attestation: WhatsApp-inclusive hash
+// ===========================================================================
+
+test("launch-verify POST: runtime.expectedConfigHash includes WhatsApp config in hash", async () => {
+  await withHarness(async (h) => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://test.example";
+
+    await h.driveToRunning();
+
+    const whatsapp = {
+      enabled: true,
+      configuredAt: Date.now(),
+      pluginSpec: "@openclaw/whatsapp",
+      dmPolicy: "allowlist" as const,
+      allowFrom: ["15551234567"],
+      groupPolicy: "allowlist" as const,
+      groupAllowFrom: ["15557654321"],
+      groups: ["team-chat"],
+    };
+
+    await h.mutateMeta((meta) => {
+      meta.channels.whatsapp = whatsapp;
+    });
+
+    h.fakeFetch.on("POST", /v1\/chat\/completions/, () => {
+      return Response.json({
+        choices: [{ message: { content: "launch-verify-ok" } }],
+      });
+    });
+
+    const route = getAdminLaunchVerifyRoute();
+    const req = buildAuthPostRequest(
+      "/api/admin/launch-verify",
+      JSON.stringify({ mode: "safe" }),
+    );
+    const result = await callRoute(route.POST, req);
+    await drainAfterCallbacks();
+
+    const body = result.json as LaunchVerificationPayload;
+    assert.ok(body.runtime, "expected runtime in response");
+    const runtime = body.runtime as LaunchVerificationRuntime;
+
+    const withWhatsapp = computeGatewayConfigHash({
+      whatsappConfig: toWhatsAppGatewayConfig(whatsapp),
+    });
+    const withoutWhatsapp = computeGatewayConfigHash({});
+
+    assert.equal(
+      runtime.expectedConfigHash,
+      withWhatsapp,
+      "expectedConfigHash must include WhatsApp config",
+    );
+    assert.notEqual(
+      runtime.expectedConfigHash,
+      withoutWhatsapp,
+      "expectedConfigHash must differ from hash without WhatsApp",
+    );
+
+    // restoreAttestation must agree
+    assert.ok(runtime.restoreAttestation, "expected restoreAttestation");
+    assert.equal(
+      runtime.restoreAttestation.desiredDynamicConfigHash,
+      runtime.expectedConfigHash,
+      "attestation.desiredDynamicConfigHash must equal expectedConfigHash",
+    );
+  });
+});
+
+// ===========================================================================
+// Restore attestation: runtime-fresh / snapshot-stale separation
+// ===========================================================================
+
+test("launch-verify POST: restoreAttestation separates runtime-fresh from snapshot-stale", async () => {
+  await withHarness(async (h) => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://test.example";
+
+    await h.driveToRunning();
+
+    const desiredConfigHash = computeGatewayConfigHash({});
+    const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+    await h.mutateMeta((meta) => {
+      meta.runtimeDynamicConfigHash = desiredConfigHash;
+      meta.snapshotDynamicConfigHash = "stale-snapshot-hash";
+      meta.runtimeAssetSha256 = desiredAssetSha256;
+      meta.snapshotAssetSha256 = desiredAssetSha256;
+      meta.restorePreparedStatus = "dirty";
+      meta.restorePreparedReason = "dynamic-config-changed";
+      meta.restorePreparedAt = 123;
+    });
+
+    h.fakeFetch.on("POST", /v1\/chat\/completions/, () => {
+      return Response.json({
+        choices: [{ message: { content: "launch-verify-ok" } }],
+      });
+    });
+
+    const route = getAdminLaunchVerifyRoute();
+    const req = buildAuthPostRequest(
+      "/api/admin/launch-verify",
+      JSON.stringify({ mode: "safe" }),
+    );
+    const result = await callRoute(route.POST, req);
+    await drainAfterCallbacks();
+
+    const body = result.json as LaunchVerificationPayload;
+    assert.ok(body.runtime, "expected runtime in response");
+    const runtime = body.runtime as LaunchVerificationRuntime;
+    assert.ok(runtime.restoreAttestation, "expected restoreAttestation");
+
+    const att = runtime.restoreAttestation as RestoreTargetAttestation;
+    assert.equal(att.runtimeConfigFresh, true, "runtime config should be fresh");
+    assert.equal(att.snapshotConfigFresh, false, "snapshot config should be stale");
+    assert.equal(att.runtimeAssetsFresh, true, "runtime assets should be fresh");
+    assert.equal(att.snapshotAssetsFresh, true, "snapshot assets should be fresh");
+    assert.equal(att.reusable, false, "should not be reusable");
+    assert.equal(att.needsPrepare, true, "should need prepare");
+    assert.ok(
+      att.reasons.includes("snapshot-config-stale"),
+      `reasons should include snapshot-config-stale; got: ${att.reasons}`,
+    );
+    assert.ok(
+      att.reasons.includes("restore-target-dirty"),
+      `reasons should include restore-target-dirty; got: ${att.reasons}`,
+    );
+
+    // Legacy compatibility fields must still be present
+    assert.equal(runtime.expectedConfigHash, att.desiredDynamicConfigHash);
+    assert.equal(runtime.restorePreparedStatus, "dirty");
+    assert.equal(runtime.snapshotDynamicConfigHash, "stale-snapshot-hash");
+    assert.equal(runtime.runtimeDynamicConfigHash, desiredConfigHash);
   });
 });

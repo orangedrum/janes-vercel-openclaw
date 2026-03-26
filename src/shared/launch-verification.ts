@@ -1,6 +1,33 @@
 import type { ChannelName } from "@/shared/channels";
 import type { RestorePreparedStatus, RestorePreparedReason } from "@/shared/types";
 
+// ---------------------------------------------------------------------------
+// Restore target attestation — canonical machine-readable restore contract
+// ---------------------------------------------------------------------------
+
+export type RestoreTargetAttestation = {
+  desiredDynamicConfigHash: string;
+  desiredAssetSha256: string;
+  snapshotDynamicConfigHash: string | null;
+  runtimeDynamicConfigHash: string | null;
+  snapshotAssetSha256: string | null;
+  runtimeAssetSha256: string | null;
+  restorePreparedStatus: RestorePreparedStatus;
+  restorePreparedReason: string | null;
+  restorePreparedAt: number | null;
+  runtimeConfigFresh: boolean | null;
+  snapshotConfigFresh: boolean | null;
+  runtimeAssetsFresh: boolean | null;
+  snapshotAssetsFresh: boolean | null;
+  reusable: boolean;
+  needsPrepare: boolean;
+  reasons: string[];
+};
+
+// ---------------------------------------------------------------------------
+// Launch verification types
+// ---------------------------------------------------------------------------
+
 export type LaunchVerificationPhaseId =
   | "preflight"
   | "queuePing"
@@ -32,6 +59,7 @@ export type LaunchVerificationRuntime = {
   runtimeDynamicConfigHash: string | null;
   snapshotAssetSha256: string | null;
   runtimeAssetSha256: string | null;
+  restoreAttestation?: RestoreTargetAttestation;
 };
 
 export type LaunchVerificationSandboxHealth = {

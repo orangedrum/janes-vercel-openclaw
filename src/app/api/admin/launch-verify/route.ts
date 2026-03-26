@@ -22,7 +22,7 @@ import {
 } from "@/server/sandbox/lifecycle";
 import { getOpenclawPackageSpec } from "@/server/env";
 import { detectDrift } from "@/server/openclaw/bootstrap";
-import { computeGatewayConfigHash } from "@/server/openclaw/config";
+import { buildRestoreTargetAttestation } from "@/server/sandbox/restore-attestation";
 import { getInitializedMeta } from "@/server/store/store";
 import {
   publishLaunchVerifyQueueProbe,
@@ -173,27 +173,19 @@ function buildLaunchVerificationRuntime(
   const packageSpec = getOpenclawPackageSpec();
   if (!packageSpec) return undefined;
 
-  const expectedConfigHash = computeGatewayConfigHash({
-    telegramBotToken: runtimeMeta.channels.telegram?.botToken,
-    telegramWebhookSecret: runtimeMeta.channels.telegram?.webhookSecret,
-    slackCredentials: runtimeMeta.channels.slack
-      ? {
-          botToken: runtimeMeta.channels.slack.botToken,
-          signingSecret: runtimeMeta.channels.slack.signingSecret,
-        }
-      : undefined,
-  });
+  const attestation = buildRestoreTargetAttestation(runtimeMeta);
 
   return {
     packageSpec,
     installedVersion: runtimeMeta.openclawVersion,
     drift: detectDrift(packageSpec, runtimeMeta.openclawVersion),
-    expectedConfigHash,
+    expectedConfigHash: attestation.desiredDynamicConfigHash,
     lastRestoreConfigHash: runtimeMeta.lastRestoreMetrics?.dynamicConfigHash ?? null,
     dynamicConfigVerified:
       runtimeMeta.lastRestoreMetrics?.dynamicConfigHash == null
         ? null
-        : runtimeMeta.lastRestoreMetrics.dynamicConfigHash === expectedConfigHash,
+        : runtimeMeta.lastRestoreMetrics.dynamicConfigHash ===
+          attestation.desiredDynamicConfigHash,
     dynamicConfigReason: runtimeMeta.lastRestoreMetrics?.dynamicConfigReason,
     restorePreparedStatus: runtimeMeta.restorePreparedStatus,
     restorePreparedReason: runtimeMeta.restorePreparedReason,
@@ -201,6 +193,7 @@ function buildLaunchVerificationRuntime(
     runtimeDynamicConfigHash: runtimeMeta.runtimeDynamicConfigHash,
     snapshotAssetSha256: runtimeMeta.snapshotAssetSha256,
     runtimeAssetSha256: runtimeMeta.runtimeAssetSha256,
+    restoreAttestation: attestation,
   };
 }
 

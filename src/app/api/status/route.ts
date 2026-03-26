@@ -3,6 +3,7 @@ import { getPublicChannelState } from "@/server/channels/state";
 import { getAuthMode } from "@/server/env";
 import { computeWouldBlock } from "@/server/firewall/state";
 import { extractRequestId, logError } from "@/server/log";
+import { buildRestoreTargetAttestation } from "@/server/sandbox/restore-attestation";
 import {
   getRunningSandboxTimeoutRemainingMs,
   probeGatewayReady,
@@ -127,6 +128,7 @@ export async function GET(request: Request): Promise<Response> {
         runtimeDynamicConfigHash: responseMeta.runtimeDynamicConfigHash,
         snapshotAssetSha256: responseMeta.snapshotAssetSha256,
         runtimeAssetSha256: responseMeta.runtimeAssetSha256,
+        attestation: buildRestoreTargetAttestation(responseMeta),
       },
       lifecycle: {
         lastRestoreMetrics: responseMeta.lastRestoreMetrics ?? null,
