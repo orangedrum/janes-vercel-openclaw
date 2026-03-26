@@ -51,6 +51,7 @@ test("buildRestoreTargetAttestation separates runtime-fresh from snapshot-stale"
 
   const attestation = buildRestoreTargetAttestation({
     ...base,
+    snapshotId: "snap-stale",
     runtimeDynamicConfigHash: desiredConfigHash,
     snapshotDynamicConfigHash: "stale-snapshot-hash",
     runtimeAssetSha256: desiredAssetSha256,
@@ -77,6 +78,7 @@ test("buildRestoreTargetAttestation returns null freshness when hash is absent",
 
   const attestation = buildRestoreTargetAttestation({
     ...base,
+    snapshotId: "snap-no-hashes",
     runtimeDynamicConfigHash: null,
     snapshotDynamicConfigHash: null,
     runtimeAssetSha256: null,
@@ -104,6 +106,7 @@ test("buildRestoreTargetAttestation reports reusable when snapshot is fresh and 
 
   const attestation = buildRestoreTargetAttestation({
     ...base,
+    snapshotId: "snap-ready",
     snapshotDynamicConfigHash: desiredConfigHash,
     runtimeDynamicConfigHash: desiredConfigHash,
     snapshotAssetSha256: desiredAssetSha256,
@@ -125,6 +128,7 @@ test("buildRestoreTargetAttestation marks stale snapshot hashes (config + assets
 
   const attestation = buildRestoreTargetAttestation({
     ...base,
+    snapshotId: "snap-stale-hashes",
     runtimeDynamicConfigHash: desiredConfigHash,
     snapshotDynamicConfigHash: "old-snapshot-config-hash",
     runtimeAssetSha256: desiredAssetSha256,
@@ -143,6 +147,50 @@ test("buildRestoreTargetAttestation marks stale snapshot hashes (config + assets
   assert.ok(attestation.reasons.includes("snapshot-config-stale"));
   assert.ok(attestation.reasons.includes("snapshot-assets-stale"));
   assert.ok(attestation.reasons.includes("restore-target-dirty"));
+});
+
+test("buildRestoreTargetAttestation: missing snapshotId is never reusable even when hashes match", () => {
+  const base = createDefaultMeta(Date.now(), "gw-token");
+  const desiredConfigHash = computeGatewayConfigHash({});
+  const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+  const attestation = buildRestoreTargetAttestation({
+    ...base,
+    snapshotId: null,
+    snapshotDynamicConfigHash: desiredConfigHash,
+    runtimeDynamicConfigHash: desiredConfigHash,
+    snapshotAssetSha256: desiredAssetSha256,
+    runtimeAssetSha256: desiredAssetSha256,
+    restorePreparedStatus: "ready",
+    restorePreparedReason: "prepared",
+    restorePreparedAt: 123,
+  });
+
+  assert.equal(attestation.reusable, false);
+  assert.equal(attestation.needsPrepare, true);
+  assert.ok(attestation.reasons.includes("snapshot-missing"));
+});
+
+test("buildRestoreTargetAttestation: present snapshotId with matching hashes is reusable", () => {
+  const base = createDefaultMeta(Date.now(), "gw-token");
+  const desiredConfigHash = computeGatewayConfigHash({});
+  const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+  const attestation = buildRestoreTargetAttestation({
+    ...base,
+    snapshotId: "snap-ready",
+    snapshotDynamicConfigHash: desiredConfigHash,
+    runtimeDynamicConfigHash: desiredConfigHash,
+    snapshotAssetSha256: desiredAssetSha256,
+    runtimeAssetSha256: desiredAssetSha256,
+    restorePreparedStatus: "ready",
+    restorePreparedReason: "prepared",
+    restorePreparedAt: Date.now(),
+  });
+
+  assert.equal(attestation.reusable, true);
+  assert.equal(attestation.needsPrepare, false);
+  assert.ok(!attestation.reasons.includes("snapshot-missing"));
 });
 
 // ---------------------------------------------------------------------------

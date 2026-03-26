@@ -694,6 +694,103 @@ test("GET /api/admin/prepare-restore: returns ok=true when restore target is reu
   });
 });
 
+test("GET /api/admin/prepare-restore: missing snapshotId cannot report reusable even when snapshot hashes match", async () => {
+  await withTestEnv(async () => {
+    installFakeController();
+
+    const { computeGatewayConfigHash } = await import("@/server/openclaw/config");
+    const { buildRestoreAssetManifest } = await import("@/server/openclaw/restore-assets");
+    const desiredConfigHash = computeGatewayConfigHash({});
+    const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+    await mutateMeta((m) => {
+      m.status = "stopped";
+      m.snapshotId = null;
+      m.snapshotDynamicConfigHash = desiredConfigHash;
+      m.runtimeDynamicConfigHash = desiredConfigHash;
+      m.snapshotAssetSha256 = desiredAssetSha256;
+      m.runtimeAssetSha256 = desiredAssetSha256;
+      m.restorePreparedStatus = "ready";
+      m.restorePreparedReason = "prepared";
+      m.restorePreparedAt = Date.now();
+    });
+
+    const result = await callRoute(
+      prepareRestoreRoute.GET!,
+      authGet("/api/admin/prepare-restore"),
+    );
+
+    assert.equal(result.status, 200);
+
+    const body = result.json as {
+      ok: boolean;
+      attestation: {
+        reusable: boolean;
+        needsPrepare: boolean;
+        reasons: string[];
+      };
+      plan: {
+        status: string;
+        blocking: boolean;
+        actions: Array<{ id: string }>;
+      };
+    };
+
+    assert.equal(body.ok, false);
+    assert.equal(body.attestation.reusable, false);
+    assert.equal(body.attestation.needsPrepare, true);
+    assert.ok(body.attestation.reasons.includes("snapshot-missing"));
+    assert.equal(body.plan.status, "needs-prepare");
+    assert.equal(body.plan.blocking, true);
+    assert.ok(
+      body.plan.actions.some((action) => action.id === "prepare-destructive"),
+      "Plan should require prepare-destructive when snapshotId is missing",
+    );
+  });
+});
+
+test("GET /api/admin/prepare-restore: inspect mode is read-only", async () => {
+  await withTestEnv(async () => {
+    installFakeController();
+
+    const { computeGatewayConfigHash } = await import("@/server/openclaw/config");
+    const { buildRestoreAssetManifest } = await import("@/server/openclaw/restore-assets");
+    const desiredConfigHash = computeGatewayConfigHash({});
+    const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+    await mutateMeta((m) => {
+      m.status = "stopped";
+      m.snapshotId = "snap-stable";
+      m.snapshotDynamicConfigHash = desiredConfigHash;
+      m.runtimeDynamicConfigHash = desiredConfigHash;
+      m.snapshotAssetSha256 = desiredAssetSha256;
+      m.runtimeAssetSha256 = desiredAssetSha256;
+      m.restorePreparedStatus = "ready";
+      m.restorePreparedReason = "prepared";
+      m.restorePreparedAt = 123456;
+    });
+
+    const before = await getInitializedMeta();
+
+    const result = await callRoute(
+      prepareRestoreRoute.GET!,
+      authGet("/api/admin/prepare-restore"),
+    );
+
+    assert.equal(result.status, 200);
+
+    const after = await getInitializedMeta();
+    assert.equal(after.version, before.version);
+    assert.equal(after.status, before.status);
+    assert.equal(after.snapshotId, before.snapshotId);
+    assert.equal(after.snapshotDynamicConfigHash, before.snapshotDynamicConfigHash);
+    assert.equal(after.snapshotAssetSha256, before.snapshotAssetSha256);
+    assert.equal(after.restorePreparedStatus, before.restorePreparedStatus);
+    assert.equal(after.restorePreparedReason, before.restorePreparedReason);
+    assert.equal(after.restorePreparedAt, before.restorePreparedAt);
+  });
+});
+
 // ===========================================================================
 // /api/admin/restore-target delegates to /api/admin/prepare-restore
 // ===========================================================================

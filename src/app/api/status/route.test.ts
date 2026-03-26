@@ -660,6 +660,7 @@ test("GET /api/status: restoreTarget.attestation for dirty restore target (runti
     const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
 
     await mutateMeta((meta) => {
+      meta.snapshotId = "snap-stale";
       meta.runtimeDynamicConfigHash = desiredConfigHash;
       meta.snapshotDynamicConfigHash = "stale-snapshot-hash";
       meta.runtimeAssetSha256 = desiredAssetSha256;

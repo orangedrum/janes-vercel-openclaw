@@ -12,6 +12,7 @@ import type {
 type RestoreAttestationMeta = Pick<
   SingleMeta,
   | "channels"
+  | "snapshotId"
   | "snapshotConfigHash"
   | "snapshotDynamicConfigHash"
   | "runtimeDynamicConfigHash"
@@ -50,6 +51,9 @@ export function buildRestoreTargetAttestation(
   const snapshotDynamicConfigHash =
     meta.snapshotDynamicConfigHash ?? meta.snapshotConfigHash;
 
+  const hasSnapshot =
+    typeof meta.snapshotId === "string" && meta.snapshotId.length > 0;
+
   const runtimeConfigFresh = compareHash(
     meta.runtimeDynamicConfigHash,
     desiredDynamicConfigHash,
@@ -69,6 +73,7 @@ export function buildRestoreTargetAttestation(
 
   const reasons: string[] = [];
 
+  if (!hasSnapshot) reasons.push("snapshot-missing");
   if (runtimeConfigFresh === false) reasons.push("runtime-config-stale");
   if (runtimeAssetsFresh === false) reasons.push("runtime-assets-stale");
 
@@ -85,6 +90,7 @@ export function buildRestoreTargetAttestation(
   }
 
   const reusable =
+    hasSnapshot &&
     meta.restorePreparedStatus === "ready" &&
     snapshotConfigFresh === true &&
     snapshotAssetsFresh === true;

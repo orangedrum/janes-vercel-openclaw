@@ -2264,7 +2264,15 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
   await mutateMeta((meta) => {
     meta.status = "creating";
     meta.lastError = null;
+
+    // Creating a brand-new sandbox invalidates any previously prepared restore target.
     meta.snapshotId = null;
+    meta.snapshotConfigHash = null;
+    meta.snapshotDynamicConfigHash = null;
+    meta.snapshotAssetSha256 = null;
+    meta.restorePreparedStatus = "dirty";
+    meta.restorePreparedReason = "snapshot-missing";
+    meta.restorePreparedAt = null;
   });
 
   const vcpus = getSandboxVcpus();
