@@ -251,17 +251,55 @@ test("channel-secrets: POST rejects non-object JSON", async () => {
   });
 });
 
-test("channel-secrets: POST rejects unsupported channel", async () => {
+test("channel-secrets: POST dispatches whatsapp webhook with signed body", async () => {
   await withAdminAuthEnv(async () => {
     const route = getAdminChannelSecretsRoute();
-    const request = buildAuthPostRequest(
-      "/api/admin/channel-secrets",
-      JSON.stringify({ channel: "whatsapp", body: "{}" }),
-    );
-    const result = await callRoute(route.POST!, request);
-    assert.equal(result.status, 400);
-    const body = result.json as { error: string };
-    assert.equal(body.error, "UNSUPPORTED_CHANNEL");
+
+    const putRequest = buildAuthPutRequest("/api/admin/channel-secrets", "{}");
+    await callRoute(route.PUT!, putRequest);
+
+    let capturedUrl = "";
+    let capturedSignature = "";
+    let capturedBody = "";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      capturedSignature = new Headers(init?.headers).get("x-hub-signature-256") ?? "";
+      capturedBody = String(init?.body ?? "");
+      return Response.json({ ok: true });
+    };
+
+    try {
+      const request = buildAuthPostRequest(
+        "/api/admin/channel-secrets",
+        JSON.stringify({ channel: "whatsapp", body: '{"object":"whatsapp_business_account"}' }),
+      );
+      const result = await callRoute(route.POST!, request);
+      assert.equal(result.status, 200);
+      const body = result.json as {
+        configured: boolean;
+        sent: boolean;
+        status: number;
+        channel: string;
+      };
+      assert.equal(body.configured, true);
+      assert.equal(body.sent, true);
+      assert.equal(body.channel, "whatsapp");
+      assert.equal(body.status, 200);
+      assert.ok(
+        capturedUrl.startsWith("http://localhost:3000/api/channels/whatsapp/webhook"),
+        `Expected WhatsApp webhook URL, got: ${capturedUrl}`,
+      );
+      assert.ok(capturedSignature.startsWith("sha256="), "Expected WhatsApp HMAC signature");
+      assert.equal(capturedBody, '{"object":"whatsapp_business_account"}');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

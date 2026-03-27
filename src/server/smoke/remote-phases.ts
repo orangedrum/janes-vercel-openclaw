@@ -10,6 +10,7 @@ import {
   buildSlackSmokePayload,
   buildDiscordSmokePayload,
   buildTelegramSmokePayload,
+  buildWhatsAppSmokePayload,
 } from "./remote-crypto.js";
 
 // ---------------------------------------------------------------------------
@@ -585,7 +586,7 @@ async function removeTestChannels(
  */
 async function sendSmokeWebhook(
   baseUrl: string,
-  channel: "slack" | "telegram" | "discord",
+  channel: "slack" | "telegram" | "discord" | "whatsapp",
   payloadBody: string,
   requestTimeoutMs: number,
 ): Promise<{ configured: boolean; sent: boolean; status?: number } | null> {
@@ -641,12 +642,14 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
     const slackPayload = buildSlackSmokePayload().body;
     const telegramPayload = buildTelegramSmokePayload();
     const discordPayload = buildDiscordSmokePayload();
+    const whatsappPayload = buildWhatsAppSmokePayload();
 
     let slackResult = await sendSmokeWebhook(baseUrl, "slack", slackPayload, reqTimeout);
     let telegramResult = await sendSmokeWebhook(baseUrl, "telegram", telegramPayload, reqTimeout);
     let discordResult = await sendSmokeWebhook(baseUrl, "discord", discordPayload, reqTimeout);
+    let whatsappResult = await sendSmokeWebhook(baseUrl, "whatsapp", whatsappPayload, reqTimeout);
 
-    if (!slackResult && !telegramResult && !discordResult) {
+    if (!slackResult && !telegramResult && !discordResult && !whatsappResult) {
       log(phase, "skipped", { reason: "smoke-webhook-endpoint-unavailable" });
       return {
         phase, passed: true, durationMs: 0, endpoint,
@@ -657,13 +660,15 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
     let hasSlack = slackResult?.configured === true && slackResult.sent === true;
     let hasTelegram = telegramResult?.configured === true && telegramResult.sent === true;
     let hasDiscord = discordResult?.configured === true && discordResult.sent === true;
+    let hasWhatsApp = whatsappResult?.configured === true && whatsappResult.sent === true;
 
-    if (!hasSlack && !hasTelegram && !hasDiscord) {
+    if (!hasSlack && !hasTelegram && !hasDiscord && !hasWhatsApp) {
       // Channels not configured — auto-configure test channels and retry
       const noneConfigured =
         slackResult?.configured === false &&
         telegramResult?.configured === false &&
-        discordResult?.configured === false;
+        discordResult?.configured === false &&
+        whatsappResult?.configured === false;
       if (noneConfigured) {
         log(phase, "auto-configuring", { reason: "no-channels-configured" });
         const configured = await configureTestChannels(baseUrl, reqTimeout);
@@ -680,25 +685,29 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
         const retrySlackPayload = buildSlackSmokePayload().body;
         const retryTelegramPayload = buildTelegramSmokePayload();
         const retryDiscordPayload = buildDiscordSmokePayload();
+        const retryWhatsAppPayload = buildWhatsAppSmokePayload();
         slackResult = await sendSmokeWebhook(baseUrl, "slack", retrySlackPayload, reqTimeout);
         telegramResult = await sendSmokeWebhook(baseUrl, "telegram", retryTelegramPayload, reqTimeout);
         discordResult = await sendSmokeWebhook(baseUrl, "discord", retryDiscordPayload, reqTimeout);
+        whatsappResult = await sendSmokeWebhook(baseUrl, "whatsapp", retryWhatsAppPayload, reqTimeout);
         hasSlack = slackResult?.configured === true && slackResult.sent === true;
         hasTelegram = telegramResult?.configured === true && telegramResult.sent === true;
         hasDiscord = discordResult?.configured === true && discordResult.sent === true;
+        hasWhatsApp = whatsappResult?.configured === true && whatsappResult.sent === true;
       }
 
-      if (!hasSlack && !hasTelegram && !hasDiscord) {
+      if (!hasSlack && !hasTelegram && !hasDiscord && !hasWhatsApp) {
         log(phase, "send-failed", {
           slack: slackResult,
           telegram: telegramResult,
           discord: discordResult,
+          whatsapp: whatsappResult,
         });
         return {
           phase, passed: false, durationMs: 0, endpoint,
           error: "Failed to send smoke webhooks",
           errorCode: "WEBHOOK_SEND_FAILED",
-          detail: { slack: slackResult, telegram: telegramResult, discord: discordResult },
+          detail: { slack: slackResult, telegram: telegramResult, discord: discordResult, whatsapp: whatsappResult },
         };
       }
     }
@@ -716,6 +725,9 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
     }
     if (hasDiscord) {
       results.discord = { sent: true, durationMs: 0 };
+    }
+    if (hasWhatsApp) {
+      results.whatsapp = { sent: true, durationMs: 0 };
     }
 
     const totalMs = Math.round(performance.now() - t0);
@@ -766,34 +778,57 @@ export async function channelWakeFromSleep(
   opts?: PhaseOptions,
 ): Promise<PhaseResult> {
   const phase = "channelWakeFromSleep";
-  const endpoint = "/api/channels/slack/webhook";
+  const endpoint = "/api/channels/*/webhook";
   const reqTimeout = opts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   let configuredByUs = false;
 
   try {
-    // 1. Probe if Slack is configured
-    let slackProbe = await sendSmokeWebhook(baseUrl, "slack", "{}", reqTimeout);
-    if (!slackProbe?.configured) {
+    // 1. Probe which wake-capable channels are configured.
+    const wakeProbeOrder = [
+      { channel: "slack" as const, probeBody: "{}" },
+      { channel: "telegram" as const, probeBody: "{}" },
+      { channel: "whatsapp" as const, probeBody: "{}" },
+    ];
+
+    let wakeChannel: "slack" | "telegram" | "whatsapp" | null = null;
+    let probeResults = await Promise.all(
+      wakeProbeOrder.map(async ({ channel, probeBody }) => ({
+        channel,
+        result: await sendSmokeWebhook(baseUrl, channel, probeBody, reqTimeout),
+      })),
+    );
+
+    const configuredProbe = probeResults.find((entry) => entry.result?.configured);
+    if (configuredProbe) {
+      wakeChannel = configuredProbe.channel;
+    } else {
       // Auto-configure test channels
-      log(phase, "auto-configuring", { reason: "no-slack-configured" });
+      log(phase, "auto-configuring", { reason: "no-wake-channel-configured" });
       const configured = await configureTestChannels(baseUrl, reqTimeout);
       if (!configured) {
         log(phase, "skipped", { reason: "auto-configure-failed" });
         return {
           phase, passed: true, durationMs: 0, endpoint,
-          detail: { skipped: true, reason: "Slack not configured and auto-configure failed" },
+          detail: { skipped: true, reason: "No wake-capable channels configured and auto-configure failed" },
         };
       }
       configuredByUs = true;
-      slackProbe = await sendSmokeWebhook(baseUrl, "slack", "{}", reqTimeout);
-      if (!slackProbe?.configured) {
+      probeResults = await Promise.all(
+        wakeProbeOrder.map(async ({ channel, probeBody }) => ({
+          channel,
+          result: await sendSmokeWebhook(baseUrl, channel, probeBody, reqTimeout),
+        })),
+      );
+      const configuredAfterAuto = probeResults.find((entry) => entry.result?.configured);
+      if (!configuredAfterAuto) {
         log(phase, "skipped", { reason: "still-not-configured-after-auto" });
         return {
           phase, passed: true, durationMs: 0, endpoint,
-          detail: { skipped: true, reason: "Slack still not configured after auto-configure" },
+          detail: { skipped: true, reason: "Wake-capable channels still not configured after auto-configure" },
         };
       }
+      wakeChannel = configuredAfterAuto.channel;
     }
 
     const t0 = performance.now();
@@ -822,15 +857,20 @@ export async function channelWakeFromSleep(
     }
 
     // 3. Send webhook while sandbox is stopped (signed + sent server-side)
-    log(phase, "sending-webhook-while-stopped", {});
-    const slackPayload = buildSlackSmokePayload().body;
-    const slackResult = await sendSmokeWebhook(baseUrl, "slack", slackPayload, reqTimeout);
-    if (!slackResult?.sent) {
+    log(phase, "sending-webhook-while-stopped", { channel: wakeChannel });
+    const wakePayload =
+      wakeChannel === "slack"
+        ? buildSlackSmokePayload().body
+        : wakeChannel === "telegram"
+          ? buildTelegramSmokePayload()
+          : buildWhatsAppSmokePayload();
+    const wakeResult = await sendSmokeWebhook(baseUrl, wakeChannel!, wakePayload, reqTimeout);
+    if (!wakeResult?.sent) {
       return {
         phase, passed: false, durationMs: Math.round(performance.now() - t0), endpoint,
-        error: `Failed to send Slack webhook (status: ${slackResult?.status ?? "unknown"})`,
+        error: `Failed to send ${wakeChannel} webhook (status: ${wakeResult?.status ?? "unknown"})`,
         errorCode: "WEBHOOK_SEND_FAILED",
-        hint: "Check Slack channel configuration",
+        hint: `Check ${wakeChannel} channel configuration`,
       };
     }
 
@@ -884,7 +924,7 @@ export async function channelWakeFromSleep(
 
     return {
       phase, passed: true, durationMs: totalMs, endpoint,
-      detail: { sandboxWokeUp: true, queueDrained: true, autoConfigured: configuredByUs },
+      detail: { sandboxWokeUp: true, queueDrained: true, autoConfigured: configuredByUs, wakeChannel },
     };
   } catch (err) {
     if (configuredByUs) {

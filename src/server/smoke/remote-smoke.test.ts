@@ -24,6 +24,7 @@ import {
   firewallRead,
   channelsSummary,
   sshEcho,
+  channelRoundTrip,
   DEFAULT_REQUEST_TIMEOUT_MS,
   classifyResponse,
   parseJsonBody,
@@ -383,6 +384,25 @@ test("sshEcho phase: fails when stdout missing smoke-ok", async () => {
     const r = await sshEcho(BASE);
     assertPhaseShape(r, "sshEcho");
     assert.equal(r.passed, false);
+  } finally {
+    restore();
+  }
+});
+
+test("channelRoundTrip phase: includes whatsapp when smoke dispatch succeeds", async () => {
+  const restore = installMockFetch([
+    {
+      pattern: /\/api\/admin\/channel-secrets$/,
+      response: () =>
+        Response.json({ configured: true, sent: true, status: 200, channel: "whatsapp" }),
+    },
+  ]);
+  try {
+    const r = await channelRoundTrip(BASE);
+    assertPhaseShape(r, "channelRoundTrip");
+    assert.equal(r.passed, true);
+    const channels = (r.detail?.channels as Array<{ channel: string; sent: boolean }> | undefined) ?? [];
+    assert.ok(channels.some((entry) => entry.channel === "whatsapp" && entry.sent === true));
   } finally {
     restore();
   }

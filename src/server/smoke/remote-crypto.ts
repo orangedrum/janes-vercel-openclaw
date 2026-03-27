@@ -62,6 +62,62 @@ export function buildTelegramSmokePayload(): string {
   return JSON.stringify(payload);
 }
 
+export function signWhatsAppPayload(
+  appSecret: string,
+  rawBody: string,
+): { "x-hub-signature-256": string } {
+  const digest = createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  return {
+    "x-hub-signature-256": `sha256=${digest}`,
+  };
+}
+
+/**
+ * Build a minimal WhatsApp Business API message webhook payload.
+ */
+export function buildWhatsAppSmokePayload(): string {
+  const messageId = `wamid.smoke-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const waId = "15551234567";
+  const payload = {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "waba-smoke-test",
+        changes: [
+          {
+            field: "messages",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: {
+                display_phone_number: "15550001111",
+                phone_number_id: "123456789",
+              },
+              contacts: [
+                {
+                  profile: { name: "Smoke Test" },
+                  wa_id: waId,
+                },
+              ],
+              messages: [
+                {
+                  from: waId,
+                  id: messageId,
+                  timestamp: String(Math.floor(Date.now() / 1000)),
+                  type: "text",
+                  text: {
+                    body: "smoke-test: reply with exactly smoke-ok",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  return JSON.stringify(payload);
+}
+
 export type DiscordSmokeKeyPair = {
   publicKeyHex: string;
   privateKeyPkcs8Pem: string;

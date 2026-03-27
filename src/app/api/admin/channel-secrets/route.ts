@@ -7,6 +7,7 @@ import {
   generateDiscordSmokeKeyPair,
   signDiscordPayload,
   signSlackPayload,
+  signWhatsAppPayload,
 } from "@/server/smoke/remote-crypto";
 import { extractRequestId, logInfo, logWarn } from "@/server/log";
 import { buildPublicDisplayUrl, buildPublicUrl } from "@/server/public-url";
@@ -16,7 +17,7 @@ const DISCORD_SMOKE_PRIVATE_KEY_STORE_KEY =
 
 const MAX_SMOKE_WEBHOOK_BYTES = 64 * 1024;
 
-type SmokeChannel = "slack" | "telegram" | "discord";
+type SmokeChannel = "slack" | "telegram" | "discord" | "whatsapp";
 
 function parseSmokeDispatchInput(
   input: unknown,
@@ -29,12 +30,13 @@ function parseSmokeDispatchInput(
   if (
     raw.channel !== "slack" &&
     raw.channel !== "telegram" &&
-    raw.channel !== "discord"
+    raw.channel !== "discord" &&
+    raw.channel !== "whatsapp"
   ) {
     throw new ApiError(
       400,
       "UNSUPPORTED_CHANNEL",
-      "Only slack, telegram, and discord are supported.",
+      "Only slack, telegram, discord, and whatsapp are supported.",
     );
   }
 
@@ -72,6 +74,8 @@ function buildSmokeDispatchUrl(
       return buildPublicUrl("/api/channels/telegram/webhook", request);
     case "discord":
       return buildPublicUrl("/api/channels/discord/webhook", request);
+    case "whatsapp":
+      return buildPublicUrl("/api/channels/whatsapp/webhook", request);
   }
 }
 
@@ -79,8 +83,8 @@ function buildSmokeDispatchUrl(
  * Smoke testing endpoint for channel webhooks.
  *
  * PUT  — Configure test channels with generated credentials (bypasses
- *        platform API validation). Sets up Slack, Telegram, and Discord
- *        with generated credentials so smoke webhooks can be sent.
+ *        platform API validation). Sets up Slack, Telegram, Discord, and
+ *        WhatsApp with generated credentials so smoke webhooks can be sent.
  *
  * POST — Sign and send a webhook payload to the local webhook endpoint.
  *        Raw secrets never leave the server.
@@ -100,6 +104,8 @@ export async function PUT(request: Request): Promise<Response> {
     const now = Date.now();
     const slackSigningSecret = randomBytes(32).toString("hex");
     const telegramWebhookSecret = randomBytes(24).toString("base64url");
+    const whatsappVerifyToken = randomBytes(24).toString("base64url");
+    const whatsappAppSecret = randomBytes(32).toString("hex");
     const discordKeys = generateDiscordSmokeKeyPair();
     const telegramWebhookUrl = buildPublicDisplayUrl(
       "/api/channels/telegram/webhook",
@@ -128,6 +134,17 @@ export async function PUT(request: Request): Promise<Response> {
         botToken: "discord-smoke-bot-token",
         configuredAt: now,
       };
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: now,
+        phoneNumberId: "123456789",
+        accessToken: "wa-smoke-access-token",
+        verifyToken: whatsappVerifyToken,
+        appSecret: whatsappAppSecret,
+        businessAccountId: "wa-smoke-business-account",
+        displayName: "Smoke Test WhatsApp",
+        lastKnownLinkState: "linked",
+      };
     });
     await getStore().setValue(
       DISCORD_SMOKE_PRIVATE_KEY_STORE_KEY,
@@ -138,9 +155,10 @@ export async function PUT(request: Request): Promise<Response> {
       slack: true,
       telegram: true,
       discord: true,
+      whatsapp: true,
     });
     return authJsonOk(
-      { configured: true, channels: ["slack", "telegram", "discord"] },
+      { configured: true, channels: ["slack", "telegram", "discord", "whatsapp"] },
       auth,
     );
   } catch (error) {
@@ -248,6 +266,31 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
+    if (channel === "whatsapp") {
+      const config = meta.channels.whatsapp;
+      if (!config?.enabled || !config.appSecret) {
+        return authJsonOk({ configured: false, sent: false, channel }, auth);
+      }
+
+      const headers = signWhatsAppPayload(config.appSecret, payloadBody);
+      const res = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: payloadBody,
+      });
+
+      logInfo("admin.smoke_webhook_dispatch_completed", {
+        requestId,
+        channel,
+        status: res.status,
+        ok: res.ok,
+      });
+      return authJsonOk(
+        { configured: true, sent: res.ok, status: res.status, channel },
+        auth,
+      );
+    }
+
     // discord
     const config = meta.channels.discord;
     if (!config) {
@@ -309,6 +352,7 @@ export async function DELETE(request: Request): Promise<Response> {
       meta.channels.slack = null;
       meta.channels.telegram = null;
       meta.channels.discord = null;
+      meta.channels.whatsapp = null;
     });
     await getStore().deleteValue(DISCORD_SMOKE_PRIVATE_KEY_STORE_KEY);
     logInfo("admin.smoke_channels_removed", {});
