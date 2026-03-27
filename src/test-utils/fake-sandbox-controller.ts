@@ -5,6 +5,7 @@
  * can import it directly without pulling in the full harness.
  */
 
+import type { Writable } from "node:stream";
 import type { NetworkPolicy } from "@vercel/sandbox";
 
 import type {
@@ -53,6 +54,16 @@ export type CommandResponder = (
   command: string,
   args?: string[],
 ) => CommandResult | undefined;
+
+function writeToStream(stream: Writable | undefined, text: string): void {
+  if (!stream) {
+    return;
+  }
+  if (text) {
+    stream.write(text);
+  }
+  stream.end();
+}
 
 export class FakeSandboxHandle implements SandboxHandle {
   sandboxId: string;
@@ -110,6 +121,8 @@ export class FakeSandboxHandle implements SandboxHandle {
     const cmd = typeof commandOrOpts === "string" ? commandOrOpts : commandOrOpts.cmd;
     const cmdArgs = typeof commandOrOpts === "string" ? args : commandOrOpts.args;
     const cmdEnv = typeof commandOrOpts === "object" ? commandOrOpts.env : undefined;
+    const stdout = typeof commandOrOpts === "object" ? commandOrOpts.stdout : undefined;
+    const stderr = typeof commandOrOpts === "object" ? commandOrOpts.stderr : undefined;
     this.commands.push({ cmd, args: cmdArgs, env: cmdEnv });
     this.eventLog.push({
       kind: "command",
@@ -122,6 +135,8 @@ export class FakeSandboxHandle implements SandboxHandle {
     for (const responder of this.responders) {
       const result = responder(cmd, cmdArgs);
       if (result !== undefined) {
+        writeToStream(stdout, await result.output("stdout"));
+        writeToStream(stderr, await result.output("stderr"));
         return result;
       }
     }
@@ -130,6 +145,8 @@ export class FakeSandboxHandle implements SandboxHandle {
     if (cmd === "bash" && cmdArgs?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
       const stdoutJson = '{"ready":true,"attempts":3,"readyMs":150}';
       const stderrEvents = '{"event":"fast_restore.complete"}';
+      writeToStream(stdout, stdoutJson);
+      writeToStream(stderr, stderrEvents);
       return {
         exitCode: 0,
         output: async (stream?: "stdout" | "stderr" | "both") => {
@@ -144,12 +161,16 @@ export class FakeSandboxHandle implements SandboxHandle {
       cmd === "curl" &&
       cmdArgs?.some((a) => a.includes("localhost:3000"))
     ) {
+      const body = '<html><body><div id="openclaw-app">ready</div></body></html>';
+      writeToStream(stdout, body);
+      writeToStream(stderr, "");
       return {
         exitCode: 0,
-        output: async () =>
-          '<html><body><div id="openclaw-app">ready</div></body></html>',
+        output: async () => body,
       };
     }
+    writeToStream(stdout, "");
+    writeToStream(stderr, "");
     return { exitCode: 0, output: async () => "" };
   }
 

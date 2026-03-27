@@ -23,6 +23,36 @@ export type FirewallEvent = {
   category?: DomainCategory;
 };
 
+export type SetupProgressLine = {
+  ts: number;
+  stream: "stdout" | "stderr" | "system";
+  text: string;
+};
+
+export type SetupProgress = {
+  attemptId: string;
+  active: boolean;
+  phase:
+    | "creating-sandbox"
+    | "installing-openclaw"
+    | "installing-bun"
+    | "cleaning-cache"
+    | "installing-plugin"
+    | "writing-config"
+    | "checking-version"
+    | "starting-gateway"
+    | "waiting-for-gateway"
+    | "pairing-device"
+    | "applying-firewall"
+    | "ready"
+    | "failed";
+  phaseLabel: string;
+  startedAt: number;
+  updatedAt: number;
+  preview: string | null;
+  lines: SetupProgressLine[];
+};
+
 export type StatusPayload = {
   authMode: "admin-secret" | "sign-in-with-vercel";
   storeBackend: string;
@@ -40,6 +70,7 @@ export type StatusPayload = {
   heartbeatIntervalMs: number;
   timeoutRemainingMs: number | null;
   timeoutSource: "live" | "estimated" | "none";
+  setupProgress: SetupProgress | null;
   firewall: {
     mode: "disabled" | "learning" | "enforcing";
     allowlist: string[];

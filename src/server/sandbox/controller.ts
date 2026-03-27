@@ -4,6 +4,8 @@
  * Production code uses the real Sandbox SDK.  Tests swap in
  * FakeSandboxController via `_setSandboxControllerForTesting()`.
  */
+import type { Writable } from "node:stream";
+
 import type { NetworkPolicy, Sandbox } from "@vercel/sandbox";
 
 // ---------------------------------------------------------------------------
@@ -37,6 +39,8 @@ export type RunCommandOptions = {
   args?: string[];
   env?: Record<string, string>;
   signal?: AbortSignal;
+  stdout?: Writable;
+  stderr?: Writable;
 };
 
 export type SandboxStatus =
@@ -101,6 +105,8 @@ function wrapSandbox(sandbox: Sandbox): SandboxHandle {
           args: commandOrOpts.args ?? [],
           env: commandOrOpts.env,
           signal: commandOrOpts.signal,
+          stdout: commandOrOpts.stdout,
+          stderr: commandOrOpts.stderr,
         });
         return {
           exitCode: result.exitCode,

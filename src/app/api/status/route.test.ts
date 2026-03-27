@@ -21,8 +21,10 @@ import {
 import {
   _resetStoreForTesting,
   getInitializedMeta,
+  getStore,
   mutateMeta,
 } from "@/server/store/store";
+import { setupProgressKey } from "@/server/store/keyspace";
 import type { RestoreTargetAttestation } from "@/shared/launch-verification";
 import type { RestoreOracleState } from "@/shared/types";
 import {
@@ -179,6 +181,73 @@ test("GET /api/status: includes firewall and channel state", async () => {
     };
     assert.equal(body.firewall.mode, "learning");
     assert.ok("channels" in body, "should include channels");
+  });
+});
+
+test("GET /api/status: includes setup progress for matching lifecycle attempt", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.status = "setup";
+      meta.lifecycleAttemptId = "attempt-setup-1";
+    });
+    await getStore().setValue(setupProgressKey("openclaw-single"), {
+      attemptId: "attempt-setup-1",
+      active: true,
+      phase: "installing-openclaw",
+      phaseLabel: "Installing OpenClaw",
+      startedAt: 100,
+      updatedAt: 200,
+      preview: "npm notice added 1 package",
+      lines: [
+        { ts: 150, stream: "stdout", text: "npm notice added 1 package" },
+      ],
+    });
+
+    const route = getStatusRoute();
+    const request = buildAuthGetRequest("/api/status");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      setupProgress: {
+        attemptId: string;
+        phase: string;
+        preview: string | null;
+        lines: Array<{ text: string }>;
+      } | null;
+    };
+    assert.ok(body.setupProgress);
+    assert.equal(body.setupProgress?.attemptId, "attempt-setup-1");
+    assert.equal(body.setupProgress?.phase, "installing-openclaw");
+    assert.equal(body.setupProgress?.preview, "npm notice added 1 package");
+    assert.equal(body.setupProgress?.lines[0]?.text, "npm notice added 1 package");
+  });
+});
+
+test("GET /api/status: omits setup progress for running status", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.lifecycleAttemptId = "attempt-running-1";
+    });
+    await getStore().setValue(setupProgressKey("openclaw-single"), {
+      attemptId: "attempt-running-1",
+      active: true,
+      phase: "starting-gateway",
+      phaseLabel: "Starting gateway",
+      startedAt: 100,
+      updatedAt: 200,
+      preview: "Starting gateway",
+      lines: [],
+    });
+
+    const route = getStatusRoute();
+    const request = buildAuthGetRequest("/api/status");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as { setupProgress: unknown };
+    assert.equal(body.setupProgress, null);
   });
 });
 

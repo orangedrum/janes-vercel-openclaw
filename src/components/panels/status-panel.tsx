@@ -6,7 +6,12 @@ import {
   getFirstRunCallout,
   getLifecycleActionLabel,
 } from "@/shared/sandbox-lifecycle-copy";
-import type { StatusPayload, RunAction } from "@/components/admin-types";
+import type { CSSProperties } from "react";
+import type {
+  SetupProgress,
+  StatusPayload,
+  RunAction,
+} from "@/components/admin-types";
 import type { SingleStatus } from "@/shared/types";
 
 type StatusPanelProps = {
@@ -32,6 +37,74 @@ const IS_TRANSITIONAL = new Set<SingleStatus>([
   "booting",
   "setup",
 ]);
+
+const STEP_ORDER = [
+  "Creating sandbox",
+  "Installing OpenClaw",
+  "Configuring",
+  "Starting gateway",
+  "Ready",
+] as const;
+
+function getSetupStepIndex(progress: SetupProgress | null): number {
+  if (!progress) return 0;
+  switch (progress.phase) {
+    case "creating-sandbox":
+      return 0;
+    case "installing-openclaw":
+    case "installing-bun":
+    case "cleaning-cache":
+    case "installing-plugin":
+      return 1;
+    case "writing-config":
+    case "checking-version":
+      return 2;
+    case "starting-gateway":
+    case "waiting-for-gateway":
+    case "pairing-device":
+    case "applying-firewall":
+      return 3;
+    case "ready":
+      return 4;
+    case "failed":
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function getStepStyle(
+  index: number,
+  activeIndex: number,
+  failed: boolean,
+): CSSProperties {
+  if (failed && index === activeIndex) {
+    return {
+      borderColor: "rgba(239, 68, 68, 0.55)",
+      background: "rgba(127, 29, 29, 0.35)",
+      color: "#fecaca",
+    };
+  }
+  if (index < activeIndex) {
+    return {
+      borderColor: "rgba(16, 185, 129, 0.4)",
+      background: "rgba(6, 78, 59, 0.28)",
+      color: "#d1fae5",
+    };
+  }
+  if (index === activeIndex) {
+    return {
+      borderColor: "rgba(255,255,255,0.24)",
+      background: "rgba(255,255,255,0.08)",
+      color: "#ffffff",
+    };
+  }
+  return {
+    borderColor: "rgba(255,255,255,0.08)",
+    background: "rgba(0,0,0,0.2)",
+    color: "#71717a",
+  };
+}
 
 function friendlyError(raw: string): { headline: string; detail: string } {
   const lower = raw.toLowerCase();
@@ -208,6 +281,10 @@ export function StatusPanel({
   const isTransitional = isLifecycleTransition || isStopping;
   const errorCopy = status.lastError ? friendlyError(status.lastError) : null;
   const isCheckingHealth = pendingAction === "Check health";
+  const setupProgress = status.setupProgress;
+  const showSetupProgress = Boolean(setupProgress && isLifecycleTransition);
+  const activeStepIndex = getSetupStepIndex(setupProgress);
+  const setupFailed = setupProgress?.phase === "failed";
 
   return (
     <article className="panel-card">
@@ -294,6 +371,114 @@ export function StatusPanel({
             </p>
           ))}
         </div>
+      ) : null}
+
+      {showSetupProgress ? (
+        <section
+          style={{
+            marginTop: 20,
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 14,
+            background: "linear-gradient(180deg, rgba(17,24,39,0.82), rgba(9,9,11,0.92))",
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            <div
+              aria-label="Setup steps"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+                gap: 8,
+              }}
+            >
+              {STEP_ORDER.map((step, index) => (
+                <div
+                  key={step}
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: 10,
+                    padding: "10px 8px",
+                    fontSize: 12,
+                    lineHeight: 1.4,
+                    textAlign: "center",
+                    ...getStepStyle(index, activeStepIndex, setupFailed),
+                  }}
+                >
+                  {step}
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 12,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "var(--foreground-muted)",
+                }}
+              >
+                Current phase
+              </p>
+              <p style={{ margin: "6px 0 0", fontWeight: 600 }}>
+                {setupProgress?.phaseLabel ?? "Starting setup"}
+              </p>
+              {setupProgress?.preview ? (
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    color: "var(--foreground-muted)",
+                    fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {setupProgress.preview}
+                </p>
+              ) : null}
+            </div>
+
+            {setupProgress && setupProgress.lines.length > 0 ? (
+              <details>
+                <summary
+                  style={{
+                    cursor: "pointer",
+                    color: "var(--foreground-muted)",
+                    fontSize: 12,
+                  }}
+                >
+                  Recent setup logs
+                </summary>
+                <pre
+                  style={{
+                    margin: "10px 0 0",
+                    padding: 12,
+                    borderRadius: 10,
+                    background: "rgba(0,0,0,0.45)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    color: "#d4d4d8",
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)",
+                  }}
+                >
+                  {setupProgress.lines
+                    .map((line) => `[${line.stream}] ${line.text}`)
+                    .join("\n")}
+                </pre>
+              </details>
+            ) : null}
+          </div>
+        </section>
       ) : null}
 
       <div className="hero-actions" style={{ justifyContent: "flex-end" }}>

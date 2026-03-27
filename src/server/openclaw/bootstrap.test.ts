@@ -69,7 +69,7 @@ test("setupOpenClaw executes commands in correct order", async () => {
 
     // Verify npm install uses the resolved package spec (openclaw@latest in non-Vercel env)
     assert.deepEqual(handle.commands[0].args, [
-      "install", "-g", "openclaw@latest", "--ignore-scripts",
+      "install", "-g", "openclaw@latest", "--ignore-scripts", "--loglevel", "info",
     ]);
 
     // Verify npm cache cleanup args
@@ -928,7 +928,7 @@ test("setupOpenClaw uses OPENCLAW_PACKAGE_SPEC when set", async () => {
 
     // npm install should use the pinned spec
     assert.deepEqual(handle.commands[0].args, [
-      "install", "-g", "openclaw@2.0.0", "--ignore-scripts",
+      "install", "-g", "openclaw@2.0.0", "--ignore-scripts", "--loglevel", "info",
     ]);
 
     assert.equal(result.runtime.packageSpec, "openclaw@2.0.0");

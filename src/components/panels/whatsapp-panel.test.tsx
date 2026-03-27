@@ -47,6 +47,7 @@ function makeStatus(
     heartbeatIntervalMs: 15_000,
     timeoutRemainingMs: 120_000,
     timeoutSource: "estimated",
+    setupProgress: null,
     firewall: {
       mode: "learning",
       allowlist: [],

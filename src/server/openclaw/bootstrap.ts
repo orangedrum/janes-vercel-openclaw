@@ -45,6 +45,7 @@ import {
   OPENCLAW_STATE_DIR,
   OPENCLAW_TELEGRAM_BOT_TOKEN_PATH,
 } from "@/server/openclaw/config";
+import type { SetupProgressWriter } from "@/server/sandbox/setup-progress";
 
 import type { CommandResult, SandboxHandle } from "@/server/sandbox/controller";
 
@@ -108,9 +109,11 @@ export async function setupOpenClaw(
     slackCredentials?: { botToken: string; signingSecret: string };
     telegramWebhookSecret?: string;
     whatsappConfig?: WhatsAppGatewayConfig;
+    progress?: SetupProgressWriter;
   },
 ): Promise<{ startupScript: string; openclawVersion: string | null; runtime: BootstrapRuntime }> {
   const startupScript = buildStartupScript();
+  const progress = options.progress;
 
   const packageSpec = getOpenclawPackageSpec();
   const onVercel = isVercelDeployment();
@@ -125,6 +128,7 @@ export async function setupOpenClaw(
 
   logInfo("openclaw.setup.start", { sandboxId: sandbox.sandboxId, packageSpec, onVercel });
 
+  progress?.setPhase("installing-openclaw", `Installing ${packageSpec}`);
   const installResult = await sandbox.runCommand({
     cmd: "npm",
     args: [
@@ -132,10 +136,15 @@ export async function setupOpenClaw(
       "-g",
       packageSpec,
       "--ignore-scripts",
+      "--loglevel",
+      "info",
     ],
     env: {
       NPM_CONFIG_CACHE: "/tmp/openclaw-npm-cache",
+      NPM_CONFIG_PROGRESS: "false",
     },
+    stdout: progress?.makeWritable("stdout"),
+    stderr: progress?.makeWritable("stderr"),
   });
   await assertCommandSuccess("npm install", installResult);
 
@@ -147,21 +156,28 @@ export async function setupOpenClaw(
   // Downloads the pinned release binary directly from GitHub, verifies its
   // SHA-256, and extracts to BUN_INSTALL_DIR.  No remote installer script
   // is executed.
-  const bunInstall = await sandbox.runCommand("sh", [
-    "-c",
-    [
-      "set -e",
-      `curl -fsSL --max-time 60 --connect-timeout 10 -o /tmp/bun.zip ${JSON.stringify(BUN_DOWNLOAD_URL)}`,
-      `printf '%s  /tmp/bun.zip\\n' ${JSON.stringify(BUN_DOWNLOAD_SHA256)} | sha256sum -c`,
-      `mkdir -p ${JSON.stringify(BUN_INSTALL_DIR + "/bin")}`,
-      `unzip -o -j /tmp/bun.zip -d ${JSON.stringify(BUN_INSTALL_DIR + "/bin")}`,
-      `chmod +x ${JSON.stringify(BUN_BIN)}`,
-      `rm -f /tmp/bun.zip`,
-      `${JSON.stringify(BUN_BIN)} --version`,
-    ].join(" && "),
-  ]);
+  progress?.setPhase("installing-bun", "Installing Bun runtime");
+  const bunInstall = await sandbox.runCommand({
+    cmd: "sh",
+    args: [
+      "-c",
+      [
+        "set -e",
+        `curl -fsSL --max-time 60 --connect-timeout 10 -o /tmp/bun.zip ${JSON.stringify(BUN_DOWNLOAD_URL)}`,
+        `printf '%s  /tmp/bun.zip\\n' ${JSON.stringify(BUN_DOWNLOAD_SHA256)} | sha256sum -c`,
+        `mkdir -p ${JSON.stringify(BUN_INSTALL_DIR + "/bin")}`,
+        `unzip -o -j /tmp/bun.zip -d ${JSON.stringify(BUN_INSTALL_DIR + "/bin")}`,
+        `chmod +x ${JSON.stringify(BUN_BIN)}`,
+        `rm -f /tmp/bun.zip`,
+        `${JSON.stringify(BUN_BIN)} --version`,
+      ].join(" && "),
+    ],
+    stdout: progress?.makeWritable("stdout"),
+    stderr: progress?.makeWritable("stderr"),
+  });
   if (bunInstall.exitCode === 0) {
     const bunVersion = (await bunInstall.output("stdout")).trim();
+    progress?.setPreview(`Installed Bun ${bunVersion}`);
     logInfo("openclaw.setup.bun_installed", { sandboxId: sandbox.sandboxId, bunVersion });
   } else {
     const stderr = (await bunInstall.output("stderr")).trim();
@@ -172,14 +188,20 @@ export async function setupOpenClaw(
     });
   }
 
-  const npmCacheCleanup = await sandbox.runCommand("bash", [
-    "-lc",
-    [
-      "rm -rf /home/vercel-sandbox/.npm || true",
-      "rm -rf /root/.npm || true",
-      "rm -rf /tmp/openclaw-npm-cache || true",
-    ].join("\n"),
-  ]);
+  progress?.setPhase("cleaning-cache", "Cleaning npm cache");
+  const npmCacheCleanup = await sandbox.runCommand({
+    cmd: "bash",
+    args: [
+      "-lc",
+      [
+        "rm -rf /home/vercel-sandbox/.npm || true",
+        "rm -rf /root/.npm || true",
+        "rm -rf /tmp/openclaw-npm-cache || true",
+      ].join("\n"),
+    ],
+    stdout: progress?.makeWritable("stdout"),
+    stderr: progress?.makeWritable("stderr"),
+  });
   await assertCommandSuccess("npm cache cleanup", npmCacheCleanup);
   logInfo("openclaw.setup.npm_cache_cleared", { sandboxId: sandbox.sandboxId });
 
@@ -187,15 +209,21 @@ export async function setupOpenClaw(
   // install` is a no-op when the plugin is already present.
   if (options.whatsappConfig?.enabled) {
     const pluginSpec = options.whatsappConfig.pluginSpec?.trim() || "@openclaw/whatsapp";
+    progress?.setPhase("installing-plugin", `Installing ${pluginSpec}`);
     logInfo("openclaw.setup.whatsapp_plugin_install", {
       sandboxId: sandbox.sandboxId,
       pluginSpec,
     });
-    const pluginResult = await sandbox.runCommand(OPENCLAW_BIN, [
-      "plugins",
-      "install",
-      pluginSpec,
-    ]);
+    const pluginResult = await sandbox.runCommand({
+      cmd: OPENCLAW_BIN,
+      args: [
+        "plugins",
+        "install",
+        pluginSpec,
+      ],
+      stdout: progress?.makeWritable("stdout"),
+      stderr: progress?.makeWritable("stderr"),
+    });
     if (pluginResult.exitCode === 0) {
       logInfo("openclaw.setup.whatsapp_plugin_installed", {
         sandboxId: sandbox.sandboxId,
@@ -212,6 +240,8 @@ export async function setupOpenClaw(
     }
   }
 
+  progress?.setPhase("writing-config", "Writing gateway config");
+  progress?.appendLine("system", "Writing OpenClaw config and startup files");
   await sandbox.writeFiles([
     {
       path: OPENCLAW_CONFIG_PATH,
@@ -303,11 +333,18 @@ export async function setupOpenClaw(
       : []),
   ]);
 
-  const versionResult = await sandbox.runCommand(OPENCLAW_BIN, ["--version"]);
+  progress?.setPhase("checking-version", "Checking installed version");
+  const versionResult = await sandbox.runCommand({
+    cmd: OPENCLAW_BIN,
+    args: ["--version"],
+    stdout: progress?.makeWritable("stdout"),
+    stderr: progress?.makeWritable("stderr"),
+  });
   await assertCommandSuccess("openclaw --version", versionResult);
   const openclawVersion = normalizeOpenClawVersion(
     await versionResult.output("stdout"),
   );
+  progress?.setPreview(openclawVersion ? `Installed ${openclawVersion}` : "Version check passed");
 
   const drift = detectDrift(packageSpec, openclawVersion);
   const runtime: BootstrapRuntime = { packageSpec, installedVersion: openclawVersion, drift };
@@ -319,17 +356,31 @@ export async function setupOpenClaw(
     drift,
   });
 
-  const startupResult = await sandbox.runCommand("bash", [OPENCLAW_STARTUP_SCRIPT_PATH]);
+  progress?.setPhase("starting-gateway", "Launching gateway");
+  const startupResult = await sandbox.runCommand({
+    cmd: "bash",
+    args: [OPENCLAW_STARTUP_SCRIPT_PATH],
+    stdout: progress?.makeWritable("stdout"),
+    stderr: progress?.makeWritable("stderr"),
+  });
   await assertCommandSuccess("bash startup-script", startupResult);
+  progress?.setPhase("waiting-for-gateway", "Waiting for OpenClaw to respond");
   await waitForGatewayReady(sandbox);
 
   try {
-    await sandbox.runCommand("node", [
-      OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
-      OPENCLAW_STATE_DIR,
-    ]);
+    progress?.setPhase("pairing-device", "Pairing device");
+    await sandbox.runCommand({
+      cmd: "node",
+      args: [
+        OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
+        OPENCLAW_STATE_DIR,
+      ],
+      stdout: progress?.makeWritable("stdout"),
+      stderr: progress?.makeWritable("stderr"),
+    });
   } catch {
     // Best-effort only.
+    progress?.appendLine("system", "Pairing step skipped");
   }
 
   logInfo("openclaw.setup.ready", { sandboxId: sandbox.sandboxId, runtime });

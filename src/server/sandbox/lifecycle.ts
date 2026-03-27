@@ -47,6 +47,11 @@ import { buildRestoreDecision } from "@/server/sandbox/restore-attestation";
 import type { RestoreDecision } from "@/shared/restore-decision";
 import { getSandboxController } from "@/server/sandbox/controller";
 import type { SandboxHandle } from "@/server/sandbox/controller";
+import {
+  SetupProgressWriter,
+  beginSetupProgress,
+  clearSetupProgress,
+} from "@/server/sandbox/setup-progress";
 import { getSandboxVcpus } from "@/server/sandbox/resources";
 import {
   deleteVercelSnapshot,
@@ -2277,6 +2282,8 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
   /** Merge operation context (when available) with extra fields for structured logs. */
   const ctx = (extra?: Record<string, unknown>) =>
     options?.op ? withOperationContext(options.op, extra) : (extra ?? {});
+  const attemptId = randomUUID();
+  const instanceId = current.id;
 
   // Auth-required boot: on Vercel, require a usable AI Gateway credential.
   const credential = await resolveAiGatewayCredentialOptional();
@@ -2293,157 +2300,178 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
     return getInitializedMeta();
   }
 
-  logInfo("sandbox.status_transition", ctx({ from: current.status, to: "creating" }));
-  await mutateMeta((meta) => {
-    meta.status = "creating";
-    meta.lastError = null;
-
-    // Creating a brand-new sandbox invalidates any previously prepared restore target.
-    meta.snapshotId = null;
-    meta.snapshotConfigHash = null;
-    meta.snapshotDynamicConfigHash = null;
-    meta.snapshotAssetSha256 = null;
-    meta.restorePreparedStatus = "dirty";
-    meta.restorePreparedReason = "snapshot-missing";
-    meta.restorePreparedAt = null;
+  await clearSetupProgress(instanceId);
+  const initialProgress = await beginSetupProgress({
+    attemptId,
+    instanceId,
+    phase: "creating-sandbox",
   });
+  const progress = new SetupProgressWriter(initialProgress, instanceId);
+  progress.setPreview("Allocating sandbox");
 
-  const vcpus = getSandboxVcpus();
-  const sleepAfterMs = getSandboxSleepAfterMs();
-  const sandbox = await getSandboxController().create({
-    ports: SANDBOX_PORTS,
-    timeout: sleepAfterMs,
-    resources: { vcpus },
-    ...(await buildRuntimeEnv()),
-  });
-
-  logInfo("sandbox.status_transition", ctx({ from: "creating", to: "setup", sandboxId: sandbox.sandboxId, vcpus, sleepAfterMs }));
-  await mutateMeta((meta) => {
-    meta.status = "setup";
-    meta.sandboxId = sandbox.sandboxId;
-    meta.portUrls = resolvePortUrls(sandbox);
-    meta.lastAccessedAt = Date.now();
-  });
-
-  const latest = await getInitializedMeta();
-  // Reuse the already-resolved credential — no redundant second lookup.
-  const apiKey = credential?.token;
-  const slackCfg = latest.channels.slack;
-  const setupResult = await setupOpenClaw(sandbox, {
-    gatewayToken: latest.gatewayToken,
-    apiKey,
-    proxyOrigin: origin,
-    telegramBotToken: latest.channels.telegram?.botToken,
-    telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
-    slackCredentials: slackCfg ? { botToken: slackCfg.botToken, signingSecret: slackCfg.signingSecret } : undefined,
-    whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
-  });
-
-  const pending = await mutateMeta((meta) => {
-    meta.status = "setup";
-    meta.sandboxId = sandbox.sandboxId;
-    meta.portUrls = resolvePortUrls(sandbox);
-    meta.lastAccessedAt = Date.now();
-    meta.startupScript = setupResult.startupScript;
-    meta.openclawVersion = setupResult.openclawVersion;
-    meta.lastError = null;
-    // Record token metadata from the credential used during boot.
-    if (credential) {
-      meta.lastTokenRefreshAt = Date.now();
-      meta.lastTokenSource = credential.source;
-      meta.lastTokenExpiresAt = credential.expiresAt ?? null;
-    }
-  });
-
-  // Apply firewall policy and record structured outcome before marking running.
-  const firewallPolicy = toNetworkPolicy(
-    pending.firewall.mode,
-    pending.firewall.allowlist,
-  );
-  const firewallPolicyHash = createHash("sha256")
-    .update(JSON.stringify(firewallPolicy))
-    .digest("hex");
-
-  let firewallApplied = false;
-  let firewallError: string | null = null;
-  const firewallStartedAt = Date.now();
   try {
-    await applyFirewallPolicyToSandbox(sandbox, pending);
-    firewallApplied = true;
-  } catch (err) {
-    firewallError = err instanceof Error ? err.message : String(err);
-    logWarn("sandbox.create.firewall_sync_failed", ctx({
-      sandboxId: sandbox.sandboxId,
-      mode: pending.firewall.mode,
-      error: firewallError,
-    }));
-  }
-  const firewallCompletedAt = Date.now();
-  const firewallDurationMs = firewallCompletedAt - firewallStartedAt;
-
-  // Record firewall sync outcome in metadata.
-  await mutateMeta((meta) => {
-    const outcome: import("@/shared/types").FirewallSyncOutcome = {
-      timestamp: firewallCompletedAt,
-      durationMs: firewallDurationMs,
-      allowlistCount: pending.firewall.allowlist.length,
-      policyHash: firewallPolicyHash,
-      applied: firewallApplied,
-      reason: firewallApplied ? "create-policy-applied" : "create-policy-failed",
-    };
-    meta.firewall.lastSyncReason = outcome.reason;
-    meta.firewall.lastSyncOutcome = outcome;
-    if (firewallApplied) {
-      meta.firewall.lastSyncAppliedAt = firewallCompletedAt;
-    } else {
-      meta.firewall.lastSyncFailedAt = firewallCompletedAt;
-    }
-  });
-
-  // In enforcing mode, firewall sync failure is a hard blocker — the
-  // sandbox must not become available without its network policy applied.
-  if (!firewallApplied && pending.firewall.mode === "enforcing") {
-    logError("sandbox.create.firewall_sync_blocked_create", ctx({
-      sandboxId: sandbox.sandboxId,
-      error: firewallError,
-    }));
-
-    try {
-      await sandbox.stop({ blocking: true });
-    } catch (stopError) {
-      logWarn("sandbox.create.firewall_sync_cleanup_failed", ctx({
-        sandboxId: sandbox.sandboxId,
-        error: stopError instanceof Error ? stopError.message : String(stopError),
-      }));
-    }
-
+    logInfo("sandbox.status_transition", ctx({ from: current.status, to: "creating" }));
     await mutateMeta((meta) => {
-      meta.status = "error";
-      meta.lastError = `Firewall sync failed during create: ${firewallError}`;
-      meta.sandboxId = null;
-      meta.portUrls = null;
+      meta.status = "creating";
+      meta.lastError = null;
+      meta.lifecycleAttemptId = attemptId;
+
+      // Creating a brand-new sandbox invalidates any previously prepared restore target.
+      meta.snapshotId = null;
+      meta.snapshotConfigHash = null;
+      meta.snapshotDynamicConfigHash = null;
+      meta.snapshotAssetSha256 = null;
+      meta.restorePreparedStatus = "dirty";
+      meta.restorePreparedReason = "snapshot-missing";
+      meta.restorePreparedAt = null;
     });
 
+    const vcpus = getSandboxVcpus();
+    const sleepAfterMs = getSandboxSleepAfterMs();
+    const sandbox = await getSandboxController().create({
+      ports: SANDBOX_PORTS,
+      timeout: sleepAfterMs,
+      resources: { vcpus },
+      ...(await buildRuntimeEnv()),
+    });
+    progress.appendLine("system", `Sandbox created: ${sandbox.sandboxId}`);
+
+    logInfo("sandbox.status_transition", ctx({ from: "creating", to: "setup", sandboxId: sandbox.sandboxId, vcpus, sleepAfterMs }));
+    await mutateMeta((meta) => {
+      meta.status = "setup";
+      meta.sandboxId = sandbox.sandboxId;
+      meta.portUrls = resolvePortUrls(sandbox);
+      meta.lastAccessedAt = Date.now();
+    });
+
+    const latest = await getInitializedMeta();
+    // Reuse the already-resolved credential — no redundant second lookup.
+    const apiKey = credential?.token;
+    const slackCfg = latest.channels.slack;
+    const setupResult = await setupOpenClaw(sandbox, {
+      gatewayToken: latest.gatewayToken,
+      apiKey,
+      proxyOrigin: origin,
+      telegramBotToken: latest.channels.telegram?.botToken,
+      telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
+      slackCredentials: slackCfg ? { botToken: slackCfg.botToken, signingSecret: slackCfg.signingSecret } : undefined,
+      whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
+      progress,
+    });
+
+    const pending = await mutateMeta((meta) => {
+      meta.status = "setup";
+      meta.sandboxId = sandbox.sandboxId;
+      meta.portUrls = resolvePortUrls(sandbox);
+      meta.lastAccessedAt = Date.now();
+      meta.startupScript = setupResult.startupScript;
+      meta.openclawVersion = setupResult.openclawVersion;
+      meta.lastError = null;
+      // Record token metadata from the credential used during boot.
+      if (credential) {
+        meta.lastTokenRefreshAt = Date.now();
+        meta.lastTokenSource = credential.source;
+        meta.lastTokenExpiresAt = credential.expiresAt ?? null;
+      }
+    });
+
+    // Apply firewall policy and record structured outcome before marking running.
+    const firewallPolicy = toNetworkPolicy(
+      pending.firewall.mode,
+      pending.firewall.allowlist,
+    );
+    const firewallPolicyHash = createHash("sha256")
+      .update(JSON.stringify(firewallPolicy))
+      .digest("hex");
+
+    let firewallApplied = false;
+    let firewallError: string | null = null;
+    const firewallStartedAt = Date.now();
+    try {
+      progress.setPhase("applying-firewall", `Applying ${pending.firewall.mode} firewall policy`);
+      await applyFirewallPolicyToSandbox(sandbox, pending);
+      firewallApplied = true;
+    } catch (err) {
+      firewallError = err instanceof Error ? err.message : String(err);
+      logWarn("sandbox.create.firewall_sync_failed", ctx({
+        sandboxId: sandbox.sandboxId,
+        mode: pending.firewall.mode,
+        error: firewallError,
+      }));
+    }
+    const firewallCompletedAt = Date.now();
+    const firewallDurationMs = firewallCompletedAt - firewallStartedAt;
+
+    // Record firewall sync outcome in metadata.
+    await mutateMeta((meta) => {
+      const outcome: import("@/shared/types").FirewallSyncOutcome = {
+        timestamp: firewallCompletedAt,
+        durationMs: firewallDurationMs,
+        allowlistCount: pending.firewall.allowlist.length,
+        policyHash: firewallPolicyHash,
+        applied: firewallApplied,
+        reason: firewallApplied ? "create-policy-applied" : "create-policy-failed",
+      };
+      meta.firewall.lastSyncReason = outcome.reason;
+      meta.firewall.lastSyncOutcome = outcome;
+      if (firewallApplied) {
+        meta.firewall.lastSyncAppliedAt = firewallCompletedAt;
+      } else {
+        meta.firewall.lastSyncFailedAt = firewallCompletedAt;
+      }
+    });
+
+    // In enforcing mode, firewall sync failure is a hard blocker — the
+    // sandbox must not become available without its network policy applied.
+    if (!firewallApplied && pending.firewall.mode === "enforcing") {
+      logError("sandbox.create.firewall_sync_blocked_create", ctx({
+        sandboxId: sandbox.sandboxId,
+        error: firewallError,
+      }));
+
+      try {
+        await sandbox.stop({ blocking: true });
+      } catch (stopError) {
+        logWarn("sandbox.create.firewall_sync_cleanup_failed", ctx({
+          sandboxId: sandbox.sandboxId,
+          error: stopError instanceof Error ? stopError.message : String(stopError),
+        }));
+      }
+
+      await mutateMeta((meta) => {
+        meta.status = "error";
+        meta.lastError = `Firewall sync failed during create: ${firewallError}`;
+        meta.sandboxId = null;
+        meta.portUrls = null;
+      });
+      await progress.failSetupProgress(`Firewall sync failed during create: ${firewallError}`);
+
+      return getInitializedMeta();
+    }
+
+    logInfo("sandbox.status_transition", ctx({
+      from: "setup",
+      to: "running",
+      sandboxId: sandbox.sandboxId,
+    }));
+
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.lastError = null;
+    });
+    await progress.completeSetupProgress("Sandbox ready");
+
+    logInfo("sandbox.create.complete", ctx({
+      sandboxId: sandbox.sandboxId,
+      openclawVersion: setupResult.openclawVersion,
+      firewallApplied,
+    }));
     return getInitializedMeta();
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    await progress.failSetupProgress(errMsg);
+    throw error;
   }
-
-  logInfo("sandbox.status_transition", ctx({
-    from: "setup",
-    to: "running",
-    sandboxId: sandbox.sandboxId,
-  }));
-
-  await mutateMeta((meta) => {
-    meta.status = "running";
-    meta.lastError = null;
-  });
-
-  logInfo("sandbox.create.complete", ctx({
-    sandboxId: sandbox.sandboxId,
-    openclawVersion: setupResult.openclawVersion,
-    firewallApplied,
-  }));
-  return getInitializedMeta();
 }
 
 async function restoreSandboxFromSnapshot(

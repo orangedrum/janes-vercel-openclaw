@@ -13,6 +13,7 @@ import {
   reconcileStaleRunningStatus,
   touchRunningSandbox,
 } from "@/server/sandbox/lifecycle";
+import { readSetupProgress } from "@/server/sandbox/setup-progress";
 import {
   estimateSandboxTimeoutRemainingMs,
   getSandboxSleepConfig,
@@ -107,6 +108,14 @@ export async function GET(request: Request): Promise<Response> {
       status: responseMeta.status,
       sandboxId: responseMeta.sandboxId,
     });
+    const includeSetupProgress =
+      responseMeta.status === "creating" ||
+      responseMeta.status === "setup" ||
+      responseMeta.status === "booting" ||
+      responseMeta.status === "error";
+    const setupProgress = includeSetupProgress
+      ? await readSetupProgress(responseMeta.id, responseMeta.lifecycleAttemptId)
+      : null;
 
     const response = Response.json({
       authMode: getAuthMode(),
@@ -153,6 +162,7 @@ export async function GET(request: Request): Promise<Response> {
           responseMeta.consecutiveTokenRefreshFailures ?? 0,
         breakerOpenUntil: responseMeta.breakerOpenUntil ?? null,
       },
+      setupProgress,
       user: { sub: "admin", name: "Admin" },
     });
 

@@ -451,6 +451,7 @@ export function createDefaultMeta(
     snapshotHistory: [],
     lastRestoreMetrics: null,
     restoreHistory: [],
+    lifecycleAttemptId: null,
     restoreOracle: {
       status: "idle",
       pendingReason: null,
@@ -651,6 +652,10 @@ export function ensureMetaShape(
     breakerOpenUntil:
       typeof (raw as Record<string, unknown>).breakerOpenUntil === "number"
         ? (raw as Record<string, unknown>).breakerOpenUntil as number
+        : null,
+    lifecycleAttemptId:
+      typeof (raw as Record<string, unknown>).lifecycleAttemptId === "string"
+        ? (raw as Record<string, unknown>).lifecycleAttemptId as string
         : null,
     restoreOracle: ensureRestoreOracleState(
       (raw as Record<string, unknown>).restoreOracle,

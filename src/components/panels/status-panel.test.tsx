@@ -111,6 +111,7 @@ function makeStatus(overrides: Partial<LifecycleAwareStatus> = {}): LifecycleAwa
     heartbeatIntervalMs: 15_000,
     timeoutRemainingMs: 120_000,
     timeoutSource: "estimated",
+    setupProgress: null,
     firewall: {
       mode: "learning",
       allowlist: [],
@@ -176,12 +177,27 @@ test("StatusPanel renders first-run setup progress detail", () => {
       status: "setup",
       snapshotId: null,
       gatewayReady: false,
+      setupProgress: {
+        attemptId: "attempt-1",
+        active: true,
+        phase: "installing-openclaw",
+        phaseLabel: "Installing OpenClaw",
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+        preview: "npm notice added 1 package",
+        lines: [
+          { ts: Date.now(), stream: "stdout", text: "npm info using node" },
+          { ts: Date.now(), stream: "stdout", text: "npm notice added 1 package" },
+        ],
+      },
       lifecycle: { restoreHistory: [] },
     }),
   );
 
-  assert.ok(html.includes("Installing OpenClaw…"));
-  assert.ok(html.includes("This is the longest step on the first run."));
+  assert.ok(html.includes("Installing OpenClaw"));
+  assert.ok(html.includes("Current phase"));
+  assert.ok(html.includes("Recent setup logs"));
+  assert.ok(html.includes("[stdout] npm notice added 1 package"));
 });
 
 test("StatusPanel renders restore action when errored with a snapshot", () => {

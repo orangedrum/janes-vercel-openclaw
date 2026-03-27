@@ -30,6 +30,12 @@ const TABS = [
 ] as const;
 
 const CHECK_HEALTH_PENDING_ACTION = "Check health";
+const TRANSITIONAL_STATUSES = new Set([
+  "creating",
+  "setup",
+  "booting",
+  "restoring",
+]);
 
 export function getStatusRequestPath(health = false): string {
   return health ? "/api/status?health=1" : "/api/status";
@@ -137,14 +143,17 @@ export function AdminShell({
       void pollStatus();
     });
 
+    const pollIntervalMs = status && TRANSITIONAL_STATUSES.has(status.status)
+      ? 2000
+      : 5000;
     const interval = window.setInterval(() => {
       void pollStatus();
-    }, 5000);
+    }, pollIntervalMs);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [pollStatus]);
+  }, [pollStatus, status]);
 
   async function requestJson<T>(
     action: string,

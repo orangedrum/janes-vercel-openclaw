@@ -5,37 +5,48 @@ import { buildDeployPreflight, getLaunchVerifyBlocking } from "@/server/deploy-p
 import { _setAiGatewayTokenOverrideForTesting, _setAiGatewayCredentialOverrideForTesting } from "@/server/env";
 import { _resetStoreForTesting } from "@/server/store/store";
 
+let envMutationQueue = Promise.resolve();
+
 function withEnv<T>(
   patch: Record<string, string | undefined>,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const previous = new Map<string, string | undefined>();
+  const runWithPatchedEnv = async (): Promise<T> => {
+    const previous = new Map<string, string | undefined>();
 
-  for (const [key, value] of Object.entries(patch)) {
-    previous.set(key, process.env[key]);
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
-
-  _resetStoreForTesting();
-
-  const restore = () => {
-    for (const [key, value] of previous.entries()) {
+    for (const [key, value] of Object.entries(patch)) {
+      previous.set(key, process.env[key]);
       if (value === undefined) {
         delete process.env[key];
       } else {
         process.env[key] = value;
       }
     }
-    _setAiGatewayTokenOverrideForTesting(null);
-    _setAiGatewayCredentialOverrideForTesting(null);
+
     _resetStoreForTesting();
+
+    const restore = () => {
+      for (const [key, value] of previous.entries()) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      _setAiGatewayTokenOverrideForTesting(null);
+      _setAiGatewayCredentialOverrideForTesting(null);
+      _resetStoreForTesting();
+    };
+
+    return fn().finally(restore);
   };
 
-  return fn().finally(restore);
+  const queued = envMutationQueue.then(runWithPatchedEnv, runWithPatchedEnv);
+  envMutationQueue = queued.then(
+    () => undefined,
+    () => undefined,
+  );
+  return queued;
 }
 
 test("preflight passes when bypass secret is absent in admin-secret mode", async () => {
@@ -1350,6 +1361,7 @@ test("preflight fails on Vercel when CRON_SECRET is missing", async () => {
     {
       VERCEL: "1",
       VERCEL_AUTH_MODE: "admin-secret",
+      ADMIN_SECRET: undefined,
       NEXT_PUBLIC_APP_URL: "https://app.example.com",
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "token",
@@ -1383,6 +1395,7 @@ test("getLaunchVerifyBlocking blocks when cron-secret is failing on Vercel", asy
     {
       VERCEL: "1",
       VERCEL_AUTH_MODE: "admin-secret",
+      ADMIN_SECRET: undefined,
       NEXT_PUBLIC_APP_URL: "https://app.example.com",
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "token",
