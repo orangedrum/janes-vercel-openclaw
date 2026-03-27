@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { computeGatewayConfigHash } from "@/server/openclaw/config";
+import {
+  computeGatewayConfigHash,
+  toWhatsAppGatewayConfig,
+} from "@/server/openclaw/config";
 import { buildRestoreAssetManifest } from "@/server/openclaw/restore-assets";
 import {
   runRestoreOracleCycle,
@@ -26,12 +29,7 @@ const desiredDynamicConfigHash = computeGatewayConfigHash({
       }
     : undefined,
   whatsappConfig: defaultMetaForHashes.channels.whatsapp
-    ? {
-        accessToken: defaultMetaForHashes.channels.whatsapp.accessToken,
-        phoneNumberId: defaultMetaForHashes.channels.whatsapp.phoneNumberId,
-        verifyToken: defaultMetaForHashes.channels.whatsapp.verifyToken,
-        appSecret: defaultMetaForHashes.channels.whatsapp.appSecret,
-      }
+    ? toWhatsAppGatewayConfig(defaultMetaForHashes.channels.whatsapp)
     : undefined,
 });
 const desiredAssetSha256 = buildRestoreAssetManifest().sha256;

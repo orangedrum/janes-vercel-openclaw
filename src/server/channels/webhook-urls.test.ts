@@ -62,6 +62,7 @@ test("buildChannelDisplayWebhookUrl returns clean URL for webhook-proxied channe
 
   for (const channel of ["slack", "telegram", "discord", "whatsapp"] as const) {
     const url = buildChannelDisplayWebhookUrl(channel, request);
+    assert.ok(url !== null, `${channel} display URL must not be null`);
     assert.ok(
       !url.includes("x-vercel-protection-bypass"),
       `${channel} display URL must not include bypass param`,
@@ -87,6 +88,7 @@ test("buildChannelWebhookUrl for whatsapp includes bypass secret", () => {
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
   process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass-secret";
   const url = buildChannelWebhookUrl("whatsapp", makeRequest());
+  assert.ok(url !== null, "whatsapp webhook URL must not be null");
   assert.ok(
     url.includes("x-vercel-protection-bypass=bypass-secret"),
     "whatsapp delivery URL must include bypass secret",
@@ -146,6 +148,7 @@ test("buildChannelWebhookUrl without bypass returns clean URLs for webhook-proxi
 
   for (const channel of ["slack", "telegram", "discord", "whatsapp"] as const) {
     const url = buildChannelWebhookUrl(channel, request);
+    assert.ok(url !== null, `${channel} webhook URL must not be null`);
     assert.ok(!url.includes("x-vercel-protection-bypass"));
     assert.ok(url.startsWith("https://app.example.com"));
   }

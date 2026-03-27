@@ -84,7 +84,7 @@ export async function processChannelStep(
   // route, so runWithBootMessages edits it in-place instead of creating a
   // second message.
   let existingBootHandle: BootMessageHandle | undefined;
-  if (bootMessageId && channel === "telegram") {
+  if (typeof bootMessageId === "number" && channel === "telegram") {
     const meta = await getInitializedMeta();
     const tgConfig = meta.channels.telegram;
     const chatId = extractTelegramChatId(payload);
@@ -115,10 +115,10 @@ export async function processChannelStep(
       };
     }
   }
-  if (bootMessageId && channel === "whatsapp" && typeof bootMessageId === "string") {
+  if (typeof bootMessageId === "string" && channel === "whatsapp") {
     const meta = await getInitializedMeta();
     const waConfig = meta.channels.whatsapp;
-    if (waConfig) {
+    if (hasWhatsAppBusinessCredentials(waConfig)) {
       existingBootHandle = {
         async update() {
           // WhatsApp does not support editing sent messages. Keep the
