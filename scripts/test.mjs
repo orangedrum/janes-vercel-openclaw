@@ -44,7 +44,7 @@ if (testFiles.length === 0) {
   process.exit(1);
 }
 
-const args = ["--import", "tsx", "--test"];
+const args = ["--import", "tsx", "--test", "--test-concurrency=1"];
 if (watchMode) {
   args.push("--watch");
 }

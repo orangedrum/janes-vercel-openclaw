@@ -55,6 +55,7 @@ async function getInitialStatus(): Promise<StatusPayload | null> {
       heartbeatIntervalMs: sleepConfig.heartbeatIntervalMs,
       timeoutRemainingMs: null,
       timeoutSource: "none",
+      setupProgress: null,
       firewall: { ...meta.firewall, wouldBlock: computeWouldBlock(meta.firewall) },
       channels: await getPublicChannelState(syntheticRequest, meta),
       restoreTarget: {
