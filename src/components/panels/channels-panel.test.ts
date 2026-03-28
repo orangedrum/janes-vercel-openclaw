@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type {
+  ChannelReadiness,
+  LaunchVerificationPayload,
+} from "@/shared/launch-verification";
 import {
   getPreflightBlockerIds,
   summarizePreflight,
   formatPreflightFetchError,
+  getVerificationViewModel,
 } from "./channels-panel";
 
 test("getPreflightBlockerIds returns failing check IDs", () => {
@@ -98,4 +103,73 @@ test("formatPreflightFetchError prefers an explicit error message", () => {
     formatPreflightFetchError(null),
     "Failed to load deployment preflight. Refresh the panel or open /api/admin/preflight.",
   );
+});
+
+/* ── getVerificationViewModel tests ── */
+
+const READY_READINESS = {
+  ready: true,
+  verifiedAt: "2026-03-28T09:00:00.000Z",
+} as Pick<ChannelReadiness, "ready" | "verifiedAt">;
+
+test("getVerificationViewModel prioritizes running state over stale readiness", () => {
+  const view = getVerificationViewModel({
+    readiness: READY_READINESS,
+    verifyResult: null,
+    verifyRunning: true,
+    totalMs: 0,
+  });
+  assert.equal(view.badgeText, "Verifying\u2026");
+  assert.equal(view.summaryText, "Verification in progress");
+  assert.equal(view.showQuickCheck, false);
+});
+
+test("getVerificationViewModel prioritizes failed result over stale verified readiness", () => {
+  const view = getVerificationViewModel({
+    readiness: READY_READINESS,
+    verifyResult: { ok: false } as Pick<LaunchVerificationPayload, "ok">,
+    verifyRunning: false,
+    totalMs: 0,
+  });
+  assert.equal(view.badgeText, "Failed");
+  assert.equal(view.summaryText, "Last verification failed");
+  assert.equal(view.primaryActionLabel, "Re-verify");
+});
+
+test("getVerificationViewModel formats verified success summary", () => {
+  const view = getVerificationViewModel({
+    readiness: READY_READINESS,
+    verifyResult: { ok: true } as Pick<LaunchVerificationPayload, "ok">,
+    verifyRunning: false,
+    totalMs: 1500,
+  });
+  assert.equal(view.badgeText, "Verified");
+  assert.match(view.summaryText, /^Verified /);
+  assert.match(view.summaryText, /1\.5s/);
+  assert.equal(view.primaryActionLabel, "Re-verify");
+});
+
+test("getVerificationViewModel shows initial unverified state when no readiness exists", () => {
+  const view = getVerificationViewModel({
+    readiness: null,
+    verifyResult: null,
+    verifyRunning: false,
+    totalMs: 0,
+  });
+  assert.equal(view.badgeText, "");
+  assert.equal(view.summaryText, "Not yet verified");
+  assert.equal(view.showQuickCheck, true);
+  assert.equal(view.primaryActionLabel, "Verify");
+});
+
+test("getVerificationViewModel clears back to unverified when readiness is absent", () => {
+  const view = getVerificationViewModel({
+    readiness: null,
+    verifyResult: null,
+    verifyRunning: false,
+    totalMs: 0,
+  });
+  assert.equal(view.badgeText, "");
+  assert.equal(view.summaryText, "Not yet verified");
+  assert.equal(view.primaryActionClassName, "button primary");
 });

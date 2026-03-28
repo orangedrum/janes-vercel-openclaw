@@ -168,6 +168,77 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/* ── Verification view-model ── */
+
+export type VerificationViewModel = {
+  badgeText: string;
+  badgeClassName: string;
+  summaryText: string;
+  primaryActionLabel: "Verify" | "Re-verify" | "Verifying\u2026";
+  primaryActionClassName: string;
+  showQuickCheck: boolean;
+};
+
+export function getVerificationViewModel({
+  readiness,
+  verifyResult,
+  verifyRunning,
+  totalMs,
+}: {
+  readiness: Pick<ChannelReadiness, "ready" | "verifiedAt"> | null;
+  verifyResult: Pick<LaunchVerificationPayload, "ok"> | null;
+  verifyRunning: boolean;
+  totalMs: number;
+}): VerificationViewModel {
+  const isVerified = readiness?.ready === true;
+  const isFailed = verifyResult?.ok === false;
+
+  if (verifyRunning) {
+    return {
+      badgeText: "Verifying\u2026",
+      badgeClassName: "status-badge restoring",
+      summaryText: "Verification in progress",
+      primaryActionLabel: "Verifying\u2026",
+      primaryActionClassName: "button primary",
+      showQuickCheck: false,
+    };
+  }
+
+  if (isFailed) {
+    return {
+      badgeText: "Failed",
+      badgeClassName: "status-badge error",
+      summaryText: "Last verification failed",
+      primaryActionLabel: isVerified ? "Re-verify" : "Verify",
+      primaryActionClassName: "button primary",
+      showQuickCheck: !isVerified,
+    };
+  }
+
+  if (isVerified) {
+    const durationSuffix = verifyResult ? ` in ${formatDuration(totalMs)}` : "";
+    return {
+      badgeText: "Verified",
+      badgeClassName: "status-badge running",
+      summaryText: readiness?.verifiedAt
+        ? `Verified ${formatTimestamp(readiness.verifiedAt)}${durationSuffix}`
+        : `Verified${durationSuffix}`,
+      primaryActionLabel: "Re-verify",
+      primaryActionClassName: "button ghost",
+      showQuickCheck: false,
+    };
+  }
+
+  return {
+    badgeText: "",
+    badgeClassName: "",
+    summaryText: "Not yet verified",
+    primaryActionLabel: "Verify",
+    primaryActionClassName: "button primary",
+    showQuickCheck: true,
+  };
+}
+
 async function loadPersistedReadiness(): Promise<ChannelReadiness | null> {
   try {
     const res = await fetch("/api/admin/launch-verify", {
@@ -221,12 +292,17 @@ export function ChannelsPanel({
 
   /* Derived verification state */
   const isStreaming = verifyRunning && streamingPhases.length > 0;
-  const isVerified = readiness?.ready === true;
-  const isFailed = verifyResult && !verifyResult.ok;
 
   const totalMs = verifyResult
     ? new Date(verifyResult.completedAt).getTime() - new Date(verifyResult.startedAt).getTime()
     : 0;
+
+  const verificationView = getVerificationViewModel({
+    readiness,
+    verifyResult,
+    verifyRunning,
+    totalMs,
+  });
 
   const showPersistedPhases = !verifyResult && !isStreaming && readiness && readiness.phases.length > 0;
 
@@ -237,6 +313,7 @@ export function ChannelsPanel({
     ? Math.round((completedStreamCount / LAUNCH_PHASE_COUNT) * 100)
     : 0;
 
+  const isFailed = verifyResult && !verifyResult.ok;
   const showDetails = detailsExpanded || isStreaming || isFailed;
 
   /* ── Preflight fetching ── */
@@ -273,7 +350,7 @@ export function ChannelsPanel({
   useEffect(() => {
     if (!active) return;
     const timer = window.setTimeout(() => {
-      void refreshPreflight();
+      void Promise.all([refreshPreflight(), refreshReadiness()]);
     }, 0);
     return () => {
       window.clearTimeout(timer);
@@ -381,17 +458,13 @@ export function ChannelsPanel({
     }
   }
 
-  /* ── Readiness badge ── */
+  /* ── Readiness refresh ── */
 
-  function readinessLabel(): { text: string; className: string } {
-    if (isStreaming) return { text: "Verifying\u2026", className: "status-badge restoring" };
-    if (isFailed) return { text: "Failed", className: "status-badge error" };
-    if (isVerified) return { text: "Verified", className: "status-badge running" };
-    if (readiness) return { text: "Not verified", className: "status-badge stopped" };
-    return { text: "", className: "" };
+  async function refreshReadiness(): Promise<void> {
+    const nextReadiness = await loadPersistedReadiness();
+    if (!mountedRef.current) return;
+    setReadiness(nextReadiness);
   }
-
-  const badge = readinessLabel();
 
   return (
     <article
@@ -408,13 +481,15 @@ export function ChannelsPanel({
           <h2>External entry points</h2>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 36 }}>
-          {badge.text && <span className={badge.className}>{badge.text}</span>}
+          {verificationView.badgeText ? (
+            <span className={verificationView.badgeClassName}>{verificationView.badgeText}</span>
+          ) : null}
           <button
             className="button ghost"
             disabled={busy || refreshing}
             onClick={() => {
               setRefreshing(true);
-              void Promise.all([refresh(), refreshPreflight()])
+              void Promise.all([refresh(), refreshPreflight(), refreshReadiness()])
                 .finally(() => setRefreshing(false));
             }}
           >
@@ -425,15 +500,9 @@ export function ChannelsPanel({
 
       {/* ── Compact readiness row ── */}
       <div className="launch-verified-summary">
-        <span className="muted-copy">
-          {isVerified && readiness?.verifiedAt
-            ? `Verified ${formatTimestamp(readiness.verifiedAt)}${verifyResult ? ` in ${formatDuration(totalMs)}` : ""}`
-            : isFailed
-              ? "Last verification failed"
-              : "Not yet verified"}
-        </span>
+        <span className="muted-copy">{verificationView.summaryText}</span>
         <div style={{ display: "flex", gap: 8 }}>
-          {(showPersistedPhases || verifyResult) && !isStreaming && (
+          {(showPersistedPhases || verifyResult) && !verifyRunning && (
             <button
               className="button ghost"
               disabled={busy || verifyRunning}
@@ -442,7 +511,7 @@ export function ChannelsPanel({
               {detailsExpanded ? "Hide details" : "Show details"}
             </button>
           )}
-          {!isVerified && !isStreaming && (
+          {verificationView.showQuickCheck && !verifyRunning && (
             <button
               className="button ghost"
               disabled={busy || verifyRunning}
@@ -453,12 +522,12 @@ export function ChannelsPanel({
             </button>
           )}
           <button
-            className={isVerified && !isStreaming && !isFailed ? "button ghost" : "button primary"}
+            className={verificationView.primaryActionClassName}
             disabled={busy || verifyRunning}
             onClick={() => void runVerification("destructive")}
             title="Full verification including stop/restore cycle"
           >
-            {verifyRunning ? "Verifying\u2026" : isVerified ? "Re-verify" : "Verify"}
+            {verificationView.primaryActionLabel}
           </button>
         </div>
       </div>

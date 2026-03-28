@@ -181,3 +181,16 @@ test("ChannelsPanel consistent action labels across all unconfigured channel car
   // Slack, Discord, and WhatsApp show "Save Credentials"; Telegram also shows it
   assert.ok(saveCount >= 3, `at least 3 cards show Save Credentials (found ${saveCount})`);
 });
+
+test("ChannelsPanel keeps verification controls inside the consolidated channels surface", () => {
+  const html = renderChannelsPanel();
+
+  // Verification affordances live within the consolidated Channels panel
+  assert.ok(html.includes("External entry points"), "panel heading must be present");
+  assert.ok(html.includes("Quick check"), "Quick check button must be present");
+  assert.ok(html.includes(">Verify</button>"), "Verify primary action must be present");
+  assert.ok(html.includes("launch-verified-summary"), "compact readiness row must be present");
+
+  // A separate Launch Verification card must not be reintroduced
+  assert.ok(!html.includes("Launch Verification"), "separate Launch Verification card must not exist");
+});
