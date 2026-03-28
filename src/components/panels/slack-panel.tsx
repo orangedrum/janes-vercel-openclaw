@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { ChannelPill } from "@/components/ui/badge";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
-import { ConnectabilityNotice } from "@/components/panels/connectability-notice";
 import type {
   StatusPayload,
   RunAction,
   RequestJson,
   SlackTestPayload,
 } from "@/components/admin-types";
+import type { ChannelPillModel } from "@/components/panels/channel-panel-shared";
+import {
+  ChannelCardFrame,
+  ChannelCopyValue,
+  ChannelInfoRow,
+  ChannelSecretField,
+} from "@/components/panels/channel-panel-shared";
 
 type SlackPanelProps = {
   status: StatusPayload;
@@ -16,6 +21,13 @@ type SlackPanelProps = {
   requestJson: RequestJson;
   preflightBlockerIds?: Set<string> | null;
 };
+
+function getSlackPill(configured: boolean): ChannelPillModel {
+  return {
+    label: configured ? "connected" : "offline",
+    variant: configured ? "good" : "idle",
+  };
+}
 
 export function SlackPanel({
   status,
@@ -130,48 +142,36 @@ export function SlackPanel({
   }
 
   return (
-    <section className="channel-card channel-slack">
-      <div className="channel-head">
-        <div>
-          <h3>Slack</h3>
-          <p className="muted-copy">
-            {sl.configured
-              ? `Connected${sl.team ? ` · ${sl.team}` : ""}`
-              : "Not configured"}
-          </p>
-        </div>
-        <ChannelPill variant={sl.configured ? "good" : "idle"}>
-          {sl.configured ? "connected" : "offline"}
-        </ChannelPill>
-      </div>
-
-      {panelError ? <p className="error-banner">{panelError}</p> : null}
-      {sl.lastError ? <p className="error-banner">{sl.lastError}</p> : null}
-      <ConnectabilityNotice connectability={sl.connectability} suppressedIds={preflightBlockerIds} />
-
+    <ChannelCardFrame
+      channelClassName="channel-slack"
+      title="Slack"
+      summary={
+        sl.configured
+          ? `Connected${sl.team ? ` · ${sl.team}` : ""}`
+          : "Not configured"
+      }
+      pill={getSlackPill(sl.configured)}
+      errors={[panelError, sl.lastError]}
+      connectability={sl.connectability}
+      suppressedIds={preflightBlockerIds}
+    >
       {sl.configured && !editing ? (
         <div className="channel-connected-view">
-          <div className="channel-detail-row">
-            <span className="field-label">Workspace</span>
+          <ChannelInfoRow label="Workspace">
             <code className="inline-code">
               {sl.team ?? "—"}
               {sl.botId ? ` · ${sl.botId}` : ""}
             </code>
-          </div>
-          <div className="channel-detail-row">
-            <span className="field-label">Webhook URL</span>
-            <div className="channel-copy-row">
-              <code className="inline-code channel-copy-code">
-                {sl.webhookUrl}
-              </code>
-              <button
-                className="button ghost channel-copy-btn"
-                onClick={handleCopyWebhook}
-              >
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-          </div>
+          </ChannelInfoRow>
+          <ChannelCopyValue
+            label="Webhook URL"
+            value={sl.webhookUrl}
+            copied={copied}
+            onCopy={handleCopyWebhook}
+          />
+          <ChannelInfoRow label="Health">
+            <code className="inline-code">Ready</code>
+          </ChannelInfoRow>
           <div className="inline-actions">
             <button
               className="button secondary"
@@ -220,69 +220,33 @@ export function SlackPanel({
             </div>
           ) : null}
 
-          <div className="stack">
-            <span className="field-label">Signing Secret</span>
-            <p className="muted-copy">
-              Basic Information → App Credentials → Signing Secret
-            </p>
-            <div className="channel-token-row">
-              <input
-                className="text-input"
-                type={showSecret ? "text" : "password"}
-                autoComplete="off"
-                spellCheck={false}
-                value={signingSecret}
-                onChange={(event) => setSigningSecret(event.target.value)}
-                placeholder="Signing Secret"
-                data-1p-ignore
-                data-lpignore="true"
-                data-form-type="other"
-              />
-              <button
-                type="button"
-                className="button ghost channel-toggle-btn"
-                onClick={() => setShowSecret((v) => !v)}
-              >
-                {showSecret ? "Hide" : "Show"}
-              </button>
-            </div>
-          </div>
+          <ChannelSecretField
+            label="Signing Secret"
+            value={signingSecret}
+            onChange={setSigningSecret}
+            placeholder="Signing Secret"
+            shown={showSecret}
+            onToggleShown={() => setShowSecret((v) => !v)}
+            help="Basic Information → App Credentials → Signing Secret"
+          />
 
-          <div className="stack">
-            <span className="field-label">Bot Token</span>
-            <p className="muted-copy">
-              OAuth & Permissions → Bot User OAuth Token (starts with xoxb-)
-            </p>
-            <div className="channel-token-row">
-              <input
-                className="text-input"
-                type={showToken ? "text" : "password"}
-                autoComplete="off"
-                spellCheck={false}
-                value={botToken}
-                onChange={(event) => {
-                  setBotToken(event.target.value);
-                  setTestResult(null);
-                }}
-                placeholder="xoxb-..."
-                data-1p-ignore
-                data-lpignore="true"
-                data-form-type="other"
-              />
-              <button
-                type="button"
-                className="button ghost channel-toggle-btn"
-                onClick={() => setShowToken((v) => !v)}
-              >
-                {showToken ? "Hide" : "Show"}
-              </button>
-            </div>
-            {botToken.trim() && !botTokenValid ? (
-              <p className="channel-validation-error">
-                Bot token must start with xoxb-
-              </p>
-            ) : null}
-          </div>
+          <ChannelSecretField
+            label="Bot Token"
+            value={botToken}
+            onChange={(v) => {
+              setBotToken(v);
+              setTestResult(null);
+            }}
+            placeholder="xoxb-..."
+            shown={showToken}
+            onToggleShown={() => setShowToken((v) => !v)}
+            help="OAuth & Permissions → Bot User OAuth Token (starts with xoxb-)"
+            validationMessage={
+              botToken.trim() && !botTokenValid
+                ? "Bot token must start with xoxb-"
+                : null
+            }
+          />
 
           {botTokenValid ? (
             <button
@@ -301,27 +265,6 @@ export function SlackPanel({
             </p>
           ) : null}
 
-          {!editing ? (
-            <div className="stack">
-              <span className="field-label">Webhook URL</span>
-              <p className="muted-copy">
-                Paste in Event Subscriptions after saving.
-              </p>
-              <div className="channel-copy-row">
-                <code className="inline-code channel-copy-code">
-                  {sl.webhookUrl}
-                </code>
-                <button
-                  type="button"
-                  className="button ghost channel-copy-btn"
-                  onClick={handleCopyWebhook}
-                >
-                  {copied ? "Copied" : "Copy"}
-                </button>
-              </div>
-            </div>
-          ) : null}
-
           <div className="inline-actions">
             <button
               type="submit"
@@ -333,7 +276,7 @@ export function SlackPanel({
                 !botToken.trim()
               }
             >
-              {editing ? "Update Credentials" : "Save Credentials"}
+              {editing ? "Update" : "Connect"}
             </button>
             {editing ? (
               <button
@@ -351,6 +294,6 @@ export function SlackPanel({
         </form>
       )}
       <ConfirmDialog {...dialogProps} />
-    </section>
+    </ChannelCardFrame>
   );
 }

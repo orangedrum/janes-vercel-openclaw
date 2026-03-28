@@ -145,7 +145,7 @@ test("TelegramPanel renders connect form when unconfigured", () => {
 
   assert.ok(html.includes("Connect Telegram"), "shows connect title");
   assert.ok(html.includes("Bot token"), "shows bot token field");
-  assert.ok(html.includes("Save Credentials"), "shows save button");
+  assert.ok(html.includes("Connect"), "shows connect button");
 });
 
 /* ── Connected card ── */

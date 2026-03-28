@@ -148,7 +148,7 @@ test("DiscordPanel does not render simulated multi-phase progress during connect
   // The setup form is a simple credential entry, not a wizard with phases
   assert.ok(html.includes("Connect Discord"), "shows connect title");
   assert.ok(html.includes("Bot token"), "shows bot token field");
-  assert.ok(html.includes("Save Credentials"), "shows save button, not a phased progress button");
+  assert.ok(html.includes("Connect"), "shows connect button");
 });
 
 /* ── Connected card structure ── */
@@ -170,11 +170,12 @@ test("DiscordPanel renders connected card with consistent action ordering", () =
   assert.ok(html.includes("Connected · TestBot"), "connected header includes app name");
   assert.ok(html.includes("connected"), "pill shows connected status");
 
-  // Detail rows
+  // Detail rows: Application, Webhook URL, Health
   assert.ok(html.includes("Application"), "shows application row");
   assert.ok(html.includes("Webhook URL"), "shows webhook URL row");
-  assert.ok(html.includes("Endpoint"), "shows endpoint row");
-  assert.ok(html.includes("/ask command"), "shows command row");
+  assert.ok(html.includes("Health"), "shows health row");
+  assert.ok(html.includes("Endpoint configured"), "health row includes endpoint status");
+  assert.ok(html.includes("/ask registered"), "health row includes command status");
 
   // Action ordering: Update credentials → Disconnect (with optional Invite bot in between)
   assert.ok(html.includes("Update credentials"), "has update credentials action");

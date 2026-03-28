@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { ChannelPill } from "@/components/ui/badge";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
-import { ConnectabilityNotice } from "@/components/panels/connectability-notice";
 import type {
   RunAction,
   RequestJson,
   TelegramPreviewPayload,
   StatusPayload,
 } from "@/components/admin-types";
+import type { ChannelPillModel } from "@/components/panels/channel-panel-shared";
+import {
+  ChannelCardFrame,
+  ChannelCopyValue,
+  ChannelInfoRow,
+  ChannelSecretField,
+} from "@/components/panels/channel-panel-shared";
 
 type TelegramPanelProps = {
   status: StatusPayload;
@@ -16,6 +21,35 @@ type TelegramPanelProps = {
   requestJson: RequestJson;
   preflightBlockerIds?: Set<string> | null;
 };
+
+function getTelegramPill(args: {
+  configured: boolean;
+  status: string;
+}): ChannelPillModel {
+  if (!args.configured) {
+    return { label: "offline", variant: "idle" };
+  }
+  if (args.status === "error") {
+    return { label: "error", variant: "bad" };
+  }
+  return { label: "connected", variant: "good" };
+}
+
+function getTelegramHealth(args: {
+  commandSyncStatus?: "synced" | "unsynced" | "error";
+  commandsRegisteredAt?: number | null;
+}): string {
+  const base =
+    args.commandSyncStatus === "error"
+      ? "Command sync failed"
+      : args.commandSyncStatus === "synced"
+        ? "Commands synced"
+        : "Commands pending";
+  if (!args.commandsRegisteredAt) {
+    return base;
+  }
+  return `${base} · ${new Date(args.commandsRegisteredAt).toLocaleString()}`;
+}
 
 export function TelegramPanel({
   status,
@@ -109,78 +143,48 @@ export function TelegramPanel({
     setSyncingCommands(false);
   }
 
+  function handleCopyWebhook(): void {
+    if (!tg.webhookUrl) return;
+    void navigator.clipboard.writeText(tg.webhookUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
-    <section className="channel-card channel-telegram">
-      <div className="channel-head">
-        <div>
-          <h3>Telegram</h3>
-          <p className="muted-copy">
-            {tg.configured
-              ? `Connected${tg.botUsername ? ` \u00b7 @${tg.botUsername}` : ""}`
-              : "Not configured"}
-          </p>
-        </div>
-        <ChannelPill
-          variant={
-            tg.configured
-              ? tg.status === "error"
-                ? "bad"
-                : "good"
-              : "idle"
-          }
-        >
-          {tg.configured
-            ? tg.status === "error"
-              ? "error"
-              : "connected"
-            : "offline"}
-        </ChannelPill>
-      </div>
-
-      {panelError ? <p className="error-banner">{panelError}</p> : null}
-      {tg.lastError ? <p className="error-banner">{tg.lastError}</p> : null}
-      {tg.commandSyncError ? (
-        <p className="error-banner">Command sync: {tg.commandSyncError}</p>
-      ) : null}
-      <ConnectabilityNotice connectability={tg.connectability} suppressedIds={preflightBlockerIds} />
-
+    <ChannelCardFrame
+      channelClassName="channel-telegram"
+      title="Telegram"
+      summary={
+        tg.configured
+          ? `Connected${tg.botUsername ? ` · @${tg.botUsername}` : ""}`
+          : "Not configured"
+      }
+      pill={getTelegramPill({ configured: tg.configured, status: tg.status })}
+      errors={[panelError, tg.lastError]}
+      connectability={tg.connectability}
+      suppressedIds={preflightBlockerIds}
+    >
       {tg.configured && !editing ? (
         <div className="channel-connected-view">
-          <div className="channel-detail-row">
-            <span className="field-label">Bot</span>
+          <ChannelInfoRow label="Bot">
             <code className="inline-code">
               @{tg.botUsername ?? "unknown"}
             </code>
-          </div>
-          <div className="channel-detail-row">
-            <span className="field-label">Webhook URL</span>
-            <div className="channel-copy-row">
-              <code className="inline-code channel-copy-code">
-                {tg.webhookUrl ?? "\u2014"}
-              </code>
-              {tg.webhookUrl ? (
-                <button
-                  className="button ghost channel-copy-btn"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(tg.webhookUrl!);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  }}
-                >
-                  {copied ? "Copied" : "Copy"}
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <div className="channel-detail-row">
-            <span className="field-label">Commands</span>
+          </ChannelInfoRow>
+          <ChannelCopyValue
+            label="Webhook URL"
+            value={tg.webhookUrl}
+            copied={copied}
+            onCopy={handleCopyWebhook}
+          />
+          <ChannelInfoRow label="Commands">
             <code className="inline-code">
-              {tg.commandSyncStatus}
-              {tg.commandsRegisteredAt
-                ? ` \u00b7 ${new Date(tg.commandsRegisteredAt).toLocaleString()}`
-                : ""}
+              {getTelegramHealth({
+                commandSyncStatus: tg.commandSyncStatus,
+                commandsRegisteredAt: tg.commandsRegisteredAt,
+              })}
             </code>
-          </div>
+          </ChannelInfoRow>
           <div className="inline-actions">
             <button
               className="button secondary"
@@ -229,32 +233,17 @@ export function TelegramPanel({
             </p>
           )}
 
-          <div className="stack">
-            <span className="field-label">Bot token</span>
-            <div className="channel-token-row">
-              <input
-                className="text-input"
-                type={showToken ? "text" : "password"}
-                value={botToken}
-                onChange={(event) => {
-                  setBotToken(event.target.value);
-                  setPreview(null);
-                }}
-                placeholder="123456:ABC-DEF1234..."
-                autoComplete="off"
-                data-1p-ignore
-                data-lpignore="true"
-                data-form-type="other"
-              />
-              <button
-                type="button"
-                className="button ghost channel-toggle-btn"
-                onClick={() => setShowToken((s) => !s)}
-              >
-                {showToken ? "Hide" : "Show"}
-              </button>
-            </div>
-          </div>
+          <ChannelSecretField
+            label="Bot token"
+            value={botToken}
+            onChange={(v) => {
+              setBotToken(v);
+              setPreview(null);
+            }}
+            placeholder="123456:ABC-DEF1234..."
+            shown={showToken}
+            onToggleShown={() => setShowToken((s) => !s)}
+          />
 
           {preview ? (
             <p className="success-copy">
@@ -277,7 +266,7 @@ export function TelegramPanel({
               className="button primary"
               disabled={busy || !tg.connectability.canConnect || !botToken.trim()}
             >
-              {editing ? "Update Credentials" : "Save Credentials"}
+              {editing ? "Update" : "Connect"}
             </button>
             {editing && (
               <button
@@ -298,6 +287,6 @@ export function TelegramPanel({
         </form>
       )}
       <ConfirmDialog {...dialogProps} />
-    </section>
+    </ChannelCardFrame>
   );
 }

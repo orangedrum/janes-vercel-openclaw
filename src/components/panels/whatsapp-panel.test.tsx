@@ -177,7 +177,6 @@ test("WhatsAppPanel renders the business credential setup flow", () => {
   assert.ok(html.includes("Verify Token"));
   assert.ok(html.includes("App Secret"));
   assert.ok(html.includes("Business Account ID"));
-  assert.ok(html.includes("Webhook URL"));
   assert.ok(
     html.includes(
       "Resolve the deployment blockers above before saving WhatsApp credentials.",

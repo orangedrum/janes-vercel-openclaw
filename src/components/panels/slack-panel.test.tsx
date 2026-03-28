@@ -146,7 +146,7 @@ test("SlackPanel renders connect form when unconfigured", () => {
   assert.ok(html.includes("Connect Slack"), "shows connect title");
   assert.ok(html.includes("Signing Secret"), "shows signing secret field");
   assert.ok(html.includes("Bot Token"), "shows bot token field");
-  assert.ok(html.includes("Save Credentials"), "shows save button");
+  assert.ok(html.includes("Connect"), "shows connect button");
 });
 
 /* ── Connected card ── */

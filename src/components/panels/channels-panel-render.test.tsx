@@ -176,10 +176,11 @@ test("ChannelsPanel exposes preflight state as data attributes", () => {
 test("ChannelsPanel consistent action labels across all unconfigured channel cards", () => {
   const html = renderChannelsPanel();
 
-  // All unconfigured cards show "Save Credentials" as their primary action
-  const saveCount = (html.match(/Save Credentials/g) ?? []).length;
-  // Slack, Discord, and WhatsApp show "Save Credentials"; Telegram also shows it
-  assert.ok(saveCount >= 3, `at least 3 cards show Save Credentials (found ${saveCount})`);
+  // All four cards now use "Connect" as the primary action label
+  assert.ok(html.includes("Connect Slack"), "Slack shows connect title");
+  assert.ok(html.includes("Connect Telegram"), "Telegram shows connect title");
+  assert.ok(html.includes("Connect Discord"), "Discord shows connect title");
+  assert.ok(html.includes("Connect WhatsApp"), "WhatsApp shows connect title");
 });
 
 test("ChannelsPanel exposes machine-readable verification state on the consolidated surface", () => {

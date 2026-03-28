@@ -1,0 +1,193 @@
+"use client";
+
+import type { ReactNode } from "react";
+import { ChannelPill } from "@/components/ui/badge";
+import { ConnectabilityNotice } from "@/components/panels/connectability-notice";
+import type { ChannelConnectability } from "@/shared/channel-connectability";
+
+export type ChannelPillModel = {
+  label: string;
+  variant: "good" | "bad" | "idle";
+};
+
+export function ChannelCardFrame({
+  channelClassName,
+  title,
+  summary,
+  pill,
+  errors = [],
+  connectability,
+  suppressedIds,
+  children,
+}: {
+  channelClassName: string;
+  title: string;
+  summary: string;
+  pill: ChannelPillModel;
+  errors?: Array<string | null | undefined>;
+  connectability: ChannelConnectability;
+  suppressedIds?: ReadonlySet<string> | null;
+  children: ReactNode;
+}) {
+  const visibleErrors = errors.filter(
+    (value): value is string => Boolean(value && value.trim()),
+  );
+  return (
+    <section className={`channel-card ${channelClassName}`}>
+      <div className="channel-head">
+        <div>
+          <h3>{title}</h3>
+          <p className="muted-copy">{summary}</p>
+        </div>
+        <ChannelPill variant={pill.variant}>{pill.label}</ChannelPill>
+      </div>
+
+      {visibleErrors.map((message) => (
+        <p key={message} className="error-banner">
+          {message}
+        </p>
+      ))}
+      <ConnectabilityNotice
+        connectability={connectability}
+        suppressedIds={suppressedIds}
+      />
+      {children}
+    </section>
+  );
+}
+
+export function ChannelInfoRow({
+  label,
+  children,
+  action,
+}: {
+  label: string;
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="channel-detail-row">
+      <span className="field-label">{label}</span>
+      {children}
+      {action}
+    </div>
+  );
+}
+
+export function ChannelCopyValue({
+  label,
+  value,
+  copied,
+  onCopy,
+  disabled = false,
+  emptyLabel = "—",
+}: {
+  label: string;
+  value: string | null | undefined;
+  copied: boolean;
+  onCopy: () => void;
+  disabled?: boolean;
+  emptyLabel?: string;
+}) {
+  return (
+    <ChannelInfoRow label={label}>
+      <div className="channel-copy-row">
+        <code className="inline-code channel-copy-code">
+          {value ?? emptyLabel}
+        </code>
+        <button
+          type="button"
+          className="button ghost channel-copy-btn"
+          onClick={onCopy}
+          disabled={disabled || !value}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </ChannelInfoRow>
+  );
+}
+
+export function ChannelTextField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  help,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  help?: ReactNode;
+}) {
+  return (
+    <div className="stack">
+      <span className="field-label">{label}</span>
+      {help ? <p className="muted-copy">{help}</p> : null}
+      <input
+        className="text-input"
+        type="text"
+        autoComplete="off"
+        spellCheck={false}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        data-1p-ignore
+        data-lpignore="true"
+        data-form-type="other"
+      />
+    </div>
+  );
+}
+
+export function ChannelSecretField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  shown,
+  onToggleShown,
+  help,
+  validationMessage,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  shown: boolean;
+  onToggleShown: () => void;
+  help?: ReactNode;
+  validationMessage?: string | null;
+}) {
+  return (
+    <div className="stack">
+      <span className="field-label">{label}</span>
+      {help ? <p className="muted-copy">{help}</p> : null}
+      <div className="channel-token-row">
+        <input
+          className="text-input"
+          type={shown ? "text" : "password"}
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          data-1p-ignore
+          data-lpignore="true"
+          data-form-type="other"
+        />
+        <button
+          type="button"
+          className="button ghost channel-toggle-btn"
+          onClick={onToggleShown}
+        >
+          {shown ? "Hide" : "Show"}
+        </button>
+      </div>
+      {validationMessage ? (
+        <p className="channel-validation-error">{validationMessage}</p>
+      ) : null}
+    </div>
+  );
+}

@@ -1,14 +1,20 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { ChannelPill } from "@/components/ui/badge";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
-import { ConnectabilityNotice } from "@/components/panels/connectability-notice";
 import type {
   RunAction,
   RequestJson,
   StatusPayload,
 } from "@/components/admin-types";
+import type { ChannelPillModel } from "@/components/panels/channel-panel-shared";
+import {
+  ChannelCardFrame,
+  ChannelCopyValue,
+  ChannelInfoRow,
+  ChannelSecretField,
+  ChannelTextField,
+} from "@/components/panels/channel-panel-shared";
 
 type WhatsAppPanelProps = {
   status: StatusPayload;
@@ -54,6 +60,19 @@ function subscribeToOrigin(): () => void {
 
 function getOriginSnapshot(): string | null {
   return typeof window === "undefined" ? null : window.location.origin;
+}
+
+function getWhatsAppPill(args: {
+  configured: boolean;
+  status: string;
+}): ChannelPillModel {
+  if (!args.configured) {
+    return { label: "offline", variant: "idle" };
+  }
+  if (args.status === "error") {
+    return { label: "error", variant: "bad" };
+  }
+  return { label: "connected", variant: "good" };
 }
 
 export function WhatsAppPanel({
@@ -191,50 +210,37 @@ export function WhatsAppPanel({
   }
 
   return (
-    <section className="channel-card channel-whatsapp">
-      <div className="channel-head">
-        <div>
-          <h3>WhatsApp</h3>
-          <p className="muted-copy">
-            {wa.configured
-              ? `Connected${wa.displayName ? ` · ${wa.displayName}` : ""}${wa.linkedPhone ? ` · ${wa.linkedPhone}` : ""}`
-              : "Not configured"}
-          </p>
-        </div>
-        <ChannelPill
-          variant={wa.configured ? (wa.status === "error" ? "bad" : "good") : "idle"}
-        >
-          {wa.configured ? wa.status.replace("-", " ") : "offline"}
-        </ChannelPill>
-      </div>
-
-      {panelError ? <p className="error-banner">{panelError}</p> : null}
-      {wa.lastError ? <p className="error-banner">{wa.lastError}</p> : null}
-      <ConnectabilityNotice connectability={wa.connectability} suppressedIds={preflightBlockerIds} />
-
+    <ChannelCardFrame
+      channelClassName="channel-whatsapp"
+      title="WhatsApp"
+      summary={
+        wa.configured
+          ? `Connected${wa.displayName ? ` · ${wa.displayName}` : ""}${wa.linkedPhone ? ` · ${wa.linkedPhone}` : ""}`
+          : "Not configured"
+      }
+      pill={getWhatsAppPill({ configured: wa.configured, status: wa.status })}
+      errors={[panelError, wa.lastError]}
+      connectability={wa.connectability}
+      suppressedIds={preflightBlockerIds}
+    >
       {wa.configured && !editing ? (
         <div className="channel-connected-view">
-          <div className="channel-detail-row">
-            <span className="field-label">Business account</span>
+          <ChannelInfoRow label="Business account">
             <code className="inline-code">
               {wa.displayName ?? wa.linkedPhone ?? "configured"}
             </code>
-          </div>
-          <div className="channel-detail-row">
-            <span className="field-label">Webhook URL</span>
-            <div className="channel-copy-row">
-              <code className="inline-code channel-copy-code">
-                {webhookUrl ?? "Unavailable until this admin UI has a public origin"}
-              </code>
-              <button
-                className="button ghost channel-copy-btn"
-                onClick={handleCopyWebhook}
-                disabled={!webhookUrl}
-              >
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-          </div>
+          </ChannelInfoRow>
+          <ChannelCopyValue
+            label="Webhook URL"
+            value={webhookUrl}
+            copied={copied}
+            onCopy={handleCopyWebhook}
+          />
+          <ChannelInfoRow label="Health">
+            <code className="inline-code">
+              {wa.status.replace("-", " ")}
+            </code>
+          </ChannelInfoRow>
           <div className="inline-actions">
             <button
               className="button secondary"
@@ -279,19 +285,17 @@ export function WhatsAppPanel({
             </p>
           ) : null}
 
-          <CredentialField
+          <ChannelTextField
             label="Phone Number ID"
             value={draft.phoneNumberId}
             placeholder="123456789012345"
             onChange={(value) => updateDraft("phoneNumberId", value)}
           />
 
-          <CredentialField
+          <ChannelSecretField
             label="Access Token"
             value={draft.accessToken}
             placeholder="EAAG..."
-            onChange={(value) => updateDraft("accessToken", value)}
-            isSecret
             shown={showSecrets.accessToken}
             onToggleShown={() =>
               setShowSecrets((current) => ({
@@ -299,14 +303,13 @@ export function WhatsAppPanel({
                 accessToken: !current.accessToken,
               }))
             }
+            onChange={(value) => updateDraft("accessToken", value)}
           />
 
-          <CredentialField
+          <ChannelSecretField
             label="Verify Token"
             value={draft.verifyToken}
             placeholder="custom-verify-token"
-            onChange={(value) => updateDraft("verifyToken", value)}
-            isSecret
             shown={showSecrets.verifyToken}
             onToggleShown={() =>
               setShowSecrets((current) => ({
@@ -314,14 +317,13 @@ export function WhatsAppPanel({
                 verifyToken: !current.verifyToken,
               }))
             }
+            onChange={(value) => updateDraft("verifyToken", value)}
           />
 
-          <CredentialField
+          <ChannelSecretField
             label="App Secret"
             value={draft.appSecret}
             placeholder="app-secret"
-            onChange={(value) => updateDraft("appSecret", value)}
-            isSecret
             shown={showSecrets.appSecret}
             onToggleShown={() =>
               setShowSecrets((current) => ({
@@ -329,34 +331,15 @@ export function WhatsAppPanel({
                 appSecret: !current.appSecret,
               }))
             }
+            onChange={(value) => updateDraft("appSecret", value)}
           />
 
-          <CredentialField
+          <ChannelTextField
             label="Business Account ID"
             value={draft.businessAccountId}
             placeholder="optional"
             onChange={(value) => updateDraft("businessAccountId", value)}
           />
-
-          <div className="stack">
-            <span className="field-label">Webhook URL</span>
-            <p className="muted-copy">
-              Paste in Meta webhook settings after saving.
-            </p>
-            <div className="channel-copy-row">
-              <code className="inline-code channel-copy-code">
-                {webhookUrl ?? "Unavailable until this admin UI has a public origin"}
-              </code>
-              <button
-                type="button"
-                className="button ghost channel-copy-btn"
-                onClick={handleCopyWebhook}
-                disabled={!webhookUrl}
-              >
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-          </div>
 
           <div className="inline-actions">
             <button
@@ -364,7 +347,7 @@ export function WhatsAppPanel({
               className="button primary"
               disabled={busy || !canSave}
             >
-              {editing ? "Update Credentials" : "Save Credentials"}
+              {editing ? "Update" : "Connect"}
             </button>
             {editing || hasDraft ? (
               <button
@@ -379,53 +362,6 @@ export function WhatsAppPanel({
         </form>
       )}
       <ConfirmDialog {...dialogProps} />
-    </section>
-  );
-}
-
-function CredentialField({
-  label,
-  value,
-  placeholder,
-  onChange,
-  isSecret = false,
-  shown = false,
-  onToggleShown,
-}: {
-  label: string;
-  value: string;
-  placeholder: string;
-  onChange: (value: string) => void;
-  isSecret?: boolean;
-  shown?: boolean;
-  onToggleShown?: () => void;
-}) {
-  return (
-    <div className="stack">
-      <span className="field-label">{label}</span>
-      <div className="channel-token-row">
-        <input
-          className="text-input"
-          type={isSecret && !shown ? "password" : "text"}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          autoComplete="off"
-          spellCheck={false}
-          data-1p-ignore
-          data-lpignore="true"
-          data-form-type="other"
-        />
-        {isSecret ? (
-          <button
-            type="button"
-            className="button ghost channel-toggle-btn"
-            onClick={onToggleShown}
-          >
-            {shown ? "Hide" : "Show"}
-          </button>
-        ) : null}
-      </div>
-    </div>
+    </ChannelCardFrame>
   );
 }
