@@ -21,7 +21,7 @@ function makeConnectability(
 }
 
 const RUN_ACTION: RunAction = async () => true;
-const REQUEST_JSON: RequestJson = async () => ({ ok: true, data: null });
+const REQUEST_JSON: RequestJson = async () => ({ ok: true, data: null, meta: { requestId: "test", action: "test", label: "test", status: 200, refreshed: false } });
 
 function makeStatus(
   discordOverrides: Partial<StatusPayload["channels"]["discord"]> = {},
@@ -219,6 +219,7 @@ const RUN_ACTION_FAILURE: RunAction = async () => false;
 const REQUEST_JSON_FAILURE: RequestJson = async () => ({
   ok: false,
   error: "HTTP 500",
+  meta: { requestId: "test", action: "test", label: "test", status: 500, code: "http-error" as const, retryable: true },
 });
 
 test("DiscordPanel accepts failure-shaped RunAction and RequestJson stubs", () => {

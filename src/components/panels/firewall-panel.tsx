@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
-import type { StatusPayload, RunAction, RequestJson, LearnedDomain, FirewallReportPayload } from "@/components/admin-types";
+import type {
+  StatusPayload,
+  RequestJson,
+  LearnedDomain,
+  FirewallReportPayload,
+} from "@/components/admin-types";
 import type { LogEntry, LogLevel } from "@/shared/types";
 import { DOMAIN_PRESETS } from "@/shared/types";
 import {
@@ -23,7 +28,6 @@ type FirewallPanelProps = {
   active: boolean;
   status: StatusPayload;
   busy: boolean;
-  runAction: RunAction;
   requestJson: RequestJson;
   refresh: () => Promise<void>;
 };
@@ -32,7 +36,6 @@ export function FirewallPanel({
   active,
   status,
   busy,
-  runAction,
   requestJson,
   refresh,
 }: FirewallPanelProps) {
@@ -157,34 +160,49 @@ export function FirewallPanel({
   /** Wrap a firewall mutation: run the action, then re-fetch report to check sync status. */
   async function runFirewallMutation(
     action: string,
-    input: Parameters<RunAction>[1],
-  ): Promise<void> {
+    input: Parameters<RequestJson>[1],
+  ): Promise<boolean> {
     setSyncIndicator(null);
-    await runAction(action, input);
-    // After the mutation completes and status refreshes, fetch fresh report
+    const result = await requestJson<null>(action, input);
+    if (!result.ok) {
+      setSyncIndicator({ ok: false, reason: result.error });
+      return false;
+    }
+    // After a successful mutation, fetch fresh report to check sync status
     try {
       const res = await fetch("/api/firewall/report", {
         cache: "no-store",
         headers: { accept: "application/json" },
       });
-      if (res.ok) {
-        const freshReport = (await res.json()) as FirewallReportPayload;
-        setReport(freshReport);
-        const sync = freshReport.diagnostics.syncStatus;
-        if (sync.lastAppliedAt && sync.lastReason) {
-          const applied = sync.lastAppliedAt;
-          const failed = sync.lastFailedAt ?? 0;
-          if (applied >= failed) {
-            setSyncIndicator({ ok: true });
-          } else {
-            setSyncIndicator({ ok: false, reason: sync.lastReason ?? undefined });
-          }
-        } else if (sync.lastFailedAt) {
-          setSyncIndicator({ ok: false, reason: sync.lastReason ?? undefined });
-        }
+      if (!res.ok) {
+        setSyncIndicator({
+          ok: false,
+          reason: `Report refresh failed (HTTP ${res.status})`,
+        });
+        return false;
       }
-    } catch {
-      // Best-effort
+      const freshReport = (await res.json()) as FirewallReportPayload;
+      setReport(freshReport);
+      const sync = freshReport.diagnostics.syncStatus;
+      if (
+        sync.lastAppliedAt &&
+        (sync.lastFailedAt ?? 0) <= sync.lastAppliedAt
+      ) {
+        setSyncIndicator({ ok: true });
+      } else if (sync.lastFailedAt) {
+        setSyncIndicator({
+          ok: false,
+          reason: sync.lastReason ?? "Policy sync failed",
+        });
+      }
+      return true;
+    } catch (error) {
+      setSyncIndicator({
+        ok: false,
+        reason:
+          error instanceof Error ? error.message : "Report refresh failed",
+      });
+      return false;
     }
   }
 
@@ -227,14 +245,16 @@ export function FirewallPanel({
       .filter(Boolean);
     if (domains.length === 0) return;
 
-    await runFirewallMutation("/api/firewall/allowlist", {
+    const ok = await runFirewallMutation("/api/firewall/allowlist", {
       label: "Approve domains",
       successMessage: "Domains approved",
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ domains }),
     });
-    setDomainInput("");
+    if (ok) {
+      setDomainInput("");
+    }
   }
 
   async function approveSingleDomain(domain: string): Promise<void> {

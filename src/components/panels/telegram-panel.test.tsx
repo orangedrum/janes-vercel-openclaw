@@ -22,10 +22,11 @@ function makeConnectability(
 
 const RUN_ACTION_SUCCESS: RunAction = async () => true;
 const RUN_ACTION_FAILURE: RunAction = async () => false;
-const REQUEST_JSON_SUCCESS: RequestJson = async () => ({ ok: true, data: null });
+const REQUEST_JSON_SUCCESS: RequestJson = async () => ({ ok: true, data: null, meta: { requestId: "test", action: "test", label: "test", status: 200, refreshed: false } });
 const REQUEST_JSON_FAILURE: RequestJson = async () => ({
   ok: false,
   error: "HTTP 500",
+  meta: { requestId: "test", action: "test", label: "test", status: 500, code: "http-error" as const, retryable: true },
 });
 
 function makeStatus(

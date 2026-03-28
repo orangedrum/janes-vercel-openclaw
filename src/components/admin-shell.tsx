@@ -17,6 +17,8 @@ import {
 } from "@/components/api-route-errors";
 import type {
   StatusPayload,
+  ActionResult,
+  AdminActionEvent,
 } from "@/components/admin-types";
 
 // Verification stays inside the Channels surface.
@@ -29,6 +31,175 @@ const TABS = [
   { id: "logs", label: "Logs" },
   { id: "snapshots", label: "Snapshots" },
 ] as const;
+
+export function createAdminActionRequestId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `admin-${crypto.randomUUID()}`;
+  }
+  return `admin-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export type AdminActionEventInput = {
+  [K in AdminActionEvent["event"]]: Omit<
+    Extract<AdminActionEvent, { event: K }>,
+    "source" | "ts"
+  >;
+}[AdminActionEvent["event"]];
+
+export function emitAdminActionEvent(event: AdminActionEventInput): void {
+  const payload = {
+    source: "admin-shell" as const,
+    ts: new Date().toISOString(),
+    ...event,
+  };
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("openclaw:admin-action", { detail: payload }),
+    );
+  }
+}
+
+export type RequestJsonDeps = {
+  setPendingAction: (label: string | null) => void;
+  setStatus: (status: null) => void;
+  refreshPassive: () => Promise<void>;
+  toastSuccess: (message: string) => void;
+  toastError: (message: string) => void;
+  fetchFn?: typeof fetch;
+};
+
+export async function requestJsonCore<T>(
+  action: string,
+  input: RequestInit & { label: string; successMessage?: string; refreshAfter?: boolean },
+  deps: RequestJsonDeps,
+): Promise<ActionResult<T>> {
+  const requestId = createAdminActionRequestId();
+  const refreshAfter = input.refreshAfter !== false;
+  const method =
+    typeof input.method === "string" && input.method.trim().length > 0
+      ? input.method.toUpperCase()
+      : "GET";
+  const doFetch = deps.fetchFn ?? fetch;
+
+  deps.setPendingAction(input.label);
+  emitAdminActionEvent({
+    event: "admin.action.start",
+    requestId,
+    action,
+    label: input.label,
+    method,
+    refreshAfter,
+  });
+
+  try {
+    const response = await doFetch(action, {
+      ...input,
+      headers: {
+        accept: "application/json",
+        ...(input.headers ?? {}),
+      },
+    });
+
+    if (response.status === 401) {
+      deps.setStatus(null);
+      const result: ActionResult<T> = {
+        ok: false,
+        error: "Session expired. Sign in again.",
+        meta: {
+          requestId,
+          action,
+          label: input.label,
+          status: 401,
+          code: "unauthorized",
+          retryable: false,
+        },
+      };
+      emitAdminActionEvent({
+        event: "admin.action.error",
+        ...result.meta,
+        error: result.error,
+      });
+      deps.toastError(result.error);
+      return result;
+    }
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as
+        | JsonRouteErrorPayload
+        | null;
+
+      const message = buildJsonRouteErrorMessage(payload, `${input.label} failed`);
+      const result: ActionResult<T> = {
+        ok: false,
+        error: message,
+        meta: {
+          requestId,
+          action,
+          label: input.label,
+          status: response.status,
+          code: "http-error",
+          retryable: response.status >= 500,
+        },
+      };
+      emitAdminActionEvent({
+        event: "admin.action.error",
+        ...result.meta,
+        error: result.error,
+      });
+      deps.toastError(message);
+      return result;
+    }
+
+    const payload = (await response.json().catch(() => null)) as T | null;
+    if (refreshAfter) {
+      await deps.refreshPassive();
+    }
+    const result: ActionResult<T> = {
+      ok: true,
+      data: payload,
+      meta: {
+        requestId,
+        action,
+        label: input.label,
+        status: response.status,
+        refreshed: refreshAfter,
+      },
+    };
+    emitAdminActionEvent({
+      event: "admin.action.success",
+      ...result.meta,
+    });
+    deps.toastSuccess(input.successMessage ?? input.label);
+    return result;
+  } catch (nextError) {
+    const message =
+      nextError instanceof Error
+        ? nextError.message
+        : `${input.label} failed`;
+    const result: ActionResult<T> = {
+      ok: false,
+      error: message,
+      meta: {
+        requestId,
+        action,
+        label: input.label,
+        status: null,
+        code: "network-error",
+        retryable: true,
+      },
+    };
+    emitAdminActionEvent({
+      event: "admin.action.error",
+      ...result.meta,
+      error: result.error,
+    });
+    deps.toastError(message);
+    return result;
+  } finally {
+    deps.setPendingAction(null);
+  }
+}
 
 const CHECK_HEALTH_PENDING_ACTION = "Check health";
 const TRANSITIONAL_STATUSES = new Set([
@@ -157,48 +328,14 @@ export function AdminShell({
   async function requestJson<T>(
     action: string,
     input: RequestInit & { label: string; successMessage?: string; refreshAfter?: boolean },
-  ): Promise<{ ok: true; data: T | null } | { ok: false; error: string }> {
-    setPendingAction(input.label);
-    try {
-      const response = await fetch(action, {
-        ...input,
-        headers: {
-          accept: "application/json",
-          ...(input.headers ?? {}),
-        },
-      });
-
-      if (response.status === 401) {
-        setStatus(null);
-        return { ok: false, error: "Unauthorized" };
-      }
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as
-          | JsonRouteErrorPayload
-          | null;
-
-        const message = buildJsonRouteErrorMessage(payload, `${input.label} failed`);
-        toast.error(message);
-        return { ok: false, error: message };
-      }
-
-      const payload = (await response.json().catch(() => null)) as T | null;
-      if (input.refreshAfter !== false) {
-        await refreshPassive();
-      }
-      toast.success(input.successMessage ?? input.label);
-      return { ok: true, data: payload };
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error
-          ? nextError.message
-          : `${input.label} failed`;
-      toast.error(message);
-      return { ok: false, error: message };
-    } finally {
-      setPendingAction(null);
-    }
+  ): Promise<ActionResult<T>> {
+    return requestJsonCore<T>(action, input, {
+      setPendingAction,
+      setStatus: () => setStatus(null),
+      refreshPassive,
+      toastSuccess: (msg) => toast.success(msg),
+      toastError: (msg) => toast.error(msg),
+    });
   }
 
   async function runAction(
@@ -331,7 +468,6 @@ export function AdminShell({
                     active={activeTab === "firewall"}
                     status={status}
                     busy={busy}
-                    runAction={runAction}
                     requestJson={requestJson}
                     refresh={refreshPassive}
                   />

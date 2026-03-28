@@ -329,8 +329,15 @@ export function createVerificationRequestId(): string {
   return `verify-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+type ChannelsPanelEventInput = {
+  [K in ChannelsPanelEvent["event"]]: Omit<
+    Extract<ChannelsPanelEvent, { event: K }>,
+    "source" | "ts"
+  >;
+}[ChannelsPanelEvent["event"]];
+
 export function emitChannelsPanelEvent(
-  event: Omit<ChannelsPanelEvent, "source" | "ts">,
+  event: ChannelsPanelEventInput,
 ): void {
   const payload = {
     source: "channels-panel" as const,

@@ -21,7 +21,7 @@ function makeConnectability(
 }
 
 const RUN_ACTION: RunAction = async () => true;
-const REQUEST_JSON: RequestJson = async () => ({ ok: true, data: null });
+const REQUEST_JSON: RequestJson = async () => ({ ok: true, data: null, meta: { requestId: "test", action: "test", label: "test", status: 200, refreshed: false } });
 
 function makeStatus(): StatusPayload {
   return {

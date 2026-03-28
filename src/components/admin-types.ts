@@ -196,9 +196,65 @@ export type FirewallReportPayload = {
   policyHash: string;
 };
 
+export type ActionErrorCode =
+  | "unauthorized"
+  | "http-error"
+  | "network-error";
+
+export type ActionSuccessMeta = {
+  requestId: string;
+  action: string;
+  label: string;
+  status: number | null;
+  refreshed: boolean;
+};
+
+export type ActionErrorMeta = {
+  requestId: string;
+  action: string;
+  label: string;
+  status: number | null;
+  code: ActionErrorCode;
+  retryable: boolean;
+};
+
 export type ActionResult<T> =
-  | { ok: true; data: T | null }
-  | { ok: false; error: string };
+  | { ok: true; data: T | null; meta: ActionSuccessMeta }
+  | { ok: false; error: string; meta: ActionErrorMeta };
+
+export type AdminActionEvent =
+  | {
+      event: "admin.action.start";
+      source: "admin-shell";
+      ts: string;
+      requestId: string;
+      action: string;
+      label: string;
+      method: string;
+      refreshAfter: boolean;
+    }
+  | {
+      event: "admin.action.success";
+      source: "admin-shell";
+      ts: string;
+      requestId: string;
+      action: string;
+      label: string;
+      status: number | null;
+      refreshed: boolean;
+    }
+  | {
+      event: "admin.action.error";
+      source: "admin-shell";
+      ts: string;
+      requestId: string;
+      action: string;
+      label: string;
+      status: number | null;
+      code: ActionErrorCode;
+      error: string;
+      retryable: boolean;
+    };
 
 export type RunAction = (
   action: string,
