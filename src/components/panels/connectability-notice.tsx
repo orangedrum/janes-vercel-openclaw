@@ -7,7 +7,7 @@ export function ConnectabilityNotice({
   suppressedIds,
 }: {
   connectability: ChannelConnectability;
-  suppressedIds?: Set<string> | null;
+  suppressedIds?: ReadonlySet<string> | null;
 }) {
   const visibleIssues = suppressedIds
     ? connectability.issues.filter((issue) => !suppressedIds.has(issue.id))

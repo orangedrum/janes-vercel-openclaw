@@ -13,7 +13,7 @@ import { jsonError } from "@/shared/http";
  * In local/non-Vercel environments it returns a status hint (never the
  * actual secret) so `npm run dev` still works with auto-generated secrets.
  */
-export async function GET(): Promise<Response> {
+export async function GET(_request: Request): Promise<Response> {
   try {
     if (isVercelDeployment()) {
       logInfo("setup.sealed", {

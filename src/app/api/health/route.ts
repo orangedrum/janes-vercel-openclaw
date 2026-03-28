@@ -1,7 +1,7 @@
 import { getAuthMode } from "@/server/env";
 import { getStore, getInitializedMeta } from "@/server/store/store";
 
-export async function GET(): Promise<Response> {
+export async function GET(_request: Request): Promise<Response> {
   const meta = await getInitializedMeta();
   return Response.json({
     ok: true,
