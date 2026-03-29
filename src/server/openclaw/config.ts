@@ -1986,7 +1986,7 @@ node {baseDir}/scripts/reason.mjs "What are the trade-offs of microservices?"
 
 - \`--prompt\` (required): The question or analysis task. Positional args are also accepted.
 - \`--model\`: Reasoning model ID (default: o3)
-- \`--reasoning-effort\`: Reasoning effort level — low, medium, or high (default: medium)
+- \`--reasoning-effort\`: Reasoning effort level — none, minimal, low, medium, high, or xhigh (default: medium)
 - \`--output\`: Write the full response to a file instead of stdout.
 
 ## Output
@@ -2011,7 +2011,23 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
 });
 
-const VALID_EFFORTS = new Set(["low", "medium", "high"]);
+function normalizeModelId(model) {
+  const trimmed = String(model ?? "").trim();
+  if (!trimmed) return "openai/o3";
+  const aliases = new Map([
+    ["o3", "openai/o3"],
+    ["o4-mini", "openai/o4-mini"],
+    ["gpt-4o", "openai/gpt-4o"],
+    ["claude-sonnet-4.6", "anthropic/claude-sonnet-4.6"],
+    ["claude-haiku-4.5", "anthropic/claude-haiku-4.5"],
+    ["gemini-2.5-flash", "google/gemini-2.5-flash"],
+    ["gemini-2.5-pro", "google/gemini-2.5-pro"],
+    ["deepseek-v3.2-thinking", "deepseek/deepseek-v3.2-thinking"],
+  ]);
+  return aliases.get(trimmed) ?? trimmed;
+}
+
+const VALID_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 const effort = values["reasoning-effort"];
 if (!VALID_EFFORTS.has(effort)) {
   console.error("--reasoning-effort must be one of: " + [...VALID_EFFORTS].join(", "));
@@ -2020,7 +2036,7 @@ if (!VALID_EFFORTS.has(effort)) {
 
 const prompt = (values.prompt ?? positionals.join(" ")).trim();
 if (!prompt) {
-  console.error("Usage: node reason.mjs --prompt \\"your question\\" [--model MODEL] [--reasoning-effort low|medium|high] [--output FILE]");
+  console.error("Usage: node reason.mjs --prompt \\"your question\\" [--model MODEL] [--reasoning-effort none|minimal|low|medium|high|xhigh] [--output FILE]");
   process.exit(1);
 }
 
@@ -2032,13 +2048,61 @@ async function readApiKey() {
   throw new Error("No AI Gateway API key found");
 }
 
+function extractText(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractText(item))
+      .filter(Boolean)
+      .join("\\n")
+      .trim();
+  }
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.text === "string") return value.text.trim();
+  if (typeof value.summary === "string") return value.summary.trim();
+  if (typeof value.content === "string") return value.content.trim();
+  return "";
+}
+
+function extractAnswer(message) {
+  return extractText(message?.content);
+}
+
+function extractReasoningSummary(message, choice) {
+  const legacy = [
+    message?.reasoning_summary,
+    message?.reasoning_content,
+    choice?.reasoning_summary,
+    message?.reasoning,
+  ]
+    .map((value) => extractText(value))
+    .find(Boolean);
+  if (legacy) return legacy;
+
+  const details = Array.isArray(message?.reasoning_details) ? message.reasoning_details : [];
+  const summaryBlocks = details
+    .filter((detail) => detail && typeof detail === "object" && detail.type === "reasoning.summary")
+    .map((detail) => extractText(detail))
+    .filter(Boolean);
+  if (summaryBlocks.length > 0) {
+    return summaryBlocks.join("\\n");
+  }
+
+  const textBlocks = details
+    .filter((detail) => detail && typeof detail === "object" && detail.type === "reasoning.text")
+    .map((detail) => extractText(detail))
+    .filter(Boolean);
+  return textBlocks.join("\\n").trim();
+}
+
 const apiKey = await readApiKey();
+const model = normalizeModelId(values.model);
 
 const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
   method: "POST",
   headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
   body: JSON.stringify({
-    model: values.model,
+    model,
     reasoning: { effort },
     messages: [{ role: "user", content: prompt }],
   }),
@@ -2051,29 +2115,22 @@ if (!response.ok) {
 }
 
 const data = await response.json();
-const choice = data.choices?.[0];
-const message = choice?.message;
+const choice = data?.choices?.[0] ?? {};
+const message = choice?.message ?? {};
+
+const summary = extractReasoningSummary(message, choice);
+const answer = extractAnswer(message);
 
 const parts = [];
-
-// Include reasoning summary when present
-const summary =
-  message?.reasoning_summary ??
-  message?.reasoning_content ??
-  choice?.reasoning_summary ??
-  null;
-if (summary) {
-  parts.push("Reasoning:\\n" + summary + "\\n");
-}
-
-const answer = message?.content ?? "";
-parts.push(answer);
+if (summary) parts.push("Reasoning:\\n" + summary + "\\n");
+if (answer) parts.push(answer);
+if (parts.length === 0) parts.push(JSON.stringify(data, null, 2));
 
 const output = parts.join("\\n");
 
 if (values.output) {
   const outputPath = path.resolve(values.output);
-  await writeFile(outputPath, output);
+  await writeFile(outputPath, output + "\\n");
   console.log("Response written to " + outputPath);
 } else {
   console.log(output);
@@ -2113,15 +2170,15 @@ node {baseDir}/scripts/compare.mjs --prompt "Explain quicksort in one paragraph"
 Flags:
 
 \`\`\`bash
-node {baseDir}/scripts/compare.mjs --prompt "Summarize the moon landing" --models gpt-4o,claude-sonnet-4-20250514
-node {baseDir}/scripts/compare.mjs --prompt "Write a haiku about code" --models gpt-4o,gemini-2.5-flash,claude-sonnet-4-20250514
+node {baseDir}/scripts/compare.mjs --prompt "Summarize the moon landing" --models openai/gpt-4o,anthropic/claude-sonnet-4.6
+node {baseDir}/scripts/compare.mjs --prompt "Write a haiku about code" --models openai/gpt-4o,google/gemini-2.5-flash,anthropic/claude-sonnet-4.6
 node {baseDir}/scripts/compare.mjs "What is the capital of France?" --output results.md
 \`\`\`
 
 ## Parameters
 
 - \`--prompt\` (required): The prompt to send to all models. Positional args are also accepted.
-- \`--models\`: Comma-separated model IDs (default: gpt-4o,claude-sonnet-4-20250514)
+- \`--models\`: Comma-separated model IDs (default: openai/gpt-4o,anthropic/claude-sonnet-4.6)
 - \`--output\`: Write the comparison to a file instead of stdout.
 
 ## Output
@@ -2139,7 +2196,7 @@ import path from "node:path";
 const { values, positionals } = parseArgs({
   options: {
     prompt: { type: "string" },
-    models: { type: "string", default: "gpt-4o,claude-sonnet-4-20250514" },
+    models: { type: "string", default: "openai/gpt-4o,anthropic/claude-sonnet-4.6" },
     output: { type: "string" },
   },
   allowPositionals: true,
@@ -2151,10 +2208,23 @@ if (!prompt) {
   process.exit(1);
 }
 
-const models = values.models
-  .split(",")
-  .map((m) => m.trim())
-  .filter(Boolean);
+function normalizeModelId(model) {
+  const trimmed = String(model ?? "").trim();
+  if (!trimmed) return "";
+  const aliases = new Map([
+    ["gpt-4o", "openai/gpt-4o"],
+    ["o3", "openai/o3"],
+    ["o4-mini", "openai/o4-mini"],
+    ["claude-sonnet-4.6", "anthropic/claude-sonnet-4.6"],
+    ["claude-haiku-4.5", "anthropic/claude-haiku-4.5"],
+    ["gemini-2.5-flash", "google/gemini-2.5-flash"],
+    ["gemini-2.5-pro", "google/gemini-2.5-pro"],
+    ["deepseek-v3.2-thinking", "deepseek/deepseek-v3.2-thinking"],
+  ]);
+  return aliases.get(trimmed) ?? trimmed;
+}
+
+const models = [...new Set(values.models.split(",").map(normalizeModelId).filter(Boolean))];
 
 if (models.length < 2) {
   console.error("--models must contain at least two comma-separated model IDs");
@@ -2187,7 +2257,7 @@ async function queryModel(model) {
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content ?? "(no content)";
+  const content = data?.choices?.[0]?.message?.content ?? "(no content)";
   return { model, content };
 }
 
@@ -2203,7 +2273,7 @@ const output = "# Model Comparison\\n\\n**Prompt:** " + prompt + "\\n\\n" + sect
 
 if (values.output) {
   const outputPath = path.resolve(values.output);
-  await writeFile(outputPath, output);
+  await writeFile(outputPath, output + "\\n");
   console.log("MEDIA:" + outputPath);
 } else {
   console.log(output);

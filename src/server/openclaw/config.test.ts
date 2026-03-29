@@ -640,6 +640,9 @@ test("buildReasoningScript uses chat completions and reasoning effort", () => {
   assert.ok(script.includes("reasoning"));
   assert.ok(script.includes("effort"));
   assert.ok(script.includes("reasoning_summary"));
+  assert.ok(script.includes("reasoning_details"));
+  assert.ok(script.includes('"minimal"'));
+  assert.ok(script.includes('"xhigh"'));
 });
 
 // ---------------------------------------------------------------------------
@@ -961,6 +964,109 @@ test("buildCompareScript rejects single model at runtime", async () => {
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /at least two/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildReasoningScript extracts summary from reasoning_details at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-reasoning-summary-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "reason.mjs",
+      buildReasoningScript(),
+    );
+
+    const preloadPath = await writeGeneratedFile(
+      dir,
+      "mock-fetch.mjs",
+      `globalThis.fetch = async (_url, init) => {
+  const body = JSON.parse(String(init?.body ?? "{}"));
+  if (body.reasoning?.effort !== "xhigh") {
+    return new Response("unexpected effort", { status: 400 });
+  }
+  return new Response(
+    JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: "Final answer.",
+            reasoning_details: [
+              {
+                type: "reasoning.summary",
+                summary: "First analyze the problem.",
+              },
+            ],
+          },
+        },
+      ],
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+};`,
+    );
+
+    const result = runNodeScript(
+      [
+        "--import",
+        preloadPath,
+        scriptPath,
+        "--prompt",
+        "test",
+        "--reasoning-effort",
+        "xhigh",
+      ],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Reasoning:\nFirst analyze the problem\./);
+    assert.match(result.stdout, /Final answer\./);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildCompareScript normalizes common shorthand model ids at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-compare-normalize-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "compare.mjs",
+      buildCompareScript(),
+    );
+
+    const preloadPath = await writeGeneratedFile(
+      dir,
+      "mock-fetch.mjs",
+      `globalThis.fetch = async (_url, init) => {
+  const body = JSON.parse(String(init?.body ?? "{}"));
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content: body.model } }],
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+};`,
+    );
+
+    const result = runNodeScript(
+      [
+        "--import",
+        preloadPath,
+        scriptPath,
+        "--prompt",
+        "hello",
+        "--models",
+        "gpt-4o,claude-sonnet-4.6",
+      ],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /## openai\/gpt-4o/);
+    assert.match(result.stdout, /## anthropic\/claude-sonnet-4.6/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
