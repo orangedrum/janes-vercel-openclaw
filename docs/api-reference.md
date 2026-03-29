@@ -8,7 +8,7 @@
 - When streaming with `Accept: application/x-ndjson`, the terminal `result` event carries the same extended payload including `channelReadiness`.
 - `GET /api/admin/watchdog` returns the cached `WatchdogReport`; `POST /api/admin/watchdog` runs a fresh check. Each report contains `WatchdogCheck` entries.
 
-`channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` path for the current deployment.
+`channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` → `restorePrepared` path for the current deployment.
 
 ### Example `POST /api/admin/launch-verify` response
 
@@ -25,7 +25,8 @@ Destructive mode, all phases passing:
     { "id": "queuePing", "status": "pass", "durationMs": 840, "message": "Vercel Queue delivered callback msg_123." },
     { "id": "ensureRunning", "status": "pass", "durationMs": 41200, "message": "Sandbox started and gateway ready." },
     { "id": "chatCompletions", "status": "pass", "durationMs": 910, "message": "Gateway replied with exact text: launch-verify-ok" },
-    { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." }
+    { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." },
+    { "id": "restorePrepared", "status": "pass", "durationMs": 4500, "message": "Restore target sealed and verified." }
   ],
   "runtime": {
     "packageSpec": "openclaw@1.2.3",
@@ -34,7 +35,25 @@ Destructive mode, all phases passing:
     "expectedConfigHash": "abc123",
     "lastRestoreConfigHash": "abc123",
     "dynamicConfigVerified": true,
-    "dynamicConfigReason": "hash-match"
+    "dynamicConfigReason": "hash-match",
+    "restorePreparedStatus": "ready",
+    "restorePreparedReason": "prepared",
+    "snapshotDynamicConfigHash": "abc123",
+    "runtimeDynamicConfigHash": "abc123",
+    "snapshotAssetSha256": "def456",
+    "runtimeAssetSha256": "def456",
+    "restoreAttestation": {
+      "reusable": true,
+      "needsPrepare": false,
+      "reasons": []
+    },
+    "restorePlan": {
+      "schemaVersion": 1,
+      "status": "ready",
+      "blocking": false,
+      "reasons": [],
+      "actions": []
+    }
   },
   "sandboxHealth": {
     "repaired": false,
@@ -62,7 +81,8 @@ Destructive mode, all phases passing:
       { "id": "queuePing", "status": "pass", "durationMs": 840, "message": "Vercel Queue delivered callback msg_123." },
       { "id": "ensureRunning", "status": "pass", "durationMs": 41200, "message": "Sandbox started and gateway ready." },
       { "id": "chatCompletions", "status": "pass", "durationMs": 910, "message": "Gateway replied with exact text: launch-verify-ok" },
-      { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." }
+      { "id": "wakeFromSleep", "status": "pass", "durationMs": 22000, "message": "Wake-from-sleep probe passed." },
+      { "id": "restorePrepared", "status": "pass", "durationMs": 4500, "message": "Restore target sealed and verified." }
     ]
   }
 }
@@ -83,6 +103,44 @@ Destructive mode, all phases passing:
 - `sandboxHealth.configReconcileReason` — one of `already-fresh`, `rewritten-and-restarted`, `rewrite-failed`, `restart-failed`, `sandbox-unavailable`, `error`, or `skipped`.
 
 Automation should treat `payload.ok=false` as authoritative even when the main runtime phases look healthy, because stale dynamic config that could not be reconciled is a hard failure.
+
+### Restore-readiness fields
+
+Newer launch verification payloads expose restore-target readiness, not just "can the sandbox answer right now." These fields explain whether the current deployment has a reusable restore target and what action is still needed when it does not.
+
+- `runtime.restorePreparedStatus` — `unknown`, `dirty`, `preparing`, `ready`, or `failed`
+- `runtime.restorePreparedReason` — why the status is what it is (e.g. `prepared`, `dynamic-config-changed`, `snapshot-missing`)
+- `runtime.snapshotDynamicConfigHash` — config hash baked into the current snapshot
+- `runtime.runtimeDynamicConfigHash` — config hash the running deployment wants
+- `runtime.snapshotAssetSha256` — static asset hash in the snapshot
+- `runtime.runtimeAssetSha256` — static asset hash the running deployment expects
+- `runtime.restoreAttestation` — machine-readable attestation of whether the snapshot is reusable
+- `runtime.restorePlan` — action plan for making the restore target ready
+
+Example restore-readiness payload:
+
+```json
+{
+  "runtime": {
+    "restorePreparedStatus": "ready",
+    "restorePreparedReason": "prepared",
+    "restoreAttestation": {
+      "reusable": true,
+      "needsPrepare": false,
+      "reasons": []
+    },
+    "restorePlan": {
+      "schemaVersion": 1,
+      "status": "ready",
+      "blocking": false,
+      "reasons": [],
+      "actions": []
+    }
+  }
+}
+```
+
+See [Sandbox Lifecycle and Restore](lifecycle-and-restore.md) for a plain-English explanation of restore-prepared state.
 
 ## Structured output contracts
 

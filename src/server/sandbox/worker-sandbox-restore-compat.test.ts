@@ -427,6 +427,11 @@ test("legacy snapshot restore leaves a runnable worker-sandbox launcher in the r
       scriptFile,
       "restore should rewrite worker-sandbox script for legacy snapshots",
     );
+    assert.equal(
+      scriptFile.content.toString("utf8"),
+      buildWorkerSandboxScript(),
+      "restored launcher should match the current generated script",
+    );
     assert.ok(
       configFile,
       "restore should rewrite openclaw.json for legacy snapshots",
@@ -439,6 +444,7 @@ test("legacy snapshot restore leaves a runnable worker-sandbox launcher in the r
 
     let seenUrl: string | null = null;
     let seenAuth: string | null = null;
+    let seenBody: string | null = null;
 
     const requestBody = {
       task: "process-image",
@@ -472,6 +478,8 @@ test("legacy snapshot restore leaves a runnable worker-sandbox launcher in the r
         seenUrl = url;
         const headers = new Headers(init?.headers);
         seenAuth = headers.get("authorization");
+        seenBody =
+          typeof init?.body === "string" ? init.body : null;
         return route.POST(
           new Request(url, {
             method: init?.method ?? "GET",
@@ -491,6 +499,11 @@ test("legacy snapshot restore leaves a runnable worker-sandbox launcher in the r
 
     const expectedToken = await buildWorkerSandboxBearerToken();
     assert.equal(seenAuth, `Bearer ${expectedToken}`);
+    assert.equal(
+      seenBody,
+      JSON.stringify(requestBody),
+      "launcher should post the unchanged request JSON",
+    );
 
     const body = JSON.parse(
       scriptRun.stdout.join("\n"),
@@ -530,6 +543,7 @@ test("legacy snapshot restore leaves a runnable worker-sandbox launcher in the r
 });
 
 test("worker-sandbox launcher exits clearly when restored config has no allowed origin", async () => {
+  let fetchCalled = false;
   const result = await runWorkerSandboxScriptForTest({
     scriptContent: buildWorkerSandboxScript(),
     gatewayToken: "gw-token",
@@ -545,16 +559,54 @@ test("worker-sandbox launcher exits clearly when restored config has no allowed 
       command: { cmd: "echo", args: ["ok"] },
     }),
     fetchImpl: async () => {
+      fetchCalled = true;
       throw new Error(
         "fetch should not be called when allowed origin is missing",
       );
     },
   });
 
+  assert.equal(fetchCalled, false);
   assert.equal(result.exitCode, 1);
-  assert.equal(result.stdout.length, 0);
-  assert.match(
-    result.stderr.join("\n"),
-    /Could not resolve host origin from openclaw\.json/,
+  assert.deepEqual(result.stdout, []);
+  assert.ok(
+    result.stderr.some((line) =>
+      line.includes("Could not resolve host origin from openclaw.json"),
+    ),
+    `expected stderr to mention missing origin, got: ${result.stderr.join("\n")}`,
   );
+});
+
+test("worker-sandbox launcher prints non-ok host responses to stderr and exits non-zero", async () => {
+  const errorText = JSON.stringify({
+    error: {
+      code: "INVALID_REQUEST",
+      message: "bad child sandbox request",
+    },
+  });
+
+  const result = await runWorkerSandboxScriptForTest({
+    scriptContent: buildWorkerSandboxScript(),
+    gatewayToken: "test-gw-token",
+    configJson: JSON.stringify({
+      gateway: {
+        controlUi: {
+          allowedOrigins: ["https://test.example.com"],
+        },
+      },
+    }),
+    requestJson: JSON.stringify({
+      task: "host-error",
+      command: { cmd: "echo", args: ["ok"] },
+    }),
+    fetchImpl: async () =>
+      new Response(errorText, {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(result.stdout, []);
+  assert.deepEqual(result.stderr, [errorText]);
 });
