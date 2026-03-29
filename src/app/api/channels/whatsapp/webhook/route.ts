@@ -1,4 +1,3 @@
-import { after } from "next/server";
 import * as workflowApi from "workflow/api";
 
 import { hasWhatsAppBusinessCredentials } from "@/shared/channels";
@@ -154,13 +153,14 @@ export async function POST(request: Request): Promise<Response> {
       hasMessageId: Boolean(messageId),
     }));
 
-    // --- Fast path: fire-and-forget to OpenClaw's native WhatsApp handler ---
+    // --- Fast path: forward to OpenClaw's native WhatsApp handler ---
     // When the sandbox is running, delegate entirely to the native handler.
-    // Return 200 immediately and forward via after() so the function stays
-    // alive just long enough to deliver the payload.  Never fall through to
-    // the workflow path — the native handler owns the message.
+    // Await the response so the native handler can complete its full
+    // processing cycle (including long AI tasks like image generation).
+    // Fluid Compute bills only for CPU cycles, not idle wait time.
+    // On failure, log and return 200 — never fall through to the workflow
+    // path, which would cause duplicate message delivery.
     if (meta.status === "running" && meta.sandboxId) {
-      const capturedSandboxId = meta.sandboxId;
       const forwardHeaders: Record<string, string> = {};
       for (const headerName of WHATSAPP_FORWARD_HEADERS) {
         const headerValue = request.headers.get(headerName);
@@ -169,31 +169,29 @@ export async function POST(request: Request): Promise<Response> {
         }
       }
 
-      after(async () => {
-        try {
-          const sandboxUrl = await getSandboxDomain();
-          const forwardResponse = await fetch(`${sandboxUrl}/whatsapp-webhook`, {
-            method: "POST",
-            headers: forwardHeaders,
-            body: rawBody,
-          });
-          if (forwardResponse.ok) {
-            logInfo("channels.whatsapp_fast_path_ok", withOperationContext(op, {
-              sandboxId: capturedSandboxId,
-            }));
-          } else {
-            logWarn("channels.whatsapp_fast_path_non_ok", withOperationContext(op, {
-              sandboxId: capturedSandboxId,
-              status: forwardResponse.status,
-            }));
-          }
-        } catch (error) {
-          logWarn("channels.whatsapp_fast_path_failed", withOperationContext(op, {
-            sandboxId: capturedSandboxId,
-            error: error instanceof Error ? error.message : String(error),
+      try {
+        const sandboxUrl = await getSandboxDomain();
+        const forwardResponse = await fetch(`${sandboxUrl}/whatsapp-webhook`, {
+          method: "POST",
+          headers: forwardHeaders,
+          body: rawBody,
+        });
+        if (forwardResponse.ok) {
+          logInfo("channels.whatsapp_fast_path_ok", withOperationContext(op, {
+            sandboxId: meta.sandboxId,
+          }));
+        } else {
+          logWarn("channels.whatsapp_fast_path_non_ok", withOperationContext(op, {
+            sandboxId: meta.sandboxId,
+            status: forwardResponse.status,
           }));
         }
-      });
+      } catch (error) {
+        logWarn("channels.whatsapp_fast_path_failed", withOperationContext(op, {
+          sandboxId: meta.sandboxId,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
       return Response.json({ ok: true });
     }
 
