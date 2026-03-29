@@ -26,4 +26,6 @@ Display URL (Telegram):  https://app.example.com/api/channels/telegram/webhook
 
 In code: use `buildPublicUrl()` only for outbound delivery or registration URLs that may need the bypass secret. Use `buildPublicDisplayUrl()` for admin JSON, UI, diagnostics, docs examples, and any operator-visible surface.
 
+Run destructive launch verification before connecting Slack or Telegram. Preflight is a config-readiness check. It does not prove the sandbox can complete a real channel delivery. A deployment is channel-ready only after destructive launch verification passes and `channelReadiness.ready` is true.
+
 For the full channel setup and readiness guide, see [Channels and Webhooks](channels-and-webhooks.md).
