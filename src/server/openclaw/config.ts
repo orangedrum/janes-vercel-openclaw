@@ -34,6 +34,12 @@ export const OPENCLAW_EMBEDDINGS_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/embe
 export const OPENCLAW_EMBEDDINGS_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/embeddings/scripts/embed.mjs`;
 export const OPENCLAW_SEMANTIC_SEARCH_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/semantic-search/SKILL.md`;
 export const OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/semantic-search/scripts/search.mjs`;
+export const OPENCLAW_TRANSCRIPTION_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/transcription/SKILL.md`;
+export const OPENCLAW_TRANSCRIPTION_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/transcription/scripts/transcribe.mjs`;
+export const OPENCLAW_REASONING_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/reasoning/SKILL.md`;
+export const OPENCLAW_REASONING_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/reasoning/scripts/reason.mjs`;
+export const OPENCLAW_COMPARE_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/compare-models/SKILL.md`;
+export const OPENCLAW_COMPARE_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/compare-models/scripts/compare.mjs`;
 
 // The built-in skill shipped with the openclaw npm package uses a Python
 // gen.py script that requires a direct sk-* OPENAI_API_KEY.  We overwrite
@@ -265,6 +271,7 @@ export function buildGatewayConfig(
           { id: "gpt-4o-mini-tts", name: "GPT-4o Mini TTS" },
           { id: "text-embedding-3-small", name: "Text Embedding 3 Small" },
           { id: "text-embedding-3-large", name: "Text Embedding 3 Large" },
+          { id: "whisper-1", name: "Whisper" },
         ],
       },
     },
@@ -1678,7 +1685,10 @@ if (command === "index") {
     if (fileStat.isFile()) files.push(resolved);
   }
 
-  const uniqueFiles = [...new Set(files)].sort();
+  const uniqueFiles = [...new Set(files)]
+    .map((filePath) => path.resolve(filePath))
+    .filter((filePath) => filePath !== dbPath)
+    .sort();
   if (uniqueFiles.length === 0) {
     console.error("Index mode requires --dir PATH or at least one --file PATH");
     process.exit(1);
@@ -1802,6 +1812,401 @@ if (command === "query") {
     console.log("   " + excerpt(match.text));
     console.log("");
   }
+}
+`;
+}
+
+export function buildTranscriptionSkill(): string {
+  return `---
+name: transcription
+description: Transcribe audio files via Vercel AI Gateway /v1/audio/transcriptions
+user-invocable: true
+metadata:
+  openclaw:
+    emoji: "🎙️"
+    requires:
+      bins: ["node"]
+      env: ["AI_GATEWAY_API_KEY"]
+    primaryEnv: AI_GATEWAY_API_KEY
+---
+
+# Audio Transcription (Vercel AI Gateway)
+
+Transcribe audio files to text using OpenAI's Whisper model through Vercel AI Gateway.
+
+## Run
+
+\`\`\`bash
+node {baseDir}/scripts/transcribe.mjs --file ./recording.mp3
+\`\`\`
+
+## More examples
+
+\`\`\`bash
+node {baseDir}/scripts/transcribe.mjs --file ./meeting.wav --language en
+node {baseDir}/scripts/transcribe.mjs --file ./podcast.m4a --format verbose_json --output ./transcript.json
+node {baseDir}/scripts/transcribe.mjs --file ./interview.mp3 --format srt --output ./captions.srt
+\`\`\`
+
+## Parameters
+
+- \`--file\` (required): Path to an audio file (mp3, mp4, mpeg, mpga, m4a, wav, webm)
+- \`--language\`: ISO-639-1 language code (e.g., en, es, fr). Optional — auto-detected if omitted.
+- \`--format\`: Response format: json (default), text, srt, verbose_json, vtt
+- \`--output\`: Output file path. If omitted, prints to stdout.
+- \`--prompt\`: Optional text to guide the model's style or continue a previous segment.
+
+## Output
+
+Prints the transcription text to stdout, or writes to the specified output file.
+`;
+}
+
+export function buildTranscriptionScript(): string {
+  return `import { openAsBlob } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
+import path from "node:path";
+
+const { values } = parseArgs({
+  options: {
+    file: { type: "string" },
+    language: { type: "string" },
+    format: { type: "string", default: "json" },
+    output: { type: "string" },
+    prompt: { type: "string" },
+  },
+});
+
+const filePath = values.file;
+if (!filePath) {
+  console.error("Usage: node transcribe.mjs --file ./audio.mp3 [--language LANG] [--format FORMAT] [--output FILE] [--prompt TEXT]");
+  process.exit(1);
+}
+
+const VALID_FORMATS = new Set(["json", "text", "srt", "verbose_json", "vtt"]);
+if (!VALID_FORMATS.has(values.format)) {
+  console.error("--format must be one of: " + [...VALID_FORMATS].join(", "));
+  process.exit(1);
+}
+
+const resolvedPath = path.resolve(filePath);
+const audioBlob = await openAsBlob(resolvedPath);
+const fileName = path.basename(resolvedPath);
+
+async function readApiKey() {
+  const fromEnv = process.env.AI_GATEWAY_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  const fromDisk = (await readFile("${OPENCLAW_AI_GATEWAY_API_KEY_PATH}", "utf8")).trim();
+  if (fromDisk) return fromDisk;
+  throw new Error("No AI Gateway API key found");
+}
+
+const apiKey = await readApiKey();
+
+const formData = new FormData();
+formData.append("file", audioBlob, fileName);
+formData.append("model", "whisper-1");
+formData.append("response_format", values.format);
+if (values.language) {
+  formData.append("language", values.language);
+}
+if (values.prompt) {
+  formData.append("prompt", values.prompt);
+}
+
+const response = await fetch("https://ai-gateway.vercel.sh/v1/audio/transcriptions", {
+  method: "POST",
+  headers: { Authorization: "Bearer " + apiKey },
+  body: formData,
+});
+
+if (!response.ok) {
+  const errorText = await response.text();
+  console.error("Transcription request failed (" + response.status + "): " + errorText);
+  process.exit(1);
+}
+
+const result = await response.text();
+
+if (values.output) {
+  const outputPath = path.resolve(values.output);
+  await writeFile(outputPath, result);
+  console.log("Transcription written to " + outputPath);
+} else {
+  // For json/verbose_json, parse and pretty-print; for text/srt/vtt print as-is
+  if (values.format === "json" || values.format === "verbose_json") {
+    try {
+      const parsed = JSON.parse(result);
+      console.log(JSON.stringify(parsed, null, 2));
+    } catch {
+      console.log(result);
+    }
+  } else {
+    console.log(result);
+  }
+}
+`;
+}
+
+export function buildReasoningSkill(): string {
+  return `---
+name: reasoning
+description: Deep analysis using reasoning models via Vercel AI Gateway chat completions
+user-invocable: true
+metadata:
+  openclaw:
+    emoji: "🧠"
+    requires:
+      bins: ["node"]
+      env: ["AI_GATEWAY_API_KEY"]
+    primaryEnv: AI_GATEWAY_API_KEY
+---
+
+# Deep Reasoning (Vercel AI Gateway)
+
+Invoke reasoning-capable models (o3, o4-mini, DeepSeek R1) through the AI Gateway
+for complex analysis, multi-step logic, math, and code review.
+
+## Run
+
+\`\`\`bash
+node {baseDir}/scripts/reason.mjs --prompt "Prove that the square root of 2 is irrational"
+\`\`\`
+
+Flags:
+
+\`\`\`bash
+node {baseDir}/scripts/reason.mjs --prompt "Analyze this code for bugs" --model o4-mini
+node {baseDir}/scripts/reason.mjs --prompt "Explain step by step" --reasoning-effort high
+node {baseDir}/scripts/reason.mjs "What are the trade-offs of microservices?"
+\`\`\`
+
+## Parameters
+
+- \`--prompt\` (required): The question or analysis task. Positional args are also accepted.
+- \`--model\`: Reasoning model ID (default: o3)
+- \`--reasoning-effort\`: Reasoning effort level — low, medium, or high (default: medium)
+- \`--output\`: Write the full response to a file instead of stdout.
+
+## Output
+
+Prints the model's answer to stdout. When the response includes a reasoning summary,
+it is printed before the answer under a "Reasoning:" header.
+`;
+}
+
+export function buildReasoningScript(): string {
+  return `import { readFile, writeFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
+import path from "node:path";
+
+const { values, positionals } = parseArgs({
+  options: {
+    prompt: { type: "string" },
+    model: { type: "string", default: "o3" },
+    "reasoning-effort": { type: "string", default: "medium" },
+    output: { type: "string" },
+  },
+  allowPositionals: true,
+});
+
+const VALID_EFFORTS = new Set(["low", "medium", "high"]);
+const effort = values["reasoning-effort"];
+if (!VALID_EFFORTS.has(effort)) {
+  console.error("--reasoning-effort must be one of: " + [...VALID_EFFORTS].join(", "));
+  process.exit(1);
+}
+
+const prompt = (values.prompt ?? positionals.join(" ")).trim();
+if (!prompt) {
+  console.error("Usage: node reason.mjs --prompt \\"your question\\" [--model MODEL] [--reasoning-effort low|medium|high] [--output FILE]");
+  process.exit(1);
+}
+
+async function readApiKey() {
+  const fromEnv = process.env.AI_GATEWAY_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  const fromDisk = (await readFile("${OPENCLAW_AI_GATEWAY_API_KEY_PATH}", "utf8")).trim();
+  if (fromDisk) return fromDisk;
+  throw new Error("No AI Gateway API key found");
+}
+
+const apiKey = await readApiKey();
+
+const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+  body: JSON.stringify({
+    model: values.model,
+    reasoning: { effort },
+    messages: [{ role: "user", content: prompt }],
+  }),
+});
+
+if (!response.ok) {
+  const errorText = await response.text();
+  console.error("Reasoning request failed (" + response.status + "): " + errorText);
+  process.exit(1);
+}
+
+const data = await response.json();
+const choice = data.choices?.[0];
+const message = choice?.message;
+
+const parts = [];
+
+// Include reasoning summary when present
+const summary =
+  message?.reasoning_summary ??
+  message?.reasoning_content ??
+  choice?.reasoning_summary ??
+  null;
+if (summary) {
+  parts.push("Reasoning:\\n" + summary + "\\n");
+}
+
+const answer = message?.content ?? "";
+parts.push(answer);
+
+const output = parts.join("\\n");
+
+if (values.output) {
+  const outputPath = path.resolve(values.output);
+  await writeFile(outputPath, output);
+  console.log("Response written to " + outputPath);
+} else {
+  console.log(output);
+}
+`;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-model comparison skill
+// ---------------------------------------------------------------------------
+
+export function buildCompareSkill(): string {
+  return `---
+name: compare-models
+description: Compare responses from multiple AI Gateway models side-by-side
+user-invocable: true
+metadata:
+  openclaw:
+    emoji: "⚖️"
+    requires:
+      bins: ["node"]
+      env: ["AI_GATEWAY_API_KEY"]
+    primaryEnv: AI_GATEWAY_API_KEY
+---
+
+# Multi-Model Comparison (Vercel AI Gateway)
+
+Send the same prompt to multiple models through the AI Gateway and display
+the responses side-by-side for easy comparison.
+
+## Run
+
+\`\`\`bash
+node {baseDir}/scripts/compare.mjs --prompt "Explain quicksort in one paragraph"
+\`\`\`
+
+Flags:
+
+\`\`\`bash
+node {baseDir}/scripts/compare.mjs --prompt "Summarize the moon landing" --models gpt-4o,claude-sonnet-4-20250514
+node {baseDir}/scripts/compare.mjs --prompt "Write a haiku about code" --models gpt-4o,gemini-2.5-flash,claude-sonnet-4-20250514
+node {baseDir}/scripts/compare.mjs "What is the capital of France?" --output results.md
+\`\`\`
+
+## Parameters
+
+- \`--prompt\` (required): The prompt to send to all models. Positional args are also accepted.
+- \`--models\`: Comma-separated model IDs (default: gpt-4o,claude-sonnet-4-20250514)
+- \`--output\`: Write the comparison to a file instead of stdout.
+
+## Output
+
+Prints each model's response under a header. When \`--output\` is set, writes a
+Markdown file with one section per model.
+`;
+}
+
+export function buildCompareScript(): string {
+  return `import { readFile, writeFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
+import path from "node:path";
+
+const { values, positionals } = parseArgs({
+  options: {
+    prompt: { type: "string" },
+    models: { type: "string", default: "gpt-4o,claude-sonnet-4-20250514" },
+    output: { type: "string" },
+  },
+  allowPositionals: true,
+});
+
+const prompt = (values.prompt ?? positionals.join(" ")).trim();
+if (!prompt) {
+  console.error("Usage: node compare.mjs --prompt \\"your question\\" [--models model1,model2,...] [--output FILE]");
+  process.exit(1);
+}
+
+const models = values.models
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+if (models.length < 2) {
+  console.error("--models must contain at least two comma-separated model IDs");
+  process.exit(1);
+}
+
+async function readApiKey() {
+  const fromEnv = process.env.AI_GATEWAY_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  const fromDisk = (await readFile("${OPENCLAW_AI_GATEWAY_API_KEY_PATH}", "utf8")).trim();
+  if (fromDisk) return fromDisk;
+  throw new Error("No AI Gateway API key found");
+}
+
+const apiKey = await readApiKey();
+
+async function queryModel(model) {
+  const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    return { model, error: response.status + ": " + errorText };
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content ?? "(no content)";
+  return { model, content };
+}
+
+const results = await Promise.all(models.map(queryModel));
+
+const sections = results.map((r) => {
+  const header = "## " + r.model;
+  if (r.error) return header + "\\n\\n**Error:** " + r.error;
+  return header + "\\n\\n" + r.content;
+});
+
+const output = "# Model Comparison\\n\\n**Prompt:** " + prompt + "\\n\\n" + sections.join("\\n\\n---\\n\\n") + "\\n";
+
+if (values.output) {
+  const outputPath = path.resolve(values.output);
+  await writeFile(outputPath, output);
+  console.log("MEDIA:" + outputPath);
+} else {
+  console.log(output);
 }
 `;
 }

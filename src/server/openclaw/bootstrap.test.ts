@@ -25,6 +25,12 @@ import {
   OPENCLAW_EMBEDDINGS_SCRIPT_PATH,
   OPENCLAW_SEMANTIC_SEARCH_SKILL_PATH,
   OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH,
+  OPENCLAW_TRANSCRIPTION_SKILL_PATH,
+  OPENCLAW_TRANSCRIPTION_SCRIPT_PATH,
+  OPENCLAW_REASONING_SKILL_PATH,
+  OPENCLAW_REASONING_SCRIPT_PATH,
+  OPENCLAW_COMPARE_SKILL_PATH,
+  OPENCLAW_COMPARE_SCRIPT_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
 } from "@/server/openclaw/config";
@@ -143,6 +149,12 @@ test("setupOpenClaw writes all required config files", async () => {
       OPENCLAW_EMBEDDINGS_SCRIPT_PATH,
       OPENCLAW_SEMANTIC_SEARCH_SKILL_PATH,
       OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH,
+      OPENCLAW_TRANSCRIPTION_SKILL_PATH,
+      OPENCLAW_TRANSCRIPTION_SCRIPT_PATH,
+      OPENCLAW_REASONING_SKILL_PATH,
+      OPENCLAW_REASONING_SCRIPT_PATH,
+      OPENCLAW_COMPARE_SKILL_PATH,
+      OPENCLAW_COMPARE_SCRIPT_PATH,
     ];
 
     for (const p of expectedPaths) {
@@ -1364,6 +1376,74 @@ test("setupOpenClaw writes semantic-search skill and script with expected conten
     const script = handle.writtenFiles.find((f) => f.path === OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH);
     assert.ok(script, "semantic-search script file not written");
     assert.ok(script.content.toString().includes("cosineSimilarity"));
+  } finally {
+    h.teardown();
+  }
+});
+
+test("setupOpenClaw writes transcription skill and script with expected content", async () => {
+  const h = createScenarioHarness();
+  try {
+    const handle = await createHandle(h);
+    await setupOpenClaw(handle, {
+      gatewayToken: "tok",
+      apiKey: "ak",
+      proxyOrigin: "https://proxy.test",
+    });
+
+    const skill = handle.writtenFiles.find((f) => f.path === OPENCLAW_TRANSCRIPTION_SKILL_PATH);
+    assert.ok(skill, "transcription skill file not written");
+    assert.ok(skill.content.toString().includes("name: transcription"));
+
+    const script = handle.writtenFiles.find((f) => f.path === OPENCLAW_TRANSCRIPTION_SCRIPT_PATH);
+    assert.ok(script, "transcription script file not written");
+    assert.ok(script.content.toString().includes("/v1/audio/transcriptions"));
+  } finally {
+    h.teardown();
+  }
+});
+
+test("setupOpenClaw writes reasoning skill and script with expected content", async () => {
+  const h = createScenarioHarness();
+  try {
+    const handle = await createHandle(h);
+    await setupOpenClaw(handle, {
+      gatewayToken: "tok",
+      apiKey: "ak",
+      proxyOrigin: "https://proxy.test",
+    });
+
+    const skill = handle.writtenFiles.find((f) => f.path === OPENCLAW_REASONING_SKILL_PATH);
+    assert.ok(skill, "reasoning skill file not written");
+    assert.ok(skill.content.toString().includes("name: reasoning"));
+
+    const script = handle.writtenFiles.find((f) => f.path === OPENCLAW_REASONING_SCRIPT_PATH);
+    assert.ok(script, "reasoning script file not written");
+    assert.ok(script.content.toString().includes("/v1/chat/completions"));
+    assert.ok(script.content.toString().includes("reasoning"));
+  } finally {
+    h.teardown();
+  }
+});
+
+test("setupOpenClaw writes compare-models skill and script with expected content", async () => {
+  const h = createScenarioHarness();
+  try {
+    const handle = await createHandle(h);
+    await setupOpenClaw(handle, {
+      gatewayToken: "tok",
+      apiKey: "ak",
+      proxyOrigin: "https://proxy.test",
+    });
+
+    const skill = handle.writtenFiles.find((f) => f.path === OPENCLAW_COMPARE_SKILL_PATH);
+    assert.ok(skill, "compare skill file not written");
+    assert.ok(skill.content.toString().includes("name: compare-models"));
+
+    const script = handle.writtenFiles.find((f) => f.path === OPENCLAW_COMPARE_SCRIPT_PATH);
+    assert.ok(script, "compare script file not written");
+    assert.ok(script.content.toString().includes("/v1/chat/completions"));
+    assert.ok(script.content.toString().includes("Promise.all"));
   } finally {
     h.teardown();
   }

@@ -17,6 +17,12 @@ import {
   OPENCLAW_EMBEDDINGS_SCRIPT_PATH,
   OPENCLAW_SEMANTIC_SEARCH_SKILL_PATH,
   OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH,
+  OPENCLAW_TRANSCRIPTION_SKILL_PATH,
+  OPENCLAW_TRANSCRIPTION_SCRIPT_PATH,
+  OPENCLAW_REASONING_SKILL_PATH,
+  OPENCLAW_REASONING_SCRIPT_PATH,
+  OPENCLAW_COMPARE_SKILL_PATH,
+  OPENCLAW_COMPARE_SCRIPT_PATH,
 } from "@/server/openclaw/config";
 
 // --- buildRestoreAssetManifest ---
@@ -52,6 +58,12 @@ test("static restore files include startup, force-pair, and restart scripts", ()
   assert.ok(paths.includes(OPENCLAW_EMBEDDINGS_SCRIPT_PATH));
   assert.ok(paths.includes(OPENCLAW_SEMANTIC_SEARCH_SKILL_PATH));
   assert.ok(paths.includes(OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH));
+  assert.ok(paths.includes(OPENCLAW_TRANSCRIPTION_SKILL_PATH));
+  assert.ok(paths.includes(OPENCLAW_TRANSCRIPTION_SCRIPT_PATH));
+  assert.ok(paths.includes(OPENCLAW_REASONING_SKILL_PATH));
+  assert.ok(paths.includes(OPENCLAW_REASONING_SCRIPT_PATH));
+  assert.ok(paths.includes(OPENCLAW_COMPARE_SKILL_PATH));
+  assert.ok(paths.includes(OPENCLAW_COMPARE_SCRIPT_PATH));
 });
 
 test("static restore files produce non-empty buffers", () => {

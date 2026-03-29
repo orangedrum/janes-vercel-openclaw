@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -20,6 +24,12 @@ import {
   buildEmbeddingsScript,
   buildSemanticSearchSkill,
   buildSemanticSearchScript,
+  buildTranscriptionSkill,
+  buildTranscriptionScript,
+  buildReasoningSkill,
+  buildReasoningScript,
+  buildCompareSkill,
+  buildCompareScript,
   OPENCLAW_TELEGRAM_WEBHOOK_HOST,
   OPENCLAW_TELEGRAM_INTERNAL_WEBHOOK_PATH,
   TELEGRAM_PUBLIC_WEBHOOK_PATH,
@@ -130,6 +140,7 @@ test("buildGatewayConfig with apiKey includes model aliases and providers", () =
   assert.ok(modelIds.includes("gpt-4o-mini-tts"));
   assert.ok(modelIds.includes("text-embedding-3-small"));
   assert.ok(modelIds.includes("text-embedding-3-large"));
+  assert.ok(modelIds.includes("whisper-1"));
 
   // Media tools
   const tools = config.tools as { media: { audio: { enabled: boolean } } };
@@ -598,4 +609,359 @@ test("buildSemanticSearchScript uses embeddings and cosine similarity", () => {
   assert.ok(script.includes("cosineSimilarity"));
   assert.ok(script.includes("schemaVersion: 1"));
   assert.ok(script.includes("queryDimensions = dimensions ?? index.dimensions ?? undefined"));
+});
+
+// --- Transcription skill ---
+
+test("buildTranscriptionSkill returns valid skill metadata", () => {
+  const skill = buildTranscriptionSkill();
+  assert.ok(skill.includes("name: transcription"));
+  assert.ok(skill.includes("AI_GATEWAY_API_KEY"));
+});
+
+test("buildTranscriptionScript uses /v1/audio/transcriptions and whisper-1", () => {
+  const script = buildTranscriptionScript();
+  assert.ok(script.includes("/v1/audio/transcriptions"));
+  assert.ok(script.includes("whisper-1"));
+  assert.ok(script.includes("FormData"));
+});
+
+// --- Reasoning skill ---
+
+test("buildReasoningSkill returns valid skill metadata", () => {
+  const skill = buildReasoningSkill();
+  assert.ok(skill.includes("name: reasoning"));
+  assert.ok(skill.includes("AI_GATEWAY_API_KEY"));
+});
+
+test("buildReasoningScript uses chat completions and reasoning effort", () => {
+  const script = buildReasoningScript();
+  assert.ok(script.includes("/v1/chat/completions"));
+  assert.ok(script.includes("reasoning"));
+  assert.ok(script.includes("effort"));
+  assert.ok(script.includes("reasoning_summary"));
+});
+
+// ---------------------------------------------------------------------------
+// Executable runtime regression tests
+// ---------------------------------------------------------------------------
+
+async function writeGeneratedFile(
+  dir: string,
+  name: string,
+  content: string,
+): Promise<string> {
+  const filePath = join(dir, name);
+  await writeFile(filePath, content, "utf8");
+  return filePath;
+}
+
+function runNodeScript(
+  args: string[],
+  options: { cwd: string; env?: Record<string, string | undefined> },
+): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, args, {
+    cwd: options.cwd,
+    env: { ...process.env, ...options.env },
+    encoding: "utf8",
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+test("buildEmbeddingsScript rejects non-positive dimensions at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-embeddings-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "embed.mjs",
+      buildEmbeddingsScript(),
+    );
+
+    const result = runNodeScript(
+      [scriptPath, "--text", "hello", "--dimensions", "0"],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--dimensions must be a positive integer/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("semantic-search index excludes db file on repeated runs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-semantic-search-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "search.mjs",
+      buildSemanticSearchScript(),
+    );
+
+    const preloadPath = await writeGeneratedFile(
+      dir,
+      "mock-fetch.mjs",
+      `function fakeEmbedding(value) {
+  const text = String(value);
+  const sum = [...text].reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return [sum, text.length, sum % 97];
+}
+
+globalThis.fetch = async (_url, init) => {
+  const body = JSON.parse(String(init?.body ?? "{}"));
+  const inputs = Array.isArray(body.input) ? body.input : [body.input];
+  return new Response(
+    JSON.stringify({
+      data: inputs.map((input, index) => ({
+        index,
+        embedding: fakeEmbedding(input),
+      })),
+      model: body.model,
+      usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+};`,
+    );
+
+    const docsDir = join(dir, "docs");
+    await mkdir(docsDir, { recursive: true });
+    const alphaPath = join(docsDir, "alpha.txt");
+    const betaPath = join(docsDir, "beta.txt");
+    const dbPath = join(docsDir, ".semantic-index.json");
+
+    await writeFile(alphaPath, "alpha document\n");
+    await writeFile(betaPath, "beta document\n");
+
+    for (let i = 0; i < 2; i += 1) {
+      const run = runNodeScript(
+        [
+          "--import",
+          preloadPath,
+          scriptPath,
+          "index",
+          "--dir",
+          docsDir,
+          "--db",
+          dbPath,
+        ],
+        { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+      );
+      assert.equal(run.status, 0, run.stderr || run.stdout);
+    }
+
+    const index = JSON.parse(await readFile(dbPath, "utf8")) as {
+      chunks: Array<{ path: string }>;
+    };
+    const indexedPaths = [
+      ...new Set(index.chunks.map((chunk) => chunk.path)),
+    ].sort();
+    assert.deepEqual(indexedPaths, [alphaPath, betaPath].sort());
+    assert.ok(
+      index.chunks.every((chunk) => chunk.path !== dbPath),
+      "semantic-search should never index its own db file",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("semantic-search query rejects dimensions that do not match the existing index", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-semantic-query-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "search.mjs",
+      buildSemanticSearchScript(),
+    );
+
+    const dbPath = join(dir, "index.json");
+    await writeFile(
+      dbPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        createdAt: "2026-03-29T00:00:00.000Z",
+        model: "openai/text-embedding-3-small",
+        dimensions: 3,
+        rootDir: null,
+        chunks: [
+          {
+            id: "doc:0:4",
+            path: "/tmp/doc.txt",
+            start: 0,
+            end: 4,
+            text: "test",
+            embedding: [1, 0, 0],
+          },
+        ],
+      }) + "\n",
+    );
+
+    const run = runNodeScript(
+      [
+        scriptPath,
+        "query",
+        "--db",
+        dbPath,
+        "--query",
+        "hello",
+        "--dimensions",
+        "4",
+      ],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(run.status, 1);
+    assert.match(
+      run.stderr,
+      /--dimensions must match the indexed dimensions \(3\) when querying an existing index/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildTranscriptionScript rejects missing --file at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-transcription-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "transcribe.mjs",
+      buildTranscriptionScript(),
+    );
+
+    const result = runNodeScript(
+      [scriptPath],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--file/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildTranscriptionScript rejects invalid --format at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-transcription-fmt-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "transcribe.mjs",
+      buildTranscriptionScript(),
+    );
+
+    const result = runNodeScript(
+      [scriptPath, "--file", "dummy.mp3", "--format", "invalid"],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--format must be one of/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildReasoningScript rejects invalid --reasoning-effort at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-reasoning-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "reason.mjs",
+      buildReasoningScript(),
+    );
+
+    const result = runNodeScript(
+      [scriptPath, "--prompt", "test", "--reasoning-effort", "extreme"],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--reasoning-effort must be one of/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildReasoningScript rejects missing prompt at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-reasoning-noprompt-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "reason.mjs",
+      buildReasoningScript(),
+    );
+
+    const result = runNodeScript(
+      [scriptPath],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--prompt/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// --- Compare models skill ---
+
+test("buildCompareSkill returns valid skill metadata", () => {
+  const skill = buildCompareSkill();
+  assert.ok(skill.includes("name: compare-models"));
+  assert.ok(skill.includes("AI_GATEWAY_API_KEY"));
+});
+
+test("buildCompareScript uses chat completions and Promise.all", () => {
+  const script = buildCompareScript();
+  assert.ok(script.includes("/v1/chat/completions"));
+  assert.ok(script.includes("Promise.all"));
+  assert.ok(script.includes("--models"));
+});
+
+test("buildCompareScript rejects missing prompt at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-compare-noprompt-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "compare.mjs",
+      buildCompareScript(),
+    );
+
+    const result = runNodeScript(
+      [scriptPath],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--prompt/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildCompareScript rejects single model at runtime", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openclaw-compare-onemodel-"));
+  try {
+    const scriptPath = await writeGeneratedFile(
+      dir,
+      "compare.mjs",
+      buildCompareScript(),
+    );
+
+    const result = runNodeScript(
+      [scriptPath, "--prompt", "hello", "--models", "gpt-4o"],
+      { cwd: dir, env: { AI_GATEWAY_API_KEY: "test-key" } },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /at least two/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -22,6 +22,12 @@ import {
   buildEmbeddingsScript,
   buildSemanticSearchSkill,
   buildSemanticSearchScript,
+  buildTranscriptionSkill,
+  buildTranscriptionScript,
+  buildReasoningSkill,
+  buildReasoningScript,
+  buildCompareSkill,
+  buildCompareScript,
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
   BUN_BIN,
   BUN_DOWNLOAD_SHA256,
@@ -49,6 +55,12 @@ import {
   OPENCLAW_EMBEDDINGS_SCRIPT_PATH,
   OPENCLAW_SEMANTIC_SEARCH_SKILL_PATH,
   OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH,
+  OPENCLAW_TRANSCRIPTION_SKILL_PATH,
+  OPENCLAW_TRANSCRIPTION_SCRIPT_PATH,
+  OPENCLAW_REASONING_SKILL_PATH,
+  OPENCLAW_REASONING_SCRIPT_PATH,
+  OPENCLAW_COMPARE_SKILL_PATH,
+  OPENCLAW_COMPARE_SCRIPT_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
   OPENCLAW_TELEGRAM_BOT_TOKEN_PATH,
@@ -351,6 +363,30 @@ export async function setupOpenClaw(
     {
       path: OPENCLAW_SEMANTIC_SEARCH_SCRIPT_PATH,
       content: Buffer.from(buildSemanticSearchScript()),
+    },
+    {
+      path: OPENCLAW_TRANSCRIPTION_SKILL_PATH,
+      content: Buffer.from(buildTranscriptionSkill()),
+    },
+    {
+      path: OPENCLAW_TRANSCRIPTION_SCRIPT_PATH,
+      content: Buffer.from(buildTranscriptionScript()),
+    },
+    {
+      path: OPENCLAW_REASONING_SKILL_PATH,
+      content: Buffer.from(buildReasoningSkill()),
+    },
+    {
+      path: OPENCLAW_REASONING_SCRIPT_PATH,
+      content: Buffer.from(buildReasoningScript()),
+    },
+    {
+      path: OPENCLAW_COMPARE_SKILL_PATH,
+      content: Buffer.from(buildCompareSkill()),
+    },
+    {
+      path: OPENCLAW_COMPARE_SCRIPT_PATH,
+      content: Buffer.from(buildCompareScript()),
     },
     ...(options.telegramBotToken
       ? [{ path: OPENCLAW_TELEGRAM_BOT_TOKEN_PATH, content: Buffer.from(options.telegramBotToken) }]
