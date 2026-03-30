@@ -77,6 +77,9 @@ function makeStatus(
         hasBotToken: false,
         lastError: null,
         connectability: makeConnectability("slack"),
+        installMethod: "manual",
+        installUrl: null,
+        appCredentialsConfigured: false,
         ...slackOverrides,
       },
       telegram: {
@@ -130,9 +133,9 @@ function makeStatus(
   };
 }
 
-/* ── Unconfigured form ── */
+/* ── Unconfigured form (manual mode) ── */
 
-test("SlackPanel renders connect form when unconfigured", () => {
+test("SlackPanel renders connect form when unconfigured (manual mode)", () => {
   const html = renderToStaticMarkup(
     <SlackPanel
       status={makeStatus()}
@@ -146,6 +149,28 @@ test("SlackPanel renders connect form when unconfigured", () => {
   assert.ok(html.includes("Signing Secret"), "shows signing secret field");
   assert.ok(html.includes("Bot Token"), "shows bot token field");
   assert.ok(html.includes("Connect"), "shows connect button");
+});
+
+/* ── OAuth install button ── */
+
+test("SlackPanel renders Install to Slack button when OAuth credentials configured", () => {
+  const html = renderToStaticMarkup(
+    <SlackPanel
+      status={makeStatus({
+        appCredentialsConfigured: true,
+        installMethod: "oauth",
+        installUrl: "/api/channels/slack/install",
+      })}
+      busy={false}
+      runAction={RUN_ACTION_SUCCESS}
+      requestJson={REQUEST_JSON_SUCCESS}
+    />,
+  );
+
+  assert.ok(html.includes("Install to Slack"), "shows install button");
+  assert.ok(html.includes("/api/channels/slack/install"), "install button links to install route");
+  assert.ok(html.includes("or configure manually"), "shows manual fallback option");
+  assert.ok(!html.includes("Signing Secret"), "does not show credential fields by default");
 });
 
 /* ── Connected card ── */
@@ -174,6 +199,31 @@ test("SlackPanel renders connected card with consistent action ordering", () => 
   const updateIdx = html.indexOf("Update credentials");
   const disconnectIdx = html.indexOf("Disconnect");
   assert.ok(updateIdx < disconnectIdx, "Update credentials appears before Disconnect");
+});
+
+/* ── Connected card with OAuth reinstall ── */
+
+test("SlackPanel shows Reinstall to Slack when connected with OAuth credentials", () => {
+  const html = renderToStaticMarkup(
+    <SlackPanel
+      status={makeStatus({
+        configured: true,
+        team: "TestWorkspace",
+        botId: "B123",
+        appCredentialsConfigured: true,
+        installMethod: "oauth",
+        installUrl: "/api/channels/slack/install",
+        connectability: makeConnectability("slack"),
+      })}
+      busy={false}
+      runAction={RUN_ACTION_SUCCESS}
+      requestJson={REQUEST_JSON_SUCCESS}
+    />,
+  );
+
+  assert.ok(html.includes("Reinstall to Slack"), "shows reinstall button");
+  assert.ok(html.includes("Update credentials"), "still shows update credentials");
+  assert.ok(html.includes("Disconnect"), "still shows disconnect");
 });
 
 /* ── Type contract: failure stubs satisfy RunAction and RequestJson ── */

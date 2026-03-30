@@ -534,6 +534,9 @@ These variables are checked by `buildDeploymentContract()` in `src/server/deploy
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode | Required for OAuth flow. |
 | `VERCEL_APP_CLIENT_SECRET` | `sign-in-with-vercel` mode | Required for OAuth flow. |
 | `SESSION_SECRET` | `sign-in-with-vercel` on Vercel | Required. Must be explicitly set — do not rely on silent derivation from the Upstash token. |
+| `SLACK_CLIENT_ID` | All environments | Optional. Slack app client ID. When all three `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` are set, the admin panel offers one-click OAuth install instead of manual credential entry. |
+| `SLACK_CLIENT_SECRET` | All environments | Optional. Slack app client secret. Paired with `SLACK_CLIENT_ID`. |
+| `SLACK_SIGNING_SECRET` | All environments | Optional. Slack app signing secret. Used for webhook signature verification when the bot token is obtained via the OAuth install flow. |
 
 `scripts/check-verifier-contract.mjs` enforces that every env name in the deployment contract also appears in `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and `.env.example`. It uses word-boundary matching so that e.g. `BASE_DOMAIN` is not falsely found inside `NEXT_PUBLIC_BASE_DOMAIN`.
 

@@ -174,6 +174,8 @@ When you add or change Redis keys, route every key through `src/server/store/key
 | `/api/admin/channel-secrets` | Configure smoke credentials and dispatch signed synthetic Slack/Telegram webhooks. Smoke dispatch uses `buildPublicUrl()` (bypass included) for all channels including Telegram — distinct from provider-facing registration which omits bypass for Telegram. |
 | `/api/cron/watchdog` | Cron watchdog for health repair and scheduled OpenClaw cron wake |
 | `/api/admin/watchdog` | Read cached watchdog report or run a fresh one |
+| `/api/channels/slack/install` | Slack OAuth install redirect (requires `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`) |
+| `/api/channels/slack/install/callback` | Slack OAuth callback — exchanges code, persists config |
 | `/api/channels/slack/webhook` | Public Slack webhook |
 | `/api/channels/telegram/webhook` | Public Telegram webhook |
 

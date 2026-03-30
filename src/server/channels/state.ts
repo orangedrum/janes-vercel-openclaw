@@ -18,6 +18,7 @@ import {
   buildChannelDisplayWebhookUrl,
   buildChannelWebhookUrl,
 } from "@/server/channels/webhook-urls";
+import { getSlackInstallConfig } from "@/server/channels/slack/install-config";
 import { buildDeploymentContract } from "@/server/deployment-contract";
 import { logInfo } from "@/server/log";
 import { getInitializedMeta, mutateMeta } from "@/server/store/store";
@@ -145,6 +146,7 @@ function toPublicSlackState(
   webhookUrl: string,
   connectability: ChannelConnectability,
 ): PublicSlackState {
+  const installConfig = getSlackInstallConfig();
   return {
     configured: config !== null,
     webhookUrl,
@@ -156,6 +158,9 @@ function toPublicSlackState(
     hasBotToken: Boolean(config?.botToken),
     lastError: config?.lastError ?? null,
     connectability,
+    installMethod: installConfig.enabled ? "oauth" : "manual",
+    installUrl: installConfig.enabled ? "/api/channels/slack/install" : null,
+    appCredentialsConfigured: installConfig.enabled,
   };
 }
 

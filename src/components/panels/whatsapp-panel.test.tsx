@@ -81,6 +81,9 @@ function makeStatus(
           webhookUrl: "",
           issues: [],
         },
+        installMethod: "manual",
+        installUrl: null,
+        appCredentialsConfigured: false,
       },
       telegram: {
         configured: false,

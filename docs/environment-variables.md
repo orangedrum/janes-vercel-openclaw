@@ -46,6 +46,18 @@ Set `VERCEL_AUTH_MODE=sign-in-with-vercel` to use Vercel OAuth instead of `ADMIN
 | `OPENCLAW_SANDBOX_VCPUS` | vCPU count for sandbox create/restore (1, 2, 4, or 8; default: 1). Keep fixed during benchmarks. |
 | `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place. If you increase this value, the next touch/heartbeat can top the sandbox timeout up to the new target. If you decrease it, the lower value becomes exact on the next create or restore. |
 
+## Slack OAuth install (optional)
+
+When all three variables below are set, the admin panel offers a one-click "Install to Slack" OAuth flow. Create the Slack app once from the manifest flow, copy its credentials, and set them here.
+
+| Variable | Purpose |
+| -------- | ------- |
+| `SLACK_CLIENT_ID` | Slack app client ID (from Basic Information → App Credentials). |
+| `SLACK_CLIENT_SECRET` | Slack app client secret. |
+| `SLACK_SIGNING_SECRET` | Slack app signing secret (used for webhook signature verification). |
+
+When these are not set, the admin panel falls back to manual credential entry (signing secret + bot token).
+
 ## Public origin override
 
 The app resolves its canonical public URL from Vercel system variables automatically. Override with:

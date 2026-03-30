@@ -28,7 +28,7 @@ Click **Deploy with Vercel** above, set a password, and you're up.
 2. **Sign in** — open the deployment and enter your admin secret.
 3. **Use OpenClaw** — visit `/gateway` or click **Start** in the admin panel. The first boot takes about a minute while OpenClaw is installed into the sandbox. After that, restores from snapshot take just a few seconds.
 4. **Verify** — run destructive launch verification from the admin panel before connecting channels. Preflight is a config-readiness check. It does not prove the sandbox can complete a real channel delivery.
-5. **Connect channels** — optionally wire up Slack or Telegram from the admin panel so people can chat with your instance. A deployment is channel-ready only after destructive launch verification passes and channelReadiness.ready is true.
+5. **Connect channels** — optionally wire up Slack or Telegram from the admin panel so people can chat with your instance. For Slack, set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` to enable one-click OAuth install, or enter credentials manually. A deployment is channel-ready only after destructive launch verification passes and channelReadiness.ready is true.
 
 ## What you get
 

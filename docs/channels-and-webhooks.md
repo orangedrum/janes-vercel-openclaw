@@ -61,7 +61,21 @@ Channel save and channel readiness are separate. A channel can be connectable be
 
 ### Connecting Slack
 
-Configure Slack credentials from the admin panel. The app stores the credentials in the metadata record and builds a webhook URL pointing to `/api/channels/slack/webhook`.
+There are two ways to connect Slack:
+
+**One-click OAuth install (recommended).** When `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` are set as environment variables, the admin panel shows an **Install to Slack** button. Clicking it redirects to Slack's OAuth approval screen. After approval, the app exchanges the authorization code for a bot token and persists the config automatically. The signing secret comes from the environment variable rather than manual entry.
+
+To set up OAuth install:
+
+1. Create the Slack app from the manifest flow (admin panel → Create Slack App).
+2. Copy Client ID, Client Secret, and Signing Secret from the Slack app's Basic Information page.
+3. Set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` in your environment.
+4. Enable Slack distribution if installs must work outside the app owner's workspace.
+5. Click **Install to Slack** from the admin panel.
+
+**Manual credential entry.** When the OAuth env vars are not set, the admin panel shows the manual form for entering a Signing Secret and Bot Token. This is the fallback mode and the original connection method.
+
+In both cases, the app stores the credentials in the metadata record and builds a webhook URL pointing to `/api/channels/slack/webhook`.
 
 Slack delivery URLs may include the protection bypass parameter (`x-vercel-protection-bypass`) when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured. This lets Slack webhooks reach the app even on protected deployments.
 

@@ -13,6 +13,12 @@ export type PublicSlackState = {
   hasBotToken: boolean;
   lastError: string | null;
   connectability: ChannelConnectability;
+  /** "oauth" when SLACK_CLIENT_ID/SECRET/SIGNING_SECRET env vars are set, "manual" otherwise. */
+  installMethod: "oauth" | "manual";
+  /** Install route URL when OAuth mode is available. */
+  installUrl: string | null;
+  /** True when all three Slack app env vars are configured. */
+  appCredentialsConfigured: boolean;
 };
 
 export type PublicTelegramState = {

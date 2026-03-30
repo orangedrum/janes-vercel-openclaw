@@ -30,6 +30,26 @@ function getSlackPill(configured: boolean): ChannelPillModel {
   };
 }
 
+function getInstallErrorMessage(code: string): string {
+  switch (code) {
+    case "missing_app_credentials":
+      return "Slack app credentials (SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET) are not configured.";
+    case "connect_blocked":
+      return "Channel connection is blocked by deployment prerequisites.";
+    case "access_denied":
+      return "Slack installation was cancelled.";
+    case "state_mismatch":
+    case "context_expired":
+      return "OAuth session expired. Please try again.";
+    case "token_exchange_failed":
+      return "Failed to exchange authorization code with Slack.";
+    case "auth_test_failed":
+      return "Slack token validation failed after install.";
+    default:
+      return `Slack install failed: ${code}`;
+  }
+}
+
 export function SlackPanel({
   status,
   busy,
@@ -43,12 +63,26 @@ export function SlackPanel({
   const [showToken, setShowToken] = useState(false);
   const [testResult, setTestResult] = useState<SlackTestPayload | null>(null);
   const [editing, setEditing] = useState(false);
-  const [panelError, setPanelError] = useState<string | null>(null);
+  const [panelError, setPanelError] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get("slack_install_error");
+    if (err) {
+      // Clean up the URL without triggering a reload
+      const clean = new URL(window.location.href);
+      clean.searchParams.delete("slack_install_error");
+      window.history.replaceState({}, "", clean.toString());
+      return getInstallErrorMessage(err);
+    }
+    return null;
+  });
   const [copied, setCopied] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(false);
 
   const { confirm, dialogProps } = useConfirm();
   const sl = status.channels.slack;
   const botTokenValid = /^xoxb-/.test(botToken.trim());
+  const oauthAvailable = sl.appCredentialsConfigured;
 
   function clearDrafts(): void {
     setSigningSecret("");
@@ -57,6 +91,7 @@ export function SlackPanel({
     setShowToken(false);
     setTestResult(null);
     setPanelError(null);
+    setShowManualForm(false);
   }
 
   async function handleTestToken(): Promise<void> {
@@ -142,6 +177,191 @@ export function SlackPanel({
     setTimeout(() => setCopied(false), 2000);
   }
 
+  // ── Connected view ──
+  const connectedView = (
+    <div className="channel-connected-view">
+      <ChannelInfoRow label="Workspace">
+        <code className="inline-code">
+          {sl.team ?? "—"}
+          {sl.botId ? ` · ${sl.botId}` : ""}
+        </code>
+      </ChannelInfoRow>
+      <ChannelCopyValue
+        label="Webhook URL"
+        value={sl.webhookUrl}
+        copied={copied}
+        onCopy={handleCopyWebhook}
+      />
+      <ChannelInfoRow label="Health">
+        <code className="inline-code">Ready</code>
+      </ChannelInfoRow>
+      <div className="inline-actions">
+        {oauthAvailable ? (
+          <a
+            className="button secondary"
+            href={sl.installUrl ?? "/api/channels/slack/install"}
+          >
+            Reinstall to Slack
+          </a>
+        ) : null}
+        <button
+          className="button secondary"
+          disabled={busy}
+          onClick={() => {
+            setPanelError(null);
+            setEditing(true);
+          }}
+        >
+          Update credentials
+        </button>
+        <button
+          className="button ghost"
+          disabled={busy}
+          onClick={() => void handleDisconnect()}
+        >
+          Disconnect
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── OAuth install view (unconfigured, credentials available) ──
+  const oauthInstallView = (
+    <div className="channel-wizard">
+      <p className="channel-wizard-title">Connect Slack</p>
+      <a
+        className="button primary"
+        href={sl.installUrl ?? "/api/channels/slack/install"}
+      >
+        Install to Slack
+      </a>
+      <div className="inline-actions" style={{ marginTop: 8 }}>
+        <button
+          type="button"
+          className="button ghost"
+          onClick={() => setShowManualForm(true)}
+        >
+          or configure manually
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Manual credential form ──
+  const manualForm = (
+    <form className="channel-wizard" onSubmit={(e) => { e.preventDefault(); void handleConnect(); }}>
+      <p className="channel-wizard-title">
+        {editing ? "Update Credentials" : "Connect Slack"}
+      </p>
+
+      {!editing ? (
+        <div className="inline-actions" style={{ marginBottom: 8 }}>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={busy}
+            onClick={() => void handleCreateApp()}
+          >
+            Create Slack App
+          </button>
+          <span className="muted-copy">or</span>
+          <a
+            className="button ghost"
+            href="https://api.slack.com/apps"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open existing app
+          </a>
+        </div>
+      ) : null}
+
+      <ChannelSecretField
+        label="Signing Secret"
+        value={signingSecret}
+        onChange={setSigningSecret}
+        placeholder="Signing Secret"
+        shown={showSecret}
+        onToggleShown={() => setShowSecret((v) => !v)}
+        help="Basic Information → App Credentials → Signing Secret"
+      />
+
+      <ChannelSecretField
+        label="Bot Token"
+        value={botToken}
+        onChange={(v) => {
+          setBotToken(v);
+          setTestResult(null);
+        }}
+        placeholder="xoxb-..."
+        shown={showToken}
+        onToggleShown={() => setShowToken((v) => !v)}
+        help="OAuth & Permissions → Bot User OAuth Token (starts with xoxb-)"
+        validationMessage={
+          botToken.trim() && !botTokenValid
+            ? "Bot token must start with xoxb-"
+            : null
+        }
+      />
+
+      {botTokenValid ? (
+        <button
+          type="button"
+          className="button secondary"
+          disabled={busy}
+          onClick={() => void handleTestToken()}
+        >
+          Test Connection
+        </button>
+      ) : null}
+
+      {testResult?.ok ? (
+        <p className="success-copy">
+          Connected to {testResult.team} as {testResult.user}
+        </p>
+      ) : null}
+
+      <div className="inline-actions">
+        <button
+          type="submit"
+          className="button primary"
+          disabled={
+            busy ||
+            !sl.connectability.canConnect ||
+            !signingSecret.trim() ||
+            !botToken.trim()
+          }
+        >
+          {editing ? "Update" : "Connect"}
+        </button>
+        {editing || (oauthAvailable && showManualForm) ? (
+          <button
+            type="button"
+            className="button ghost"
+            onClick={() => {
+              clearDrafts();
+              setEditing(false);
+            }}
+          >
+            Cancel
+          </button>
+        ) : null}
+      </div>
+    </form>
+  );
+
+  // ── Decide which view to show ──
+  let content: React.ReactNode;
+  if (sl.configured && !editing) {
+    content = connectedView;
+  } else if (editing) {
+    content = manualForm;
+  } else if (oauthAvailable && !showManualForm) {
+    content = oauthInstallView;
+  } else {
+    content = manualForm;
+  }
+
   return (
     <ChannelCardFrame
       channel="slack"
@@ -158,144 +378,7 @@ export function SlackPanel({
       connectability={sl.connectability}
       suppressedIds={preflightBlockerIds}
     >
-      {sl.configured && !editing ? (
-        <div className="channel-connected-view">
-          <ChannelInfoRow label="Workspace">
-            <code className="inline-code">
-              {sl.team ?? "—"}
-              {sl.botId ? ` · ${sl.botId}` : ""}
-            </code>
-          </ChannelInfoRow>
-          <ChannelCopyValue
-            label="Webhook URL"
-            value={sl.webhookUrl}
-            copied={copied}
-            onCopy={handleCopyWebhook}
-          />
-          <ChannelInfoRow label="Health">
-            <code className="inline-code">Ready</code>
-          </ChannelInfoRow>
-          <div className="inline-actions">
-            <button
-              className="button secondary"
-              disabled={busy}
-              onClick={() => {
-                setPanelError(null);
-                setEditing(true);
-              }}
-            >
-              Update credentials
-            </button>
-            <button
-              className="button ghost"
-              disabled={busy}
-              onClick={() => void handleDisconnect()}
-            >
-              Disconnect
-            </button>
-          </div>
-        </div>
-      ) : (
-        <form className="channel-wizard" onSubmit={(e) => { e.preventDefault(); void handleConnect(); }}>
-          <p className="channel-wizard-title">
-            {editing ? "Update Credentials" : "Connect Slack"}
-          </p>
-
-          {!editing ? (
-            <div className="inline-actions" style={{ marginBottom: 8 }}>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy}
-                onClick={() => void handleCreateApp()}
-              >
-                Create Slack App
-              </button>
-              <span className="muted-copy">or</span>
-              <a
-                className="button ghost"
-                href="https://api.slack.com/apps"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open existing app
-              </a>
-            </div>
-          ) : null}
-
-          <ChannelSecretField
-            label="Signing Secret"
-            value={signingSecret}
-            onChange={setSigningSecret}
-            placeholder="Signing Secret"
-            shown={showSecret}
-            onToggleShown={() => setShowSecret((v) => !v)}
-            help="Basic Information → App Credentials → Signing Secret"
-          />
-
-          <ChannelSecretField
-            label="Bot Token"
-            value={botToken}
-            onChange={(v) => {
-              setBotToken(v);
-              setTestResult(null);
-            }}
-            placeholder="xoxb-..."
-            shown={showToken}
-            onToggleShown={() => setShowToken((v) => !v)}
-            help="OAuth & Permissions → Bot User OAuth Token (starts with xoxb-)"
-            validationMessage={
-              botToken.trim() && !botTokenValid
-                ? "Bot token must start with xoxb-"
-                : null
-            }
-          />
-
-          {botTokenValid ? (
-            <button
-              type="button"
-              className="button secondary"
-              disabled={busy}
-              onClick={() => void handleTestToken()}
-            >
-              Test Connection
-            </button>
-          ) : null}
-
-          {testResult?.ok ? (
-            <p className="success-copy">
-              Connected to {testResult.team} as {testResult.user}
-            </p>
-          ) : null}
-
-          <div className="inline-actions">
-            <button
-              type="submit"
-              className="button primary"
-              disabled={
-                busy ||
-                !sl.connectability.canConnect ||
-                !signingSecret.trim() ||
-                !botToken.trim()
-              }
-            >
-              {editing ? "Update" : "Connect"}
-            </button>
-            {editing ? (
-              <button
-                type="button"
-                className="button ghost"
-                onClick={() => {
-                  clearDrafts();
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </button>
-            ) : null}
-          </div>
-        </form>
-      )}
+      {content}
       <ConfirmDialog {...dialogProps} />
     </ChannelCardFrame>
   );

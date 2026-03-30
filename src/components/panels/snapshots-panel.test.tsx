@@ -37,6 +37,9 @@ const CHANNELS: StatusPayload["channels"] = {
     hasBotToken: false,
     lastError: null,
     connectability: makeConnectability("slack", ""),
+    installMethod: "manual",
+    installUrl: null,
+    appCredentialsConfigured: false,
   },
   telegram: {
     configured: false,
