@@ -185,17 +185,18 @@ export async function POST(request: Request): Promise<Response> {
           logInfo("channels.whatsapp_fast_path_ok", withOperationContext(op, {
             sandboxId: effectiveMeta.sandboxId,
           }));
-          return Response.json({ ok: true });
+        } else {
+          logWarn("channels.whatsapp_fast_path_non_ok", withOperationContext(op, {
+            sandboxId: effectiveMeta.sandboxId,
+            status: forwardResponse.status,
+          }));
         }
-        logWarn("channels.whatsapp_fast_path_non_ok", withOperationContext(op, {
-          sandboxId: effectiveMeta.sandboxId,
-          status: forwardResponse.status,
-          action: "reconcile_and_wake",
-        }));
-        effectiveMeta = await reconcileStaleRunningStatus();
+        // Any HTTP response means the native handler received the payload.
+        // Return 200 to avoid duplicate delivery via the workflow path.
+        return Response.json({ ok: true });
       } catch (error) {
-        // Network-level failure — sandbox is likely dead with stale metadata.
-        // Reconcile status and fall through to the workflow wake path.
+        // Network-level failure — native handler never received the payload.
+        // Reconcile stale status and fall through to workflow wake path.
         logWarn("channels.whatsapp_fast_path_failed", withOperationContext(op, {
           sandboxId: effectiveMeta.sandboxId,
           error: error instanceof Error ? error.message : String(error),

@@ -163,7 +163,7 @@ test("Slack webhook: duplicate event_id is deduplicated", async () => {
   });
 });
 
-test("Slack webhook: fast path non-ok response falls through to workflow wake path", async () => {
+test("Slack webhook: fast path non-ok response returns 200 without falling through to workflow", async () => {
   await withHarness(async (h) => {
     await configureSlack(h);
     await h.mutateMeta((meta) => {
@@ -189,8 +189,8 @@ test("Slack webhook: fast path non-ok response falls through to workflow wake pa
       assert.deepEqual(result.json, { ok: true });
       assert.equal(
         startMock.mock.callCount(),
-        1,
-        "workflow start should be called after a non-ok fast-path response",
+        0,
+        "workflow must NOT start when native handler returned an HTTP response (even non-2xx) to avoid duplicate delivery",
       );
       resetAfterCallbacks();
     } finally {

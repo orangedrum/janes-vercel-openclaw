@@ -280,20 +280,19 @@ export async function POST(request: Request): Promise<Response> {
           responseStatus: resp.status,
           ...eventInfo,
         }));
-        return Response.json({ ok: true });
+      } else {
+        logWarn("channels.slack_fast_path_non_ok", withOperationContext(op, {
+          status: resp.status,
+          sandboxId: effectiveMeta.sandboxId,
+          ...eventInfo,
+        }));
       }
-      const errorBody = await resp.text().catch(() => "");
-      logWarn("channels.slack_fast_path_non_ok", withOperationContext(op, {
-        status: resp.status,
-        sandboxId: effectiveMeta.sandboxId,
-        responseBody: errorBody.slice(0, 500),
-        action: "reconcile_and_wake",
-        ...eventInfo,
-      }));
-      effectiveMeta = await reconcileStaleRunningStatus();
+      // Any HTTP response means the native handler received the payload.
+      // Return 200 to avoid duplicate delivery via the workflow path.
+      return Response.json({ ok: true });
     } catch (error) {
-      // Network-level failure — sandbox is likely dead with stale metadata.
-      // Reconcile status and fall through to the workflow wake path.
+      // Network-level failure — native handler never received the payload.
+      // Reconcile stale status and fall through to workflow wake path.
       logWarn("channels.slack_fast_path_failed", withOperationContext(op, {
         error: error instanceof Error ? error.message : String(error),
         errorName: error instanceof Error ? error.name : undefined,

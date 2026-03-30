@@ -161,7 +161,7 @@ test("WhatsApp webhook: duplicate message id is deduplicated", async () => {
   });
 });
 
-test("WhatsApp webhook: fast path non-ok response falls through to workflow wake path", async () => {
+test("WhatsApp webhook: fast path non-ok response returns 200 without falling through to workflow", async () => {
   await withHarness(async (h) => {
     await configureWhatsApp(h);
     await h.mutateMeta((meta) => {
@@ -176,12 +176,6 @@ test("WhatsApp webhook: fast path non-ok response falls through to workflow wake
     h.fakeFetch.onPost(/whatsapp-webhook$/, () =>
       new Response("bad gateway", { status: 502 }),
     );
-    h.fakeFetch.onPost(/graph\.facebook\.com/, () =>
-      Response.json({
-        messaging_product: "whatsapp",
-        messages: [{ id: "wamid.sent-non-ok" }],
-      }),
-    );
 
     const route = getWhatsAppWebhookRoute();
     const startMock = mock.method(whatsappWebhookWorkflowRuntime, "start", async () => {});
@@ -193,8 +187,8 @@ test("WhatsApp webhook: fast path non-ok response falls through to workflow wake
       assert.deepEqual(result.json, { ok: true });
       assert.equal(
         startMock.mock.callCount(),
-        1,
-        "workflow start should be called after a non-ok fast-path response",
+        0,
+        "workflow must NOT start when native handler returned an HTTP response (even non-2xx) to avoid duplicate delivery",
       );
       resetAfterCallbacks();
     } finally {

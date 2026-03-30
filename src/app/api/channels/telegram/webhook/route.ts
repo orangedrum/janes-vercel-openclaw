@@ -122,11 +122,14 @@ export async function POST(request: Request): Promise<Response> {
     // full processing cycle (including long AI tasks like image generation).
     // Fluid Compute bills only for CPU cycles, not idle wait time.
     //
-    // Return early only on a successful 2xx native forward.  Non-2xx means the
-    // sandbox is reachable but unhealthy — reconcile stale running state and
-    // fall through to the workflow wake path so the message is not lost.
-    // If fetch() throws (connection refused, DNS failure), the sandbox is
-    // likely dead with stale "running" metadata — same reconcile-and-wake path.
+    // On ANY HTTP response (2xx or not), return 200 — the native handler
+    // received the payload and may have started processing.  Falling through
+    // to the workflow would forward the same payload again, causing duplicate
+    // delivery (e.g. the same image sent multiple times).
+    //
+    // Only on network-level failure (fetch throws — connection refused, DNS
+    // failure) is it safe to fall through: the native handler never received
+    // the payload, so the workflow can retry without duplication.
     let effectiveMeta = meta;
     if (effectiveMeta.status === "running" && effectiveMeta.sandboxId) {
       try {
@@ -144,17 +147,17 @@ export async function POST(request: Request): Promise<Response> {
           logInfo("channels.telegram_fast_path_ok", withOperationContext(op, {
             sandboxId: effectiveMeta.sandboxId,
           }));
-          return Response.json({ ok: true });
+        } else {
+          logWarn("channels.telegram_fast_path_non_ok", withOperationContext(op, {
+            status: forwardResponse.status,
+            sandboxId: effectiveMeta.sandboxId,
+          }));
         }
-        logWarn("channels.telegram_fast_path_non_ok", withOperationContext(op, {
-          status: forwardResponse.status,
-          sandboxId: effectiveMeta.sandboxId,
-          action: "reconcile_and_wake",
-        }));
-        effectiveMeta = await reconcileStaleRunningStatus();
+        return Response.json({ ok: true });
       } catch (error) {
-        // Network-level failure — sandbox is likely dead with stale metadata.
-        // Reconcile status and fall through to the workflow wake path.
+        // Network-level failure — sandbox is unreachable, native handler never
+        // got the payload.  Reconcile stale status and fall through to the
+        // workflow wake path so the message is not lost.
         logWarn("channels.telegram_fast_path_failed", withOperationContext(op, {
           error: error instanceof Error ? error.message : String(error),
           sandboxId: effectiveMeta.sandboxId,

@@ -152,7 +152,7 @@ test("Telegram webhook: fast path connection failure reconciles status and start
   });
 });
 
-test("Telegram webhook: fast path non-ok response falls through to workflow wake path", async () => {
+test("Telegram webhook: fast path non-ok response returns 200 without falling through to workflow", async () => {
   await withHarness(async (h) => {
     await configureTelegram(h);
     await h.mutateMeta((meta) => {
@@ -168,9 +168,6 @@ test("Telegram webhook: fast path non-ok response falls through to workflow wake
     h.fakeFetch.onPost(/telegram-webhook$/, () =>
       new Response("bad gateway", { status: 502 }),
     );
-    h.fakeFetch.onPost(/api\.telegram\.org/, () =>
-      Response.json({ ok: true, result: { message_id: 1 } }),
-    );
 
     const route = getTelegramWebhookRoute();
     const startMock = mock.method(telegramWebhookWorkflowRuntime, "start", async () => {});
@@ -182,8 +179,8 @@ test("Telegram webhook: fast path non-ok response falls through to workflow wake
       assert.deepEqual(result.json, { ok: true });
       assert.equal(
         startMock.mock.callCount(),
-        1,
-        "workflow start should be called after a non-ok fast-path response",
+        0,
+        "workflow must NOT start when native handler returned an HTTP response (even non-2xx) to avoid duplicate delivery",
       );
       resetAfterCallbacks();
     } finally {
