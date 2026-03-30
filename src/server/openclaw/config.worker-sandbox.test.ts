@@ -36,10 +36,10 @@ test("worker-sandbox script posts to the internal execute route with bearer auth
   assert.match(script, /"content-type":\s*"application\/json"/);
 });
 
-test("worker-sandbox script materializes captured files into the worker media directory", () => {
+test("worker-sandbox script materializes captured files into the canonical worker media directory", () => {
   const script = buildWorkerSandboxScript();
 
-  assert.match(script, /\/home\/vercel-sandbox\/\.openclaw\/generated\/worker/);
+  assert.match(script, /\/workspace\/openclaw-generated\/worker/);
   assert.match(script, /writeFile\(/);
   assert.match(script, /mkdir\(/);
   assert.match(script, /materializeCapturedFiles/);
@@ -49,7 +49,7 @@ test("worker-sandbox script emits MEDIA: lines for captured artifacts", () => {
   const script = buildWorkerSandboxScript();
 
   assert.match(script, /MEDIA: /);
-  assert.match(script, /mediaLines\.push\("MEDIA: " \+ filename\)/);
+  assert.match(script, /"MEDIA: " \+ media\.path/);
 });
 
 test("worker-sandbox script sanitizes filenames to safe characters", () => {
@@ -59,13 +59,28 @@ test("worker-sandbox script sanitizes filenames to safe characters", () => {
   assert.ok(script.includes("[^a-zA-Z0-9._-]"), "script should contain the sanitization regex");
 });
 
+test("worker-sandbox script returns channelMedia in structured output", () => {
+  const script = buildWorkerSandboxScript();
+
+  assert.match(script, /channelMedia/);
+  assert.match(script, /inferMimeTypeFromFilename/);
+  assert.match(script, /sourcePath: file\.path/);
+});
+
+test("worker-sandbox script supports --json-only flag", () => {
+  const script = buildWorkerSandboxScript();
+
+  assert.match(script, /--json-only/);
+  assert.match(script, /jsonOnly/);
+});
+
 test("worker-sandbox script does not print raw contentBase64 to model-visible stdout", () => {
   const script = buildWorkerSandboxScript();
 
   // The script parses JSON and emits a summary with path-only capturedFiles
   assert.match(script, /\.map\(\(f\) => \(\{ path: f\.path \}\)\)/);
-  // The final console.log uses JSON.stringify on the cleaned summary, not raw text
-  assert.match(script, /JSON\.stringify\(\{/);
+  // The final console.log uses JSON.stringify on the output variable, not raw text
+  assert.match(script, /JSON\.stringify\(output/);
   // Raw `console.log(text)` should NOT appear — it was replaced by parsed output
   assert.doesNotMatch(script, /console\.log\(text\)/);
 });

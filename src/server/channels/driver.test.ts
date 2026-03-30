@@ -505,6 +505,59 @@ test("driver: resolveSandboxUrlSource rejects unsafe slash-containing references
 });
 
 // ---------------------------------------------------------------------------
+// Canonical /workspace/openclaw-generated/worker path tests
+// ---------------------------------------------------------------------------
+
+test("driver: isSafeWorkspaceAbsolutePath accepts canonical worker media dir", () => {
+  assert.equal(
+    isSafeWorkspaceAbsolutePath(
+      "/workspace/openclaw-generated/worker/task-1-chart.png",
+    ),
+    true,
+  );
+  assert.equal(
+    isSafeWorkspaceAbsolutePath(
+      "/workspace/.openclaw/generated/worker/task-1-chart.png",
+    ),
+    false,
+  );
+});
+
+test("driver: resolveSandboxUrlSource resolves canonical worker media absolute path", async () => {
+  const workerPath =
+    "/workspace/openclaw-generated/worker/task-1-chart.png";
+  const { reads, sandbox } = createReadFileSandbox({
+    [workerPath]: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  });
+  const resolved = await resolveSandboxUrlSource(sandbox, workerPath);
+  assert.deepEqual(reads, [workerPath]);
+  assert.ok(resolved);
+  if (!resolved) {
+    return;
+  }
+  assert.equal(resolved.kind, "data");
+  assert.equal(resolved.filename, "task-1-chart.png");
+  assert.equal(resolved.mimeType, "image/png");
+});
+
+test("driver: resolveSandboxUrlSource preserves bare-filename compatibility for canonical worker media dir", async () => {
+  const workerPath =
+    "/workspace/openclaw-generated/worker/task-1-audio.mp3";
+  const { reads, sandbox } = createReadFileSandbox({
+    [workerPath]: Buffer.from("ok"),
+  });
+  const resolved = await resolveSandboxUrlSource(sandbox, "task-1-audio.mp3");
+  assert.ok(reads.includes(workerPath));
+  assert.ok(resolved);
+  if (!resolved) {
+    return;
+  }
+  assert.equal(resolved.kind, "data");
+  assert.equal(resolved.filename, "task-1-audio.mp3");
+  assert.equal(resolved.mimeType, "audio/mpeg");
+});
+
+// ---------------------------------------------------------------------------
 // resolveSandboxMedia — /workspace/ paths now resolve to data
 // ---------------------------------------------------------------------------
 

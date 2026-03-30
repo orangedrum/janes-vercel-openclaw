@@ -458,8 +458,9 @@ test("sendReplyRich rethrows retryable media upload failures", async () => {
 
   try {
     const adapter = createWhatsAppAdapter(CONFIG);
+    assert.ok(adapter.sendReplyRich, "sendReplyRich must be defined");
     await assert.rejects(
-      adapter.sendReplyRich?.(
+      adapter.sendReplyRich(
         {
           text: "hi",
           from: "15551234567",
@@ -481,7 +482,7 @@ test("sendReplyRich rethrows retryable media upload failures", async () => {
           ],
         },
       ),
-      (error) => {
+      (error: unknown) => {
         assert.ok(error instanceof RetryableSendError);
         return true;
       },

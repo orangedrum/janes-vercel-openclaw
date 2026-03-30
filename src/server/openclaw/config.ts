@@ -2301,9 +2301,9 @@ Prefer this skill when the user asks to:
 
 Workflow:
 1. Write a JSON request file that matches WorkerSandboxExecuteRequest.
-2. Run: \`node ${OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH} /path/to/request.json\`
-3. Parse the JSON response and inspect \`capturedFiles\`, \`stdout\`, and \`stderr\`.
-4. For multiple child sandboxes, create one request file per job and run the launcher once per job.
+2. Run: \`node ${OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH} /path/to/request.json --json-only\`
+3. Parse the JSON response and inspect \`channelMedia\`, \`stdout\`, and \`stderr\`.
+4. If you are replying in Telegram, Slack, WhatsApp, or Discord, send every returned \`channelMedia[].path\` with the \`message\` tool.
 
 Rules:
 - Put all input files under \`/workspace/\`.
@@ -2344,12 +2344,34 @@ Rules:
 {
   "ok": true,
   "task": "short-description",
-  "sandboxId": "sbx_...",
   "exitCode": 0,
   "stdout": "...",
   "stderr": "...",
-  "capturedFiles": [{ "path": "/workspace/output.txt", "contentBase64": "<base64>" }]
+  "channelMedia": [
+    {
+      "sourcePath": "/workspace/output.txt",
+      "path": "/workspace/openclaw-generated/worker/short-description-1-output.txt",
+      "filename": "short-description-1-output.txt",
+      "mimeType": "application/octet-stream"
+    }
+  ],
+  "capturedFiles": [{ "path": "/workspace/output.txt" }]
 }
+\`\`\`
+
+### Channel delivery (required on Telegram, Slack, WhatsApp, Discord)
+
+When the user is in a channel, do not stop after printing JSON or MEDIA: lines.
+Read \`channelMedia[].path\` from the launcher output and send each one with:
+
+\`\`\`bash
+message send --media /workspace/openclaw-generated/worker/short-description-1-output.txt
+\`\`\`
+
+You can add text to the first send:
+
+\`\`\`bash
+message send --media /workspace/openclaw-generated/worker/short-description-1-output.txt --text "Done."
 \`\`\`
 `;
 }
@@ -2359,31 +2381,57 @@ export function buildWorkerSandboxScript(): string {
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
-const WORKER_MEDIA_DIR = "/home/vercel-sandbox/.openclaw/generated/worker";
+const WORKER_MEDIA_DIR = "/workspace/openclaw-generated/worker";
 
 function sanitizeMediaName(value) {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact";
 }
 
+function inferMimeTypeFromFilename(filename) {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".aac")) return "audio/aac";
+  if (lower.endsWith(".flac")) return "audio/flac";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mkv")) return "video/x-matroska";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
+}
+
 async function materializeCapturedFiles(task, capturedFiles) {
   if (!capturedFiles || capturedFiles.length === 0) return [];
   try { await mkdir(WORKER_MEDIA_DIR, { recursive: true }); } catch { return []; }
-  const mediaLines = [];
+  const channelMedia = [];
   for (const [index, file] of capturedFiles.entries()) {
     const base = sanitizeMediaName(path.basename(file.path));
     const filename = sanitizeMediaName(task) + "-" + (index + 1) + "-" + base;
     const outputPath = path.join(WORKER_MEDIA_DIR, filename);
     try {
       await writeFile(outputPath, Buffer.from(file.contentBase64, "base64"));
-      mediaLines.push("MEDIA: " + filename);
+      channelMedia.push({
+        sourcePath: file.path,
+        path: outputPath,
+        filename,
+        mimeType: inferMimeTypeFromFilename(filename),
+      });
     } catch { /* skip unwritable artifact */ }
   }
-  return mediaLines;
+  return channelMedia;
 }
 
 const requestPath = process.argv[2];
+const jsonOnly = process.argv.includes("--json-only");
 if (!requestPath) {
-  console.error("Usage: execute.mjs <request-json-path>");
+  console.error("Usage: execute.mjs <request-json-path> [--json-only]");
   process.exit(1);
 }
 
@@ -2421,20 +2469,25 @@ if (!response.ok) {
 }
 
 const parsed = JSON.parse(text);
-const mediaLines = await materializeCapturedFiles(parsed.task, parsed.capturedFiles);
-if (parsed.stdout?.trim()) {
-  console.log(parsed.stdout.trim());
-}
-for (const line of mediaLines) {
-  console.log(line);
-}
-console.log(JSON.stringify({
+const channelMedia = await materializeCapturedFiles(parsed.task, parsed.capturedFiles);
+const output = {
   ok: parsed.ok,
   task: parsed.task,
   exitCode: parsed.exitCode,
+  stdout: parsed.stdout,
   stderr: parsed.stderr,
+  channelMedia,
   capturedFiles: (parsed.capturedFiles ?? []).map((f) => ({ path: f.path })),
-}, null, 2));
+};
+if (!jsonOnly) {
+  if (parsed.stdout?.trim()) {
+    console.log(parsed.stdout.trim());
+  }
+  for (const media of channelMedia) {
+    console.log("MEDIA: " + media.path);
+  }
+}
+console.log(JSON.stringify(output, null, 2));
 `;
 }
 
@@ -2447,8 +2500,9 @@ description: Fan out multiple bounded jobs into fresh Vercel Sandboxes and colle
 Use this when you need to run multiple isolated tasks in parallel — each in its own fresh sandbox.
 
 1. Write a JSON request file that matches WorkerSandboxBatchExecuteRequest.
-2. Run: \`node ${OPENCLAW_WORKER_SANDBOX_BATCH_SCRIPT_PATH} /path/to/request.json\`
+2. Run: \`node ${OPENCLAW_WORKER_SANDBOX_BATCH_SCRIPT_PATH} /path/to/request.json --json-only\`
 3. Parse the JSON response from stdout.
+4. For channel replies, iterate over every \`results[].result.channelMedia[].path\` and send each artifact with \`message send --media\`.
 
 ### WorkerSandboxBatchExecuteRequest shape
 
@@ -2495,11 +2549,18 @@ Use this when you need to run multiple isolated tasks in parallel — each in it
       "result": {
         "ok": true,
         "task": "summarize-doc-1",
-        "sandboxId": "sbx_123",
         "exitCode": 0,
         "stdout": "",
         "stderr": "",
-        "capturedFiles": [{ "path": "/workspace/output.txt", "contentBase64": "<base64>" }]
+        "channelMedia": [
+          {
+            "sourcePath": "/workspace/output.txt",
+            "path": "/workspace/openclaw-generated/worker/doc-1-summarize-doc-1-1-output.txt",
+            "filename": "doc-1-summarize-doc-1-1-output.txt",
+            "mimeType": "application/octet-stream"
+          }
+        ],
+        "capturedFiles": [{ "path": "/workspace/output.txt" }]
       }
     }
   ]
@@ -2523,31 +2584,57 @@ export function buildWorkerSandboxBatchScript(): string {
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
-const WORKER_MEDIA_DIR = "/home/vercel-sandbox/.openclaw/generated/worker";
+const WORKER_MEDIA_DIR = "/workspace/openclaw-generated/worker";
 
 function sanitizeMediaName(value) {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact";
 }
 
+function inferMimeTypeFromFilename(filename) {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".aac")) return "audio/aac";
+  if (lower.endsWith(".flac")) return "audio/flac";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mkv")) return "video/x-matroska";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
+}
+
 async function materializeCapturedFiles(task, capturedFiles) {
   if (!capturedFiles || capturedFiles.length === 0) return [];
   try { await mkdir(WORKER_MEDIA_DIR, { recursive: true }); } catch { return []; }
-  const mediaLines = [];
+  const channelMedia = [];
   for (const [index, file] of capturedFiles.entries()) {
     const base = sanitizeMediaName(path.basename(file.path));
     const filename = sanitizeMediaName(task) + "-" + (index + 1) + "-" + base;
     const outputPath = path.join(WORKER_MEDIA_DIR, filename);
     try {
       await writeFile(outputPath, Buffer.from(file.contentBase64, "base64"));
-      mediaLines.push("MEDIA: " + filename);
+      channelMedia.push({
+        sourcePath: file.path,
+        path: outputPath,
+        filename,
+        mimeType: inferMimeTypeFromFilename(filename),
+      });
     } catch { /* skip unwritable artifact */ }
   }
-  return mediaLines;
+  return channelMedia;
 }
 
 const requestPath = process.argv[2];
+const jsonOnly = process.argv.includes("--json-only");
 if (!requestPath) {
-  console.error("Usage: execute-batch.mjs <request-json-path>");
+  console.error("Usage: execute-batch.mjs <request-json-path> [--json-only]");
   process.exit(1);
 }
 
@@ -2585,22 +2672,18 @@ if (!response.ok) {
 }
 
 const parsed = JSON.parse(text);
+const results = [];
 for (const entry of parsed.results ?? []) {
-  const mediaLines = await materializeCapturedFiles(
+  const channelMedia = await materializeCapturedFiles(
     entry.id + "-" + entry.result.task,
     entry.result.capturedFiles,
   );
-  for (const line of mediaLines) {
-    console.log(line);
+  if (!jsonOnly) {
+    for (const media of channelMedia) {
+      console.log("MEDIA: " + media.path);
+    }
   }
-}
-console.log(JSON.stringify({
-  ok: parsed.ok,
-  task: parsed.task,
-  totalJobs: parsed.totalJobs,
-  succeeded: parsed.succeeded,
-  failed: parsed.failed,
-  results: (parsed.results ?? []).map((entry) => ({
+  results.push({
     id: entry.id,
     result: {
       ok: entry.result.ok,
@@ -2608,9 +2691,18 @@ console.log(JSON.stringify({
       exitCode: entry.result.exitCode,
       stdout: entry.result.stdout,
       stderr: entry.result.stderr,
+      channelMedia,
       capturedFiles: (entry.result.capturedFiles ?? []).map((f) => ({ path: f.path })),
     },
-  })),
+  });
+}
+console.log(JSON.stringify({
+  ok: parsed.ok,
+  task: parsed.task,
+  totalJobs: parsed.totalJobs,
+  succeeded: parsed.succeeded,
+  failed: parsed.failed,
+  results,
 }, null, 2));
 `;
 }

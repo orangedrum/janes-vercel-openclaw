@@ -64,10 +64,10 @@ test("worker-sandbox-batch script exits non-zero on missing argument", () => {
   assert.match(script, /process\.exit\(1\)/);
 });
 
-test("worker-sandbox-batch script materializes captured files into the worker media directory", () => {
+test("worker-sandbox-batch script materializes captured files into the canonical worker media directory", () => {
   const script = buildWorkerSandboxBatchScript();
 
-  assert.match(script, /\/home\/vercel-sandbox\/\.openclaw\/generated\/worker/);
+  assert.match(script, /\/workspace\/openclaw-generated\/worker/);
   assert.match(script, /writeFile\(/);
   assert.match(script, /mkdir\(/);
   assert.match(script, /materializeCapturedFiles/);
@@ -79,6 +79,20 @@ test("worker-sandbox-batch script emits MEDIA: lines per captured artifact acros
   assert.match(script, /MEDIA: /);
   assert.match(script, /for \(const entry of parsed\.results/);
   assert.match(script, /entry\.result\.capturedFiles/);
+});
+
+test("worker-sandbox-batch script returns channelMedia in structured output", () => {
+  const script = buildWorkerSandboxBatchScript();
+
+  assert.match(script, /channelMedia/);
+  assert.match(script, /inferMimeTypeFromFilename/);
+});
+
+test("worker-sandbox-batch script supports --json-only flag", () => {
+  const script = buildWorkerSandboxBatchScript();
+
+  assert.match(script, /--json-only/);
+  assert.match(script, /jsonOnly/);
 });
 
 test("worker-sandbox-batch script preserves job ids in JSON summary", () => {
@@ -104,7 +118,7 @@ test("worker-sandbox-batch script does not print raw contentBase64 to model-visi
   // Path-only capturedFiles in summary
   assert.match(script, /\.map\(\(f\) => \(\{ path: f\.path \}\)\)/);
   // Uses JSON.stringify for the cleaned summary
-  assert.match(script, /JSON\.stringify\(\{/);
+  assert.match(script, /JSON\.stringify\(/);
   // Raw `console.log(text)` should NOT appear
   assert.doesNotMatch(script, /console\.log\(text\)/);
 });

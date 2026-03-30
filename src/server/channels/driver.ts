@@ -628,6 +628,7 @@ export const SANDBOX_CANDIDATE_DIRS = [
   `${SANDBOX_HOME_DIR}/Downloads`,
   `${SANDBOX_HOME_DIR}/.openclaw`,
   `${SANDBOX_HOME_DIR}/.openclaw/generated/worker`,
+  "/workspace/openclaw-generated/worker",
   "/tmp",
 ];
 
