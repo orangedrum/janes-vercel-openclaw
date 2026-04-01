@@ -41,6 +41,7 @@ import {
 } from "@/server/observability/operation-context";
 import {
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
+  OPENCLAW_BIN,
   OPENCLAW_CONFIG_PATH,
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
