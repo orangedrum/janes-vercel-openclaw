@@ -272,11 +272,15 @@ export function requiresDurableStore(): boolean {
  *
  * Resolution order:
  * 1. `OPENCLAW_PACKAGE_SPEC` env var (e.g. "openclaw@1.2.3", "openclaw@latest")
- * 2. Falls back to "openclaw@latest" when unset (all environments).
+ * 2. Falls back to a known-good pinned version when unset (all environments).
  *
- * On Vercel deployments the fallback is logged as a warning because it
- * produces non-deterministic sandbox restores.
+ * The fallback is pinned rather than "openclaw@latest" because upstream
+ * releases can ship broken dependencies (e.g. 2026.3.31 — see
+ * openclaw/openclaw#59081).  On Vercel deployments the fallback is also
+ * logged as a warning because it may drift from the intended version.
  */
+const OPENCLAW_DEFAULT_PACKAGE_SPEC = "openclaw@2026.3.28";
+
 export function getOpenclawPackageSpec(): string {
   const explicit = process.env.OPENCLAW_PACKAGE_SPEC?.trim();
   if (explicit) {
@@ -284,11 +288,11 @@ export function getOpenclawPackageSpec(): string {
   }
   if (isVercelDeployment()) {
     logWarn("env.openclaw_package_spec_fallback", {
-      resolved: "openclaw@latest",
+      resolved: OPENCLAW_DEFAULT_PACKAGE_SPEC,
       reason: "OPENCLAW_PACKAGE_SPEC is not set on a Vercel deployment",
     });
   }
-  return "openclaw@latest";
+  return OPENCLAW_DEFAULT_PACKAGE_SPEC;
 }
 
 export async function getAiGatewayAuthMode(): Promise<"oidc" | "api-key" | "unavailable"> {

@@ -174,16 +174,16 @@ export function SnapshotsPanel({
 
       <dl className="metrics-grid snapshots-summary">
         <div>
-          <dt>Restore point</dt>
-          <dd>{status.snapshotId ?? "none"}</dd>
+          <dt>OpenClaw</dt>
+          <dd>{status.openclawVersion ?? "unknown"}</dd>
         </div>
         <div>
-          <dt>History</dt>
-          <dd>{loading ? "\u2026" : snapshots.length}</dd>
-        </div>
-        <div>
-          <dt>SDK version</dt>
+          <dt>SDK</dt>
           <dd>{status.sandboxSdkVersion ?? "unknown"}</dd>
+        </div>
+        <div>
+          <dt>Snapshots</dt>
+          <dd>{loading ? "\u2026" : snapshots.length}</dd>
         </div>
       </dl>
 

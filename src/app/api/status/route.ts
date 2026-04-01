@@ -126,6 +126,7 @@ export async function GET(request: Request): Promise<Response> {
       storeBackend: getStore().name,
       persistentStore: getStore().name !== "memory",
       sandboxSdkVersion,
+      openclawVersion: responseMeta.openclawVersion,
       status: responseMeta.status,
       sandboxId: responseMeta.sandboxId,
       snapshotId: responseMeta.snapshotId,

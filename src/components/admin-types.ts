@@ -67,6 +67,7 @@ export type StatusPayload = {
   storeBackend: string;
   persistentStore: boolean;
   sandboxSdkVersion?: string | null;
+  openclawVersion?: string | null;
   status: string;
   sandboxId: string | null;
   snapshotId: string | null;
