@@ -179,12 +179,17 @@ const realController: SandboxController = {
       const sandbox = await SandboxClass.create(params as Parameters<typeof SandboxClass.create>[0]);
       return wrapSandbox(sandbox);
     } catch (err) {
-      // v2 beta: 409 means a persistent sandbox with this name already exists.
+      // v2 beta: 400/409 when a persistent sandbox with this name exists.
       // Fall back to get() which auto-resumes stopped persistent sandboxes.
-      const is409 =
-        (err as { response?: { status?: number } }).response?.status === 409 ||
-        (err as { json?: { error?: { code?: string } } }).json?.error?.code === "conflict";
-      if (is409 && params.name) {
+      const httpStatus = (err as { response?: { status?: number } }).response?.status;
+      const errCode = (err as { json?: { error?: { code?: string } } }).json?.error?.code;
+      const errMsg = (err as { json?: { error?: { message?: string } } }).json?.error?.message ?? "";
+      const isNameConflict =
+        httpStatus === 409 ||
+        httpStatus === 400 ||
+        errCode === "conflict" ||
+        errMsg.includes("already");
+      if (isNameConflict && params.name) {
         const sandbox = await SandboxClass.get({ name: params.name });
         return wrapSandbox(sandbox);
       }
