@@ -447,7 +447,25 @@ export async function setupOpenClaw(
     stdout: progress?.makeWritable("stdout"),
     stderr: progress?.makeWritable("stderr"),
   });
+
+  const startupStdout = (await startupResult.output("stdout")).trim();
+  const startupStderr = (await startupResult.output("stderr")).trim();
+  logInfo("openclaw.setup.startup_script_result", {
+    sandboxId: sandbox.sandboxId,
+    exitCode: startupResult.exitCode,
+    stdoutHead: startupStdout.slice(0, 500),
+    stderrHead: startupStderr.slice(0, 500),
+  });
+  progress?.appendLine("system", `Startup script exit=${startupResult.exitCode}`);
   await assertCommandSuccess("bash startup-script", startupResult);
+
+  // Quick process check for debugging gateway launch issues.
+  try {
+    const psResult = await sandbox.runCommand("bash", ["-c", "ps aux | grep openclaw || true"]);
+    const psOut = (await psResult.output("stdout")).trim();
+    logInfo("openclaw.setup.process_check", { sandboxId: sandbox.sandboxId, psOutput: psOut.slice(0, 500) });
+    progress?.appendLine("system", `Process check: ${psOut.split("\n").filter(l => !l.includes("grep")).join("; ").slice(0, 200)}`);
+  } catch { /* best effort */ }
 
   progress?.setPhase("waiting-for-gateway", "Waiting for OpenClaw to respond");
   await waitForGatewayReady(sandbox);

@@ -126,12 +126,21 @@ function buildGatewayEnvShell(): string {
 
 /** Shell fragment that kills any existing gateway and starts a fresh one.
  *  Uses the shell variables exported by buildGatewayEnvShell() so the
- *  conditional API-key logic is honoured. */
-function buildGatewayLaunchShell(): string {
+ *  conditional API-key logic is honoured.
+ *
+ *  Kill uses ps/grep/kill instead of pkill because pkill returns exit 255
+ *  on the v2 sandbox API, which breaks scripts under set -euo pipefail
+ *  even with `|| true`. */
+function buildGatewayKillShell(): string {
   return [
-    'pkill -f "openclaw.gateway" || true',
-    `setsid ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &`,
+    '_gw_pids="$(ps aux | grep \'[o]penclaw.gateway\' | awk \'{print $2}\' || true)"',
+    'if [ -n "$_gw_pids" ]; then kill $_gw_pids 2>/dev/null; sleep 1; fi',
+    'true',
   ].join("\n");
+}
+
+function buildGatewayLaunchShell(): string {
+  return `setsid ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &`;
 }
 
 /**
@@ -143,6 +152,7 @@ export function buildGatewayRestartScript(): string {
   return `#!/bin/bash
 set -euo pipefail
 ${buildGatewayEnvShell()}
+${buildGatewayKillShell()}
 ${buildGatewayLaunchShell()}
 `;
 }
@@ -469,6 +479,7 @@ set -euo pipefail
 mkdir -p "${OPENCLAW_STATE_DIR}/devices"
 rm -f "${OPENCLAW_STATE_DIR}/devices/paired.json" "${OPENCLAW_STATE_DIR}/devices/pending.json"
 ${buildGatewayEnvShell()}
+${buildGatewayKillShell()}
 ${buildGatewayLaunchShell()}
 _learning_log=/tmp/shell-commands-for-learning.log
 touch "$_learning_log"

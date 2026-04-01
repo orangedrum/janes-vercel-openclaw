@@ -70,14 +70,15 @@ test("setupOpenClaw executes commands in correct order", async () => {
     const cmds = handle.commands.map((c) => c.cmd);
 
     // npm install → sh (bun install) → bash (npm cache cleanup) → (writeFiles)
-    // → openclaw --version → bash startup → curl (gateway probe) → node (force-pair)
+    // → openclaw --version → bash startup → bash (ps check) → curl (gateway probe) → node (force-pair)
     assert.equal(cmds[0], "npm", "first command should be npm install");
     assert.equal(cmds[1], "sh", "second command should be bun install");
     assert.equal(cmds[2], "bash", "third command should be npm cache cleanup");
     assert.equal(cmds[3], OPENCLAW_BIN, "fourth command should be version check");
     assert.equal(cmds[4], "bash", "fifth command should be startup script");
-    assert.equal(cmds[5], "curl", "sixth command should be gateway probe");
-    assert.equal(cmds[6], "node", "seventh command should be force-pair");
+    assert.equal(cmds[5], "bash", "sixth command should be process check");
+    assert.equal(cmds[6], "curl", "seventh command should be gateway probe");
+    assert.equal(cmds[7], "node", "eighth command should be force-pair");
 
     // Verify npm install uses the resolved package spec (openclaw@latest in non-Vercel env)
     assert.deepEqual(handle.commands[0].args, [
@@ -101,7 +102,7 @@ test("setupOpenClaw executes commands in correct order", async () => {
     assert.deepEqual(handle.commands[4].args, [OPENCLAW_STARTUP_SCRIPT_PATH]);
 
     // Verify force-pair invocation
-    assert.deepEqual(handle.commands[6].args, [
+    assert.deepEqual(handle.commands[7].args, [
       OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
       OPENCLAW_STATE_DIR,
     ]);
