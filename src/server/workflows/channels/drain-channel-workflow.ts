@@ -9,6 +9,8 @@ import { deleteMessage, editMessageText } from "@/server/channels/telegram/bot-a
 import { deleteMessage as deleteWhatsAppMessage } from "@/server/channels/whatsapp/whatsapp-api";
 import { logInfo, logWarn } from "@/server/log";
 import { getInitializedMeta } from "@/server/store/store";
+import { getStore } from "@/server/store/store";
+import { channelForwardDiagnosticKey } from "@/server/store/keyspace";
 
 export type RetryingForwardResult = {
   ok: boolean;
@@ -71,6 +73,17 @@ export async function processChannelStep(
 
   const receivedAtMs = options?.receivedAtMs ?? null;
   const workflowStartedAt = Date.now();
+  // Diagnostic trace — every phase appends here, written to store at the end.
+  const diag: Record<string, unknown> = {
+    channel,
+    requestId,
+    bootMessageId: bootMessageId ?? null,
+    receivedAtMs,
+    workflowStartedAt,
+  };
+
+  console.log(`[DIAG] processChannelStep START channel=${channel} requestId=${requestId} bootMessageId=${bootMessageId ?? "none"}`);
+
   const resolvedDependencies =
     options?.dependencies ?? (await loadDrainChannelWorkflowDependencies());
   const {
@@ -93,19 +106,12 @@ export async function processChannelStep(
     }
   }
 
-  // Build a BootMessageHandle for the message already sent from the webhook
-  // route, so runWithBootMessages edits it in-place instead of creating a
-  // second message.
   const existingBootHandle = await buildExistingBootHandle(channel, payload, bootMessageId);
+  diag.hasExistingBootHandle = Boolean(existingBootHandle);
 
   try {
-    // --- Phase 1: Wake the sandbox with boot message updates ---
-    // Use runWithBootMessages to poll sandbox status and progressively
-    // update the boot message ("🦞 Restoring…" → "🦞 Starting gateway…" → etc.)
-    // runWithBootMessages needs an adapter for the boot message handle.
-    // We only need the existing boot handle (already built above).
-    // Use a minimal adapter shim — the real message extraction is not needed
-    // since we forward the raw payload to the native handler.
+    // --- Phase 1: Wake the sandbox ---
+    console.log(`[DIAG] Phase 1: runWithBootMessages starting`);
     const bootResult = await runWithBootMessages({
       channel: channel as ChannelName,
       adapter: buildMinimalBootAdapter(),
@@ -116,13 +122,13 @@ export async function processChannelStep(
       existingBootHandle,
     });
 
-    // Use the metadata from runWithBootMessages directly.  Do NOT call
-    // ensureSandboxReady() again — its public gateway probe
-    // (probeGatewayReady → fetch to external sandbox URL) consistently
-    // fails from the Workflow step runtime context, causing a 120-second
-    // timeout even though the sandbox is running and the native handler
-    // is listening.  forwardToNativeHandlerWithRetry handles its own
-    // retries on proxy-level errors (502/503/504).
+    diag.bootResultStatus = bootResult.meta.status;
+    diag.bootResultSandboxId = bootResult.meta.sandboxId;
+    diag.bootMessageSent = bootResult.bootMessageSent;
+    diag.bootCompletedAt = Date.now();
+    diag.bootDurationMs = Date.now() - workflowStartedAt;
+    console.log(`[DIAG] Phase 1 DONE: status=${bootResult.meta.status} sandboxId=${bootResult.meta.sandboxId} bootMessageSent=${bootResult.bootMessageSent} durationMs=${diag.bootDurationMs}`);
+
     const readyMeta = bootResult.meta.status === "running"
       ? bootResult.meta
       : await ensureSandboxReady({
@@ -132,6 +138,14 @@ export async function processChannelStep(
         });
 
     const sandboxReadyAt = Date.now();
+    diag.readyMetaStatus = readyMeta.status;
+    diag.readyMetaSandboxId = readyMeta.sandboxId;
+    diag.readyMetaPortUrlKeys = readyMeta.portUrls ? Object.keys(readyMeta.portUrls) : null;
+    diag.readyMetaPortUrls = readyMeta.portUrls;
+    diag.readyMetaHasWebhookSecret = Boolean(readyMeta.channels?.telegram?.webhookSecret);
+    diag.usedBootMetaDirectly = bootResult.meta.status === "running";
+    diag.sandboxReadyAt = sandboxReadyAt;
+    console.log(`[DIAG] Sandbox ready: status=${readyMeta.status} sandboxId=${readyMeta.sandboxId} portUrls=${JSON.stringify(readyMeta.portUrls)} hasWebhookSecret=${diag.readyMetaHasWebhookSecret} usedBootMeta=${diag.usedBootMetaDirectly}`);
 
     logInfo("channels.workflow_sandbox_ready", {
       channel,
@@ -142,15 +156,11 @@ export async function processChannelStep(
     });
 
     // --- Phase 2: Forward raw payload to native handler ---
-    // For Telegram, the native handler on port 8787 may not be ready yet.
-    // Instead of a separate synthetic probe + forward, we collapse both into
-    // a single retrying forward that sends the real payload directly.
-    // Retries only on proxy-level errors (502/503/504) and fetch exceptions.
-    // Non-Telegram channels use the direct (non-retrying) forward path.
     let forwardResult: { ok: boolean; status: number };
     let retryingResult: RetryingForwardResult | null = null;
 
     const forwardStartedAt = Date.now();
+    console.log(`[DIAG] Phase 2: forwarding to native handler channel=${channel}`);
 
     if (channel === "telegram") {
       retryingResult = await forwardToNativeHandlerWithRetry(
@@ -170,6 +180,13 @@ export async function processChannelStep(
     }
 
     const forwardCompletedAt = Date.now();
+    diag.forwardOk = forwardResult.ok;
+    diag.forwardStatus = forwardResult.status;
+    diag.forwardDurationMs = forwardCompletedAt - forwardStartedAt;
+    diag.forwardAttempts = retryingResult?.attempts ?? null;
+    diag.forwardRetries = retryingResult?.retries ?? null;
+    diag.forwardTotalMs = retryingResult?.totalMs ?? null;
+    console.log(`[DIAG] Phase 2 DONE: ok=${forwardResult.ok} status=${forwardResult.status} attempts=${retryingResult?.attempts ?? 1} retries=${JSON.stringify(retryingResult?.retries ?? [])} durationMs=${diag.forwardDurationMs}`);
 
     logInfo("channels.workflow_native_forward_result", {
       channel,
@@ -217,12 +234,33 @@ export async function processChannelStep(
       await existingBootHandle.clear().catch(() => {});
     }
 
+    diag.outcome = forwardResult.ok ? "success" : `failed:${forwardResult.status}`;
+    diag.completedAt = Date.now();
+    diag.totalDurationMs = Date.now() - workflowStartedAt;
+    console.log(`[DIAG] processChannelStep END outcome=${diag.outcome} totalMs=${diag.totalDurationMs}`);
+
+    // Write diagnostic trace to store for admin retrieval
+    try {
+      await getStore().setValue(channelForwardDiagnosticKey(), diag, 3600);
+    } catch { /* best effort */ }
+
     if (!forwardResult.ok) {
       throw new Error(
         `native_forward_failed status=${forwardResult.status}`,
       );
     }
   } catch (error) {
+    diag.outcome = "error";
+    diag.error = error instanceof Error ? error.message : String(error);
+    diag.completedAt = Date.now();
+    diag.totalDurationMs = Date.now() - workflowStartedAt;
+    console.log(`[DIAG] processChannelStep ERROR: ${diag.error} totalMs=${diag.totalDurationMs}`);
+
+    // Write diagnostic trace to store even on failure
+    try {
+      await getStore().setValue(channelForwardDiagnosticKey(), diag, 3600);
+    } catch { /* best effort */ }
+
     throw toWorkflowProcessingError(channel, error, resolvedDependencies);
   }
 }
@@ -284,12 +322,7 @@ async function forwardToNativeHandler(
       throw new Error(`unsupported_native_forward_channel:${channel}`);
   }
 
-  logInfo("channels.native_forward_attempt", {
-    channel,
-    forwardUrl,
-    sandboxId: meta.sandboxId,
-    hasWebhookSecret: channel === "telegram" ? Boolean(headers["x-telegram-bot-api-secret-token"]) : undefined,
-  });
+  console.log(`[DIAG] native_forward_attempt url=${forwardUrl} channel=${channel} sandboxId=${meta.sandboxId} hasSecret=${Boolean(headers["x-telegram-bot-api-secret-token"])}`);
 
   const response = await fetch(forwardUrl, {
     method: "POST",
@@ -297,12 +330,13 @@ async function forwardToNativeHandler(
     body: JSON.stringify(payload),
   });
 
-  // Capture response body for diagnostics — native handler errors are
-  // otherwise invisible since we only returned status before.
+  // Always capture response body for diagnostics.
   let responseBody: string | null = null;
   try {
     responseBody = await response.text();
   } catch { /* best effort */ }
+
+  console.log(`[DIAG] native_forward_response status=${response.status} ok=${response.ok} bodyLength=${responseBody?.length ?? 0} body=${(responseBody ?? "").slice(0, 300)}`);
 
   if (!response.ok) {
     logWarn("channels.native_forward_error_response", {

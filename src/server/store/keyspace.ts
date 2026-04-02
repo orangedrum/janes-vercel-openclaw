@@ -101,3 +101,7 @@ export function watchdogReportKey(): string {
 export function launchVerifyReadinessKey(): string {
   return buildKey("launch-verify:channel-readiness");
 }
+
+export function channelForwardDiagnosticKey(): string {
+  return buildKey("diag:channel-forward-latest");
+}
