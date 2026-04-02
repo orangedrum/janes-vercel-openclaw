@@ -1,12 +1,12 @@
 {
   "version": 3,
-  "generatedAt": "2026-03-27T06:17:09.854Z",
+  "generatedAt": "2026-04-02T18:48:41.269Z",
   "roots": [
     "src/app/api/admin",
     "src/app/api/firewall",
     "src/app/api/debug"
   ],
-  "discoveredRouteCount": 40,
+  "discoveredRouteCount": 41,
   "unauthenticatedRouteCount": 0,
   "violationCount": 0,
   "routes": [
@@ -21,6 +21,10 @@
     {
       "method": "DELETE",
       "path": "/api/firewall/learned"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/channel-forward-diag"
     },
     {
       "method": "GET",

@@ -276,6 +276,13 @@ function buildMinimalBootAdapter() {
   return {
     extractMessage: async () => ({ kind: "skip" as const, reason: "native-forward" }),
     sendReply: async () => {},
+    // sendBootMessage MUST be present — without it, runWithBootMessages
+    // exits immediately when there's no existingBootHandle, skipping
+    // the entire sandbox-ready polling loop.
+    sendBootMessage: async () => ({
+      async update() {},
+      async clear() {},
+    }),
   };
 }
 
