@@ -8,7 +8,6 @@ import type {
 } from "@/components/admin-types";
 import type { LogEntry, LogLevel } from "@/shared/types";
 import { fetchAdminJsonCore, type ReadJsonDeps } from "@/components/admin-request-core";
-import { DOMAIN_PRESETS } from "@/shared/types";
 import {
   computeEventCategoryCounts,
   filterEventsByCategory,
@@ -529,22 +528,6 @@ export function FirewallPanel({
                 onChange={(event) => setDomainInput(event.target.value)}
               />
             </label>
-            <div className="preset-row">
-              <span className="field-label">Presets</span>
-              <div className="preset-chips">
-                {Object.entries(DOMAIN_PRESETS).map(([key, preset]) => (
-                  <button
-                    key={key}
-                    className="ssh-suggestion-chip"
-                    disabled={busy}
-                    onClick={() => void approveMultipleDomains(preset.domains)}
-                    title={preset.domains.join(", ")}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            </div>
 
             <div className="inline-actions">
               <button
