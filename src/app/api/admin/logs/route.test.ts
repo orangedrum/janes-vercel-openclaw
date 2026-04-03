@@ -321,6 +321,22 @@ test("GET /api/admin/logs: combines channel and opId filters", async () => {
   });
 });
 
+test("GET /api/admin/logs: filters by channel=whatsapp", async () => {
+  await withTestEnv(async () => {
+    logInfo("channels.delivery_success", { channel: "whatsapp", opId: "op_wa" });
+    logInfo("channels.delivery_success", { channel: "slack", opId: "op_sl" });
+
+    const route = getAdminLogsRoute();
+    const request = buildAuthGetRequest("/api/admin/logs?channel=whatsapp");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as { logs: Array<{ data?: { channel?: string } }> };
+    assert.equal(body.logs.length, 1);
+    assert.equal(body.logs[0]?.data?.channel, "whatsapp");
+  });
+});
+
 test("GET /api/admin/logs: ignores invalid channel param", async () => {
   await withTestEnv(async () => {
     logInfo("channels.wake_requested", { channel: "slack", opId: "op_1" });

@@ -220,6 +220,13 @@ export type FirewallReportPayload = {
   policyHash: string;
 };
 
+export type LiveConfigSyncPayload = {
+  outcome: "applied" | "skipped" | "degraded" | "failed";
+  reason: string | null;
+  liveConfigFresh: boolean;
+  operatorMessage: string | null;
+};
+
 export type ActionErrorCode =
   | "unauthorized"
   | "http-error"
@@ -231,6 +238,7 @@ export type ActionSuccessMeta = {
   label: string;
   status: number | null;
   refreshed: boolean;
+  liveConfigSync?: LiveConfigSyncPayload;
 };
 
 export type ActionErrorMeta = {
@@ -278,6 +286,27 @@ export type AdminActionEvent =
       code: ActionErrorCode;
       error: string;
       retryable: boolean;
+    }
+  | {
+      event: "admin.action.live-config-warning";
+      source: "admin-shell";
+      ts: string;
+      requestId: string;
+      action: string;
+      label: string;
+      status: number | null;
+      outcome: string;
+      reason: string | null;
+    }
+  | {
+      event: "admin.read.error";
+      source: "admin-shell";
+      ts: string;
+      requestId: string;
+      action: string;
+      status: number | null;
+      code: "unauthorized" | "http-error" | "network-error";
+      error: string;
     };
 
 export type RunAction = (

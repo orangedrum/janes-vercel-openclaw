@@ -1,4 +1,10 @@
-export type ChannelName = "slack" | "telegram" | "discord" | "whatsapp";
+export const CHANNEL_NAMES = ["slack", "telegram", "discord", "whatsapp"] as const;
+
+export type ChannelName = (typeof CHANNEL_NAMES)[number];
+
+export function isChannelName(value: string): value is ChannelName {
+  return (CHANNEL_NAMES as readonly string[]).includes(value);
+}
 
 export type ChannelMode = "webhook-proxied" | "gateway-native";
 

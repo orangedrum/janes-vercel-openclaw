@@ -23,7 +23,9 @@ import type {
   StatusPayload,
   ActionResult,
   AdminActionEvent,
+  LiveConfigSyncPayload,
 } from "@/components/admin-types";
+import type { ReadJsonDeps } from "@/components/admin-request-core";
 
 // Verification stays inside the Channels surface.
 // Do not add a separate launch/verification tab or card.
@@ -72,6 +74,27 @@ export type RequestJsonDeps = {
   toastError: (message: string) => void;
   fetchFn?: typeof fetch;
 };
+
+function extractLiveConfigSync(
+  payload: unknown,
+): LiveConfigSyncPayload | null {
+  if (
+    payload != null &&
+    typeof payload === "object" &&
+    "liveConfigSync" in payload
+  ) {
+    const sync = (payload as Record<string, unknown>).liveConfigSync;
+    if (
+      sync != null &&
+      typeof sync === "object" &&
+      "outcome" in sync &&
+      typeof (sync as Record<string, unknown>).outcome === "string"
+    ) {
+      return sync as LiveConfigSyncPayload;
+    }
+  }
+  return null;
+}
 
 export async function requestJsonCore<T>(
   action: string,
@@ -164,9 +187,14 @@ export async function requestJsonCore<T>(
 
     const payload = (await response.json().catch(() => null)) as T | null;
 
-    // Detect degraded/failed live config sync from response headers
-    const syncOutcome = response.headers.get(LIVE_CONFIG_SYNC_OUTCOME_HEADER);
-    const syncMessage = response.headers.get(LIVE_CONFIG_SYNC_MESSAGE_HEADER);
+    // Detect degraded/failed live config sync from response body or headers
+    const bodySync = extractLiveConfigSync(payload);
+    const headerOutcome = response.headers.get(LIVE_CONFIG_SYNC_OUTCOME_HEADER);
+    const headerMessage = response.headers.get(LIVE_CONFIG_SYNC_MESSAGE_HEADER);
+
+    // Prefer structured body payload; fall back to headers for backward compat
+    const syncOutcome = bodySync?.outcome ?? headerOutcome;
+    const syncMessage = bodySync?.operatorMessage ?? headerMessage;
     const hasSyncWarning = syncOutcome === "degraded" || syncOutcome === "failed";
 
     if (refreshAfter || hasSyncWarning) {
@@ -181,14 +209,26 @@ export async function requestJsonCore<T>(
         label: input.label,
         status: response.status,
         refreshed: refreshAfter || hasSyncWarning,
+        liveConfigSync: bodySync ?? undefined,
       },
     };
     emitAdminActionEvent({
       event: "admin.action.success",
       ...result.meta,
     });
-    if (hasSyncWarning && syncMessage) {
-      deps.toastError(syncMessage);
+    if (hasSyncWarning) {
+      emitAdminActionEvent({
+        event: "admin.action.live-config-warning",
+        requestId,
+        action,
+        label: input.label,
+        status: response.status,
+        outcome: syncOutcome!,
+        reason: bodySync?.reason ?? null,
+      });
+      if (syncMessage) {
+        deps.toastError(syncMessage);
+      }
     } else {
       deps.toastSuccess(input.successMessage ?? input.label);
     }
@@ -451,6 +491,11 @@ export function AdminShell({
 
   const busy = pendingAction !== null;
 
+  const readDeps: ReadJsonDeps = {
+    setStatus: () => setStatus(null),
+    toastError: (msg) => toast.error(msg),
+  };
+
   return (
     <main className="shell">
       <section className="hero-card">
@@ -491,6 +536,7 @@ export function AdminShell({
                     busy={busy}
                     requestJson={requestJson}
                     refresh={refreshPassive}
+                    readDeps={readDeps}
                   />
                 </section>
               )}
@@ -517,7 +563,7 @@ export function AdminShell({
               )}
               {isMounted("logs") && (
                 <section {...getPanelProps("logs")}>
-                  <LogsPanel active={activeTab === "logs"} status={status} />
+                  <LogsPanel active={activeTab === "logs"} status={status} readDeps={readDeps} />
                 </section>
               )}
               {isMounted("snapshots") && (
@@ -528,6 +574,7 @@ export function AdminShell({
                     busy={busy}
                     runAction={runAction}
                     requestJson={requestJson}
+                    readDeps={readDeps}
                   />
                 </section>
               )}

@@ -11,12 +11,8 @@ import {
   buildChannelConnectability,
   buildChannelConnectBlockedResponse,
 } from "@/server/channels/connectability";
+import { applyChannelConfigChange } from "@/server/channels/admin/apply-channel-config-change";
 import { getPublicChannelState } from "@/server/channels/state";
-import { logInfo, logWarn } from "@/server/log";
-import {
-  markRestoreTargetDirty,
-  syncGatewayConfigToSandbox,
-} from "@/server/sandbox/lifecycle";
 import { getInitializedMeta } from "@/server/store/store";
 
 type RouteAuth = Exclude<Awaited<ReturnType<typeof requireJsonRouteAuth>>, Response>;
@@ -99,45 +95,15 @@ export function createChannelAdminRouteHandlers<TState>(
           return result;
         }
 
-        // Channel config changed — mark restore target dirty so operators
-        // know the next restore will not match the current snapshot image.
-        await markRestoreTargetDirty({ reason: "dynamic-config-changed" });
-
-        // Sync updated config to the running sandbox and restart the
-        // gateway so new HTTP routes (e.g. /slack/events) are registered.
-        let syncResult: LiveConfigSyncResult;
-        try {
-          syncResult = await syncGatewayConfigToSandbox();
-          logInfo("channels.admin_config_synced", {
-            channel: spec.channel,
-            operation: "put",
-            ...syncResult,
-          });
-        } catch (syncError) {
-          logWarn("channels.admin_config_sync_failed", {
-            channel: spec.channel,
-            operation: "put",
-            error: syncError instanceof Error ? syncError.message : String(syncError),
-          });
-          syncResult = {
-            outcome: "failed",
-            reason: syncError instanceof Error ? syncError.message : String(syncError),
-            liveConfigFresh: false,
-            operatorMessage: "Config sync failed. The sandbox may be serving stale configuration.",
-          };
-        }
-
-        if (syncResult.outcome === "degraded" || syncResult.outcome === "failed") {
-          logWarn("channels.admin_config_sync_degraded", {
-            channel: spec.channel,
-            operation: "put",
-            reason: syncResult.reason,
-          });
-        }
+        const { liveConfigSync } = await applyChannelConfigChange({
+          channel: spec.channel,
+          operation: "put",
+        });
 
         const nextState = spec.selectState(await getPublicChannelState(request));
-        const response = authJsonOk(nextState, auth);
-        return attachLiveConfigSyncHeaders(response, syncResult);
+        const body = { ...nextState, liveConfigSync: toLiveConfigSyncPayload(liveConfigSync) };
+        const response = authJsonOk(body, auth);
+        return attachLiveConfigSyncHeaders(response, liveConfigSync);
       } catch (error) {
         return authJsonError(error, auth);
       }
@@ -161,48 +127,35 @@ export function createChannelAdminRouteHandlers<TState>(
           return result;
         }
 
-        // Channel config removed — mark restore target dirty.
-        await markRestoreTargetDirty({ reason: "dynamic-config-changed" });
-
-        // Sync updated config to the running sandbox and restart the
-        // gateway so removed channel routes are cleaned up.
-        let syncResult: LiveConfigSyncResult;
-        try {
-          syncResult = await syncGatewayConfigToSandbox();
-          logInfo("channels.admin_config_synced", {
-            channel: spec.channel,
-            operation: "delete",
-            ...syncResult,
-          });
-        } catch (syncError) {
-          logWarn("channels.admin_config_sync_failed", {
-            channel: spec.channel,
-            operation: "delete",
-            error: syncError instanceof Error ? syncError.message : String(syncError),
-          });
-          syncResult = {
-            outcome: "failed",
-            reason: syncError instanceof Error ? syncError.message : String(syncError),
-            liveConfigFresh: false,
-            operatorMessage: "Config sync failed. The sandbox may be serving stale configuration.",
-          };
-        }
-
-        if (syncResult.outcome === "degraded" || syncResult.outcome === "failed") {
-          logWarn("channels.admin_config_sync_degraded", {
-            channel: spec.channel,
-            operation: "delete",
-            reason: syncResult.reason,
-          });
-        }
+        const { liveConfigSync } = await applyChannelConfigChange({
+          channel: spec.channel,
+          operation: "delete",
+        });
 
         const nextState = spec.selectState(await getPublicChannelState(request));
-        const response = authJsonOk(nextState, auth);
-        return attachLiveConfigSyncHeaders(response, syncResult);
+        const body = { ...nextState, liveConfigSync: toLiveConfigSyncPayload(liveConfigSync) };
+        const response = authJsonOk(body, auth);
+        return attachLiveConfigSyncHeaders(response, liveConfigSync);
       } catch (error) {
         return authJsonError(error, auth);
       }
     },
+  };
+}
+
+function toLiveConfigSyncPayload(
+  syncResult: LiveConfigSyncResult,
+): {
+  outcome: string;
+  reason: string | null;
+  liveConfigFresh: boolean;
+  operatorMessage: string | null;
+} {
+  return {
+    outcome: syncResult.outcome,
+    reason: syncResult.reason,
+    liveConfigFresh: syncResult.liveConfigFresh,
+    operatorMessage: syncResult.operatorMessage,
   };
 }
 

@@ -7,6 +7,7 @@ import type {
   FirewallReportPayload,
 } from "@/components/admin-types";
 import type { LogEntry, LogLevel } from "@/shared/types";
+import { fetchAdminJsonCore, type ReadJsonDeps } from "@/components/admin-request-core";
 import { DOMAIN_PRESETS } from "@/shared/types";
 import {
   computeEventCategoryCounts,
@@ -30,6 +31,7 @@ type FirewallPanelProps = {
   busy: boolean;
   requestJson: RequestJson;
   refresh: () => Promise<void>;
+  readDeps?: ReadJsonDeps;
 };
 
 export function FirewallPanel({
@@ -38,6 +40,7 @@ export function FirewallPanel({
   busy,
   requestJson,
   refresh,
+  readDeps,
 }: FirewallPanelProps) {
   const [domainInput, setDomainInput] = useState("");
   const [testDomain, setTestDomain] = useState("");
@@ -61,18 +64,25 @@ export function FirewallPanel({
 
   const fetchReport = useCallback(async () => {
     if (!active) return;
-    try {
-      const res = await fetch("/api/firewall/report", {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-      });
-      if (res.ok) {
-        setReport(await res.json() as FirewallReportPayload);
+    if (readDeps) {
+      const result = await fetchAdminJsonCore<FirewallReportPayload>("/api/firewall/report", readDeps);
+      if (result.ok) {
+        setReport(result.data);
       }
-    } catch {
-      // Best-effort — report is non-critical, panel falls back to status data
+    } else {
+      try {
+        const res = await fetch("/api/firewall/report", {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        });
+        if (res.ok) {
+          setReport(await res.json() as FirewallReportPayload);
+        }
+      } catch {
+        // Best-effort — report is non-critical, panel falls back to status data
+      }
     }
-  }, [active]);
+  }, [active, readDeps]);
 
   // Fetch report alongside status refreshes
   useEffect(() => {
@@ -89,20 +99,27 @@ export function FirewallPanel({
     if (!active) return;
     setLogsLoading(true);
     try {
-      const res = await fetch("/api/admin/logs?source=firewall", {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { logs: LogEntry[] };
-        setFirewallLogs(data.logs);
+      if (readDeps) {
+        const result = await fetchAdminJsonCore<{ logs: LogEntry[] }>("/api/admin/logs?source=firewall", readDeps);
+        if (result.ok) {
+          setFirewallLogs(result.data.logs);
+        }
+      } else {
+        const res = await fetch("/api/admin/logs?source=firewall", {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { logs: LogEntry[] };
+          setFirewallLogs(data.logs);
+        }
       }
     } catch {
       // Best-effort — logs are non-critical
     } finally {
       setLogsLoading(false);
     }
-  }, [active]);
+  }, [active, readDeps]);
 
   // Fetch firewall logs when section is opened and on each refresh cycle
   useEffect(() => {

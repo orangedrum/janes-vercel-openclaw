@@ -10,6 +10,7 @@ import {
 } from "@/server/log";
 import { getInitializedMeta } from "@/server/store/store";
 import { canReadSandboxLogs } from "@/shared/sandbox/log-visibility";
+import { isChannelName } from "@/shared/channels";
 
 const MAX_LOG_LINES = 200;
 const LOG_FILE_GLOB = "/tmp/openclaw/openclaw-*.log";
@@ -118,9 +119,7 @@ export async function GET(request: Request): Promise<Response> {
   const level = levelParam && isValidLevel(levelParam) ? levelParam : undefined;
   const source = sourceParam && isValidSource(sourceParam) ? sourceParam : undefined;
   const channel =
-    channelParam === "slack" || channelParam === "telegram" || channelParam === "discord"
-      ? channelParam
-      : undefined;
+    channelParam && isChannelName(channelParam) ? channelParam : undefined;
 
   const filters: LogFilters = {
     level,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import type { SnapshotRecord, SingleStatus } from "@/shared/types";
 import type { StatusPayload, RunAction, RequestJson } from "@/components/admin-types";
+import { fetchAdminJsonCore, type ReadJsonDeps } from "@/components/admin-request-core";
 
 /** How this snapshot was created (stored on each history row). */
 const REASON_LABELS: Record<string, string> = {
@@ -34,6 +35,7 @@ type SnapshotsPanelProps = {
   busy: boolean;
   runAction: RunAction;
   requestJson: RequestJson;
+  readDeps?: ReadJsonDeps;
 };
 
 export function SnapshotsPanel({
@@ -42,6 +44,7 @@ export function SnapshotsPanel({
   busy,
   runAction,
   requestJson,
+  readDeps,
 }: SnapshotsPanelProps) {
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,20 +66,27 @@ export function SnapshotsPanel({
     if (!active) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/snapshots", {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { snapshots: SnapshotRecord[] };
-        setSnapshots(data.snapshots);
+      if (readDeps) {
+        const result = await fetchAdminJsonCore<{ snapshots: SnapshotRecord[] }>("/api/admin/snapshots", readDeps);
+        if (result.ok) {
+          setSnapshots(result.data.snapshots);
+        }
+      } else {
+        const res = await fetch("/api/admin/snapshots", {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { snapshots: SnapshotRecord[] };
+          setSnapshots(data.snapshots);
+        }
       }
     } catch {
       // Best-effort
     } finally {
       setLoading(false);
     }
-  }, [active]);
+  }, [active, readDeps]);
 
   useEffect(() => {
     if (!active) return;

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import type {
   StatusPayload,
   RunAction,
   RequestJson,
   SlackTestPayload,
+  LiveConfigSyncPayload,
 } from "@/components/admin-types";
 import type { ChannelPillModel } from "@/components/panels/channel-panel-shared";
 import {
@@ -65,22 +66,30 @@ export function SlackPanel({
   const [editing, setEditing] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get("slack_install_error");
-    const installWarning = params.get("slack_install_warning");
-    if (err || installWarning) {
-      // Clean up the URL without triggering a reload
-      const clean = new URL(window.location.href);
-      clean.searchParams.delete("slack_install_error");
-      clean.searchParams.delete("slack_install_warning");
-      window.history.replaceState({}, "", clean.toString());
-      if (err) return getInstallErrorMessage(err);
-      return "Slack was installed, but the running sandbox did not restart cleanly. Live routes may be stale until the next restart.";
-    }
-    return null;
+    const err = new URLSearchParams(window.location.search).get("slack_install_error");
+    return err ? getInstallErrorMessage(err) : null;
+  });
+  const [liveConfigWarning, setLiveConfigWarning] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const w = new URLSearchParams(window.location.search).get("slack_install_warning");
+    return w
+      ? "Slack was installed, but the running sandbox did not restart cleanly. Live routes may be stale until the next restart."
+      : null;
   });
   const [copied, setCopied] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
+
+  // Clean OAuth callback query params from URL without triggering a reload.
+  // Reading params happens in useState initializers above (pure computation);
+  // the side effect (replaceState) lives here in useEffect.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("slack_install_error") && !params.has("slack_install_warning")) return;
+    const clean = new URL(window.location.href);
+    clean.searchParams.delete("slack_install_error");
+    clean.searchParams.delete("slack_install_warning");
+    window.history.replaceState({}, "", clean.toString());
+  }, []);
 
   const { confirm, dialogProps } = useConfirm();
   const sl = status.channels.slack;
@@ -119,17 +128,28 @@ export function SlackPanel({
   async function handleConnect(): Promise<void> {
     if (!signingSecret.trim() || !botToken.trim()) return;
     setPanelError(null);
-    const result = await requestJson("/api/channels/slack", {
-      label: getChannelActionLabel("slack", editing ? "update" : "connect"),
-      successMessage: editing ? "Slack credentials updated" : "Slack connected",
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        signingSecret: signingSecret.trim(),
-        botToken: botToken.trim(),
-      }),
-    });
+    setLiveConfigWarning(null);
+    const result = await requestJson<{ liveConfigSync?: LiveConfigSyncPayload }>(
+      "/api/channels/slack",
+      {
+        label: getChannelActionLabel("slack", editing ? "update" : "connect"),
+        successMessage: editing ? "Slack credentials updated" : "Slack connected",
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          signingSecret: signingSecret.trim(),
+          botToken: botToken.trim(),
+        }),
+      },
+    );
     if (result.ok) {
+      const sync = result.meta.liveConfigSync;
+      if (sync && (sync.outcome === "degraded" || sync.outcome === "failed")) {
+        setLiveConfigWarning(
+          sync.operatorMessage ??
+            "Credentials saved, but the running sandbox did not restart cleanly.",
+        );
+      }
       clearDrafts();
       setEditing(false);
     } else {
@@ -377,7 +397,7 @@ export function SlackPanel({
           : "Not configured"
       }
       pill={getSlackPill(sl.configured)}
-      errors={[panelError, sl.lastError]}
+      errors={[panelError, liveConfigWarning, sl.lastError]}
       connectability={sl.connectability}
       suppressedIds={preflightBlockerIds}
     >

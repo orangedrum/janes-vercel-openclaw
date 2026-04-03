@@ -223,7 +223,7 @@ test("DELETE handler calls spec.delete and returns updated state", async () => {
 // Live config sync headers: PUT and DELETE attach x-openclaw-live-config-sync-*
 // ---------------------------------------------------------------------------
 
-test("PUT handler attaches skipped live-config-sync header when sandbox not running", async () => {
+test("PUT handler attaches skipped live-config-sync header and body when sandbox not running", async () => {
   await withHarness(async () => {
     _setAiGatewayTokenOverrideForTesting("oidc-token");
     process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
@@ -258,10 +258,18 @@ test("PUT handler attaches skipped live-config-sync header when sandbox not runn
       null,
       "no message header for skipped outcome",
     );
+
+    // Verify liveConfigSync is in the response body
+    const body = result.json as { liveConfigSync: { outcome: string; reason: string; liveConfigFresh: boolean; operatorMessage: string | null } };
+    assert.ok(body.liveConfigSync, "response body must include liveConfigSync");
+    assert.equal(body.liveConfigSync.outcome, "skipped");
+    assert.equal(body.liveConfigSync.reason, "sandbox_not_running");
+    assert.equal(body.liveConfigSync.liveConfigFresh, false);
+    assert.equal(body.liveConfigSync.operatorMessage, null);
   });
 });
 
-test("DELETE handler attaches skipped live-config-sync header when sandbox not running", async () => {
+test("DELETE handler attaches skipped live-config-sync header and body when sandbox not running", async () => {
   await withHarness(async () => {
     _setAiGatewayTokenOverrideForTesting("oidc-token");
 
@@ -285,5 +293,11 @@ test("DELETE handler attaches skipped live-config-sync header when sandbox not r
       "skipped",
       "outcome header must be skipped when sandbox is not running",
     );
+
+    // Verify liveConfigSync is in the response body
+    const body = result.json as { liveConfigSync: { outcome: string; liveConfigFresh: boolean } };
+    assert.ok(body.liveConfigSync, "response body must include liveConfigSync");
+    assert.equal(body.liveConfigSync.outcome, "skipped");
+    assert.equal(body.liveConfigSync.liveConfigFresh, false);
   });
 });

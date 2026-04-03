@@ -161,6 +161,19 @@ describe("requestJsonCore", () => {
     assert.equal(result.error, "Failed to fetch");
   });
 
+  test("thrown fetch error toasts the network error message", async () => {
+    const errors: string[] = [];
+    await requestJsonCore("/api/test", {
+      label: "Network action",
+      method: "POST",
+    }, makeDeps({
+      fetchFn: throwingFetch(new Error("Failed to fetch")),
+      toastError: (message) => errors.push(message),
+    }));
+
+    assert.deepEqual(errors, ["Failed to fetch"]);
+  });
+
   test("successful request with refreshAfter: false produces meta.refreshed === false", async () => {
     let refreshCalled = false;
     const result = await requestJsonCore("/api/test", {
@@ -488,6 +501,100 @@ describe("requestJsonCore live-config-sync header detection", () => {
     assert.ok(result.ok);
     assert.equal(toasts.length, 1, "exactly one toast");
     assert.equal(toasts[0].type, "success");
+  });
+
+  test("degraded liveConfigSync in body is preserved on meta and emits live-config-warning event", async () => {
+    const { events, stop } = listenForAdminActionEvents();
+    try {
+      const syncPayload = {
+        outcome: "degraded",
+        reason: "config_written_restart_failed",
+        liveConfigFresh: false,
+        operatorMessage: "Sandbox did not restart cleanly.",
+      };
+      const result = await requestJsonCore("/api/channels/slack", {
+        label: "Save Slack",
+        successMessage: "Slack connected",
+        method: "PUT",
+      }, makeDeps({
+        fetchFn: mockFetchWithHeaders(200, { configured: true, liveConfigSync: syncPayload }, {
+          "x-openclaw-live-config-sync-outcome": "degraded",
+          "x-openclaw-live-config-sync-message": "Sandbox did not restart cleanly.",
+        }),
+      }));
+
+      assert.ok(result.ok);
+      assert.ok(result.ok && result.meta.liveConfigSync, "meta must include liveConfigSync");
+      if (result.ok && result.meta.liveConfigSync) {
+        assert.equal(result.meta.liveConfigSync.outcome, "degraded");
+        assert.equal(result.meta.liveConfigSync.reason, "config_written_restart_failed");
+        assert.equal(result.meta.liveConfigSync.liveConfigFresh, false);
+        assert.equal(result.meta.liveConfigSync.operatorMessage, "Sandbox did not restart cleanly.");
+      }
+
+      const warningEvents = events.filter((e) => e.event === "admin.action.live-config-warning");
+      assert.equal(warningEvents.length, 1, "exactly one live-config-warning event");
+      const warning = warningEvents[0] as Extract<AdminActionEvent, { event: "admin.action.live-config-warning" }>;
+      assert.equal(warning.outcome, "degraded");
+      assert.equal(warning.reason, "config_written_restart_failed");
+      assert.equal(warning.action, "/api/channels/slack");
+    } finally {
+      stop();
+    }
+  });
+
+  test("failed liveConfigSync in body emits live-config-warning event", async () => {
+    const { events, stop } = listenForAdminActionEvents();
+    try {
+      const syncPayload = {
+        outcome: "failed",
+        reason: "Gateway did not become ready",
+        liveConfigFresh: false,
+        operatorMessage: "Config sync failed.",
+      };
+      const result = await requestJsonCore("/api/channels/slack", {
+        label: "Save Slack",
+        method: "PUT",
+      }, makeDeps({
+        fetchFn: mockFetchWithHeaders(200, { configured: true, liveConfigSync: syncPayload }, {
+          "x-openclaw-live-config-sync-outcome": "failed",
+          "x-openclaw-live-config-sync-message": "Config sync failed.",
+        }),
+      }));
+
+      assert.ok(result.ok);
+      const warningEvents = events.filter((e) => e.event === "admin.action.live-config-warning");
+      assert.equal(warningEvents.length, 1);
+      const warning = warningEvents[0] as Extract<AdminActionEvent, { event: "admin.action.live-config-warning" }>;
+      assert.equal(warning.outcome, "failed");
+    } finally {
+      stop();
+    }
+  });
+
+  test("applied liveConfigSync in body does not emit live-config-warning event", async () => {
+    const { events, stop } = listenForAdminActionEvents();
+    try {
+      const syncPayload = {
+        outcome: "applied",
+        reason: "config_written_and_restarted",
+        liveConfigFresh: true,
+        operatorMessage: null,
+      };
+      await requestJsonCore("/api/channels/slack", {
+        label: "Save Slack",
+        method: "PUT",
+      }, makeDeps({
+        fetchFn: mockFetchWithHeaders(200, { configured: true, liveConfigSync: syncPayload }, {
+          "x-openclaw-live-config-sync-outcome": "applied",
+        }),
+      }));
+
+      const warningEvents = events.filter((e) => e.event === "admin.action.live-config-warning");
+      assert.equal(warningEvents.length, 0, "no live-config-warning for applied outcome");
+    } finally {
+      stop();
+    }
   });
 });
 

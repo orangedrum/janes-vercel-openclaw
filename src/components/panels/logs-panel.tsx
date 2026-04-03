@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { VList, type VListHandle } from "virtua";
 import type { LogEntry, LogLevel, LogSource, SingleStatus } from "@/shared/types";
 import type { StatusPayload } from "@/components/admin-types";
+import { fetchAdminJsonCore, type ReadJsonDeps } from "@/components/admin-request-core";
 import { isSandboxLogReadableStatus, isSandboxLifecyclePending } from "@/shared/sandbox/log-visibility";
 
 type LogsPanelProps = {
   active: boolean;
   status: StatusPayload;
+  readDeps?: ReadJsonDeps;
 };
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
@@ -31,7 +33,7 @@ const ALL_SOURCES: LogSource[] = [
 
 const POLL_INTERVAL_MS = 3000;
 
-export function LogsPanel({ active, status }: LogsPanelProps) {
+export function LogsPanel({ active, status, readDeps }: LogsPanelProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [search, setSearch] = useState("");
   const [levels, setLevels] = useState<Record<LogLevel, boolean>>({
@@ -57,20 +59,27 @@ export function LogsPanel({ active, status }: LogsPanelProps) {
     if (!active || !canFetchLogs) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/logs", {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { logs: LogEntry[] };
-        setLogs(data.logs);
+      if (readDeps) {
+        const result = await fetchAdminJsonCore<{ logs: LogEntry[] }>("/api/admin/logs", readDeps);
+        if (result.ok) {
+          setLogs(result.data.logs);
+        }
+      } else {
+        const res = await fetch("/api/admin/logs", {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { logs: LogEntry[] };
+          setLogs(data.logs);
+        }
       }
     } catch {
-      // Silently fail -- logs are best-effort
+      // Best-effort -- poll will retry
     } finally {
       setLoading(false);
     }
-  }, [active, canFetchLogs]);
+  }, [active, canFetchLogs, readDeps]);
 
   useEffect(() => {
     if (!active) return;
