@@ -258,11 +258,14 @@ test("buildGatewayRestartScript does not touch pairing state", () => {
   assert.ok(!script.includes("devices"), "restart script must not reference devices dir");
 });
 
-test("buildGatewayRestartScript does not install shell hooks", () => {
+test("buildGatewayRestartScript does not install interactive shell hooks", () => {
   const script = buildGatewayRestartScript();
-  assert.ok(!script.includes("shell-commands-for-learning"), "restart script must not install learning hooks");
   assert.ok(!script.includes(".zshrc"), "restart script must not modify .zshrc");
   assert.ok(!script.includes(".bashrc"), "restart script must not modify .bashrc");
+  assert.ok(!script.includes("preexec()"), "restart script must not install zsh preexec hook");
+  // The net-learn module (which writes to shell-commands-for-learning.log)
+  // IS expected in the restart script — it patches Node.js http/https, not shell hooks.
+  assert.ok(script.includes("net-learn.js"), "restart script should write the net-learn module");
 });
 
 test("buildGatewayRestartScript kills existing gateway and relaunches it", () => {

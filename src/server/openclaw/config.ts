@@ -15,6 +15,7 @@ export const OPENCLAW_CONFIG_PATH = `${OPENCLAW_STATE_DIR}/openclaw.json`;
 export const OPENCLAW_GATEWAY_TOKEN_PATH = `${OPENCLAW_STATE_DIR}/.gateway-token`;
 export const OPENCLAW_AI_GATEWAY_API_KEY_PATH = `${OPENCLAW_STATE_DIR}/.ai-gateway-api-key`;
 export const OPENCLAW_FORCE_PAIR_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.force-pair.mjs`;
+export const OPENCLAW_NET_LEARN_PATH = "/tmp/net-learn.js";
 export const OPENCLAW_TELEGRAM_BOT_TOKEN_PATH = `${OPENCLAW_STATE_DIR}/.telegram-bot-token`;
 export const OPENCLAW_TELEGRAM_WEBHOOK_PORT = 8787;
 export const OPENCLAW_TELEGRAM_WEBHOOK_HOST = "127.0.0.1";
@@ -121,7 +122,57 @@ function buildGatewayEnvShell(): string {
     '  export OPENAI_API_KEY="$ai_gateway_api_key"',
     `  export OPENAI_BASE_URL="${AI_GATEWAY_BASE_URL}"`,
     "fi",
+    `export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"`,
   ].join("\n");
+}
+
+/**
+ * Shell fragment that writes the Node.js network-learning module to disk.
+ * This module monkey-patches http.request/https.request so outbound hostnames
+ * are logged to the firewall learning log — covering agent tool calls that
+ * bypass interactive shell hooks (preexec/trap).
+ */
+function buildNetLearnWriteShell(): string {
+  // The module is written as a heredoc so it's always fresh on each boot.
+  // It appends `fetch https://<host>/` lines to the same log file that
+  // the shell hooks use, so the existing ingestion pipeline picks them up.
+  return `cat > ${OPENCLAW_NET_LEARN_PATH} <<'NETLEARNEOF'
+"use strict";
+const fs = require("fs");
+const https = require("https");
+const http = require("http");
+const LOG = "/tmp/shell-commands-for-learning.log";
+function logHost(host) {
+  if (host && !host.startsWith("127.") && host !== "localhost") {
+    fs.appendFile(LOG, "fetch https://" + host + "/\\n", function () {});
+  }
+}
+function patchMod(mod) {
+  const orig = mod.request;
+  mod.request = function patchedRequest(opts) {
+    try {
+      const host = typeof opts === "string"
+        ? new URL(opts).hostname
+        : (opts && (opts.hostname || opts.host)) || null;
+      logHost(host);
+    } catch (_) { /* never break the caller */ }
+    return orig.apply(this, arguments);
+  };
+}
+patchMod(http);
+patchMod(https);
+if (typeof globalThis.fetch === "function") {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = function patchedFetch(input) {
+    try {
+      const url = typeof input === "string" ? input
+        : (input && input.url) ? input.url : null;
+      if (url) logHost(new URL(url).hostname);
+    } catch (_) { /* never break the caller */ }
+    return origFetch.apply(this, arguments);
+  };
+}
+NETLEARNEOF`;
 }
 
 /** Shell fragment that kills any existing gateway and starts a fresh one.
@@ -151,6 +202,7 @@ function buildGatewayLaunchShell(): string {
 export function buildGatewayRestartScript(): string {
   return `#!/bin/bash
 set -euo pipefail
+${buildNetLearnWriteShell()}
 ${buildGatewayEnvShell()}
 ${buildGatewayKillShell()}
 ${buildGatewayLaunchShell()}
@@ -557,6 +609,7 @@ export function buildStartupScript(): string {
 set -euo pipefail
 mkdir -p "${OPENCLAW_STATE_DIR}/devices"
 rm -f "${OPENCLAW_STATE_DIR}/devices/paired.json" "${OPENCLAW_STATE_DIR}/devices/pending.json"
+${buildNetLearnWriteShell()}
 ${buildGatewayEnvShell()}
 ${buildGatewayKillShell()}
 ${buildGatewayLaunchShell()}
@@ -622,6 +675,8 @@ if [ -n "$ai_gateway_api_key" ]; then
   export OPENAI_API_KEY="$ai_gateway_api_key"
   export OPENAI_BASE_URL="$ai_gateway_base_url"
 fi
+${buildNetLearnWriteShell()}
+export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"
 # Integrity check: fail fast if bundled peer dependencies are missing.
 # The artifact/snapshot must ship @buape/carbon — runtime repair is not
 # acceptable because it makes restores nondeterministic.
