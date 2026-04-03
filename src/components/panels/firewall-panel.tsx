@@ -414,30 +414,6 @@ export function FirewallPanel({
             </div>
           )}
 
-          {fw.mode === "learning" && (
-            <p className="learning-disclaimer">
-              Shell command observation only — does not capture all network traffic
-            </p>
-          )}
-
-          {fw.mode === "learning" &&
-            diagnostics?.ingestionStatus.lastSkipReason &&
-            diagnostics.ingestionStatus.consecutiveSkips > 1 &&
-            diagnostics.learningHealth.stalenessMs !== null &&
-            diagnostics.learningHealth.stalenessMs > 30_000 && (
-            <p className="error-banner" style={{ marginTop: 0 }}>
-              Learning may be stuck: {diagnostics.ingestionStatus.consecutiveSkips}{" "}
-              consecutive ingest skips (last reason: {diagnostics.ingestionStatus.lastSkipReason})
-            </p>
-          )}
-
-          {fw.mode === "learning" &&
-            fw.learningStartedAt !== null &&
-            Date.now() - fw.learningStartedAt < 3_600_000 && (
-            <p className="learning-recommendation">
-              Consider running learning longer to capture varied usage patterns
-            </p>
-          )}
 
           {/* Enforcement preview */}
           {(report?.wouldBlock ?? fw.wouldBlock).length > 0 && (
