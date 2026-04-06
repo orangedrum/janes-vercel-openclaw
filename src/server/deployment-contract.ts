@@ -1,12 +1,13 @@
 import {
   getAiGatewayAuthMode,
   getAuthMode,
-  getCronSecret,
-  getOpenclawPackageSpec,
+  getCronSecretConfig,
+  getOpenclawPackageSpecConfig,
   getStoreEnv,
   isVercelDeployment,
 } from "@/server/env";
-import { logDebug, logInfo } from "@/server/log";
+import type { OpenclawPackageSpecConfig } from "@/server/env";
+import { logInfo, logWarn } from "@/server/log";
 import { getProtectionBypassSecret, resolvePublicOrigin } from "@/server/public-url";
 
 // Re-export shared types so existing consumers keep working.
@@ -38,6 +39,7 @@ export type DeploymentContract = {
   storeBackend: "upstash" | "memory";
   aiGatewayAuth: "oidc" | "api-key" | "unavailable";
   openclawPackageSpec: string | null;
+  openclawPackageSpecSource: "explicit" | "fallback";
   requirements: DeploymentRequirement[];
 };
 
@@ -162,9 +164,14 @@ function checkStore(onVercel: boolean): DeploymentRequirement {
 }
 
 function checkCronSecret(onVercel: boolean): DeploymentRequirement {
-  const configured = Boolean(getCronSecret());
+  const cron = getCronSecretConfig();
 
-  if (configured) {
+  logInfo("deployment_contract.cron_secret_evaluated", {
+    onVercel,
+    source: cron.source,
+  });
+
+  if (cron.source === "cron-secret") {
     return {
       id: CRON_SECRET_REQUIREMENT_ID,
       status: "pass",
@@ -174,14 +181,28 @@ function checkCronSecret(onVercel: boolean): DeploymentRequirement {
     };
   }
 
+  if (cron.source === "admin-secret") {
+    return {
+      id: CRON_SECRET_REQUIREMENT_ID,
+      status: onVercel ? "warn" : "pass",
+      message: onVercel
+        ? "CRON_SECRET is not set. /api/cron/watchdog will fall back to ADMIN_SECRET."
+        : "CRON_SECRET is not set. /api/cron/watchdog will fall back to ADMIN_SECRET in this environment.",
+      remediation: onVercel
+        ? "Set CRON_SECRET if you want cron authentication to rotate independently from admin login."
+        : "Set CRON_SECRET if you want a dedicated secret for cron endpoints.",
+      env: ["CRON_SECRET"],
+    };
+  }
+
   if (onVercel) {
     return {
       id: CRON_SECRET_REQUIREMENT_ID,
       status: "fail",
-      message: "CRON_SECRET is required on Vercel deployments.",
+      message: "Neither CRON_SECRET nor ADMIN_SECRET is configured.",
       remediation:
-        "Set CRON_SECRET so deployed cron requests can authenticate before waking the sandbox.",
-      env: CRON_SECRET_ENV,
+        "Set ADMIN_SECRET at minimum. Set CRON_SECRET separately if you want independent cron authentication.",
+      env: ["CRON_SECRET", "ADMIN_SECRET"],
     };
   }
 
@@ -190,7 +211,7 @@ function checkCronSecret(onVercel: boolean): DeploymentRequirement {
     status: "pass",
     message: "CRON_SECRET is optional outside Vercel deployments.",
     remediation: "",
-    env: CRON_SECRET_ENV,
+    env: ["CRON_SECRET"],
   };
 }
 
@@ -225,28 +246,26 @@ function checkAiGateway(
 
 function checkOpenclawPackageSpec(
   onVercel: boolean,
+  config: OpenclawPackageSpecConfig,
 ): DeploymentRequirement | null {
   if (!onVercel) return null;
 
-  const spec = getOpenclawPackageSpec();
-
-  if (isPinnedPackageSpec(spec)) {
+  if (config.source === "explicit" && isPinnedPackageSpec(config.value)) {
     return {
       id: "openclaw-package-spec",
       status: "pass",
-      message: `OPENCLAW_PACKAGE_SPEC is pinned to ${spec}.`,
+      message: `OPENCLAW_PACKAGE_SPEC is pinned to ${config.value}.`,
       remediation: "",
       env: ["OPENCLAW_PACKAGE_SPEC"],
     };
   }
 
-  const missing = !process.env.OPENCLAW_PACKAGE_SPEC?.trim();
   return {
     id: "openclaw-package-spec",
     status: "warn",
-    message: missing
+    message: config.source === "fallback"
       ? "OPENCLAW_PACKAGE_SPEC is not set. Pin to a specific version for deterministic sandbox restores."
-      : `OPENCLAW_PACKAGE_SPEC is set to "${spec}" which is not a pinned version. Restores are non-deterministic.`,
+      : `OPENCLAW_PACKAGE_SPEC is set to "${config.value}" which is not a pinned version. Restores are non-deterministic.`,
     remediation:
       'Set OPENCLAW_PACKAGE_SPEC to a pinned version like "openclaw@1.2.3" for deterministic sandbox restores.',
     env: ["OPENCLAW_PACKAGE_SPEC"],
@@ -347,8 +366,18 @@ export async function buildDeploymentContract(
   const authMode = getAuthMode();
   const storeEnv = getStoreEnv();
   const storeBackend = storeEnv ? "upstash" : "memory";
-  const aiGatewayAuth = await getAiGatewayAuthMode();
-  const openclawPackageSpec = getOpenclawPackageSpec();
+
+  let aiGatewayAuth: Awaited<ReturnType<typeof getAiGatewayAuthMode>>;
+  try {
+    aiGatewayAuth = await getAiGatewayAuthMode();
+  } catch (error) {
+    logWarn("deployment_contract.ai_gateway_auth_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    aiGatewayAuth = "unavailable";
+  }
+
+  const openclawPackageSpecConfig = getOpenclawPackageSpecConfig();
 
   const requirements = [
     checkPublicOrigin(onVercel, options.request),
@@ -356,7 +385,7 @@ export async function buildDeploymentContract(
     checkStore(onVercel),
     checkCronSecret(onVercel),
     checkAiGateway(onVercel, aiGatewayAuth),
-    checkOpenclawPackageSpec(onVercel),
+    checkOpenclawPackageSpec(onVercel, openclawPackageSpecConfig),
     checkOauthClientId(authMode),
     checkOauthClientSecret(authMode),
     checkSessionSecret(authMode, onVercel),
@@ -364,12 +393,13 @@ export async function buildDeploymentContract(
 
   const ok = requirements.every((r) => r.status !== "fail");
 
-  logDebug("deployment_contract.built", {
+  logInfo("deployment_contract.built", {
     ok,
     authMode,
     storeBackend,
     aiGatewayAuth,
     onVercel,
+    openclawPackageSpecSource: openclawPackageSpecConfig.source,
     requirementIds: requirements.map((r) => `${r.id}:${r.status}`),
   });
 
@@ -378,7 +408,8 @@ export async function buildDeploymentContract(
     authMode,
     storeBackend,
     aiGatewayAuth,
-    openclawPackageSpec,
+    openclawPackageSpec: openclawPackageSpecConfig.value,
+    openclawPackageSpecSource: openclawPackageSpecConfig.source,
     requirements,
   };
 }

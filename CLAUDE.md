@@ -152,7 +152,7 @@ Logging notes:
 
 Machine-checkable config readiness report consumed by `/api/admin/preflight`.
 
-Checks: `public-origin`, `webhook-bypass` (diagnostic only: pass or warn, never fail), `store`, `ai-gateway`, `openclaw-package-spec` (warn on Vercel when unpinned, runtime falls back to `openclaw@latest`), `auth-config` (fail when sign-in-with-vercel vars are missing), `bootstrap-exposure`, and `cron-secret` (fail on Vercel when missing).
+Checks: `public-origin`, `webhook-bypass` (diagnostic only: pass or warn, never fail), `store`, `ai-gateway`, `openclaw-package-spec` (warn on Vercel when unpinned, runtime falls back to a pinned known-good version), `auth-config` (fail when sign-in-with-vercel vars are missing), `bootstrap-exposure`, and `cron-secret` (warn on Vercel when only `ADMIN_SECRET` is available; fail only when both `CRON_SECRET` and `ADMIN_SECRET` are missing).
 
 The authoritative readiness check is `POST /api/admin/launch-verify` (`src/app/api/admin/launch-verify/route.ts`), which runs preflight as its first phase and then verifies runtime behavior: queue loopback delivery via `/api/queues/launch-verify`, sandbox ensure, gateway chat completions, and wake-from-sleep recovery (destructive mode). `scripts/check-deploy-readiness.mjs` consumes launch-verify by default.
 
@@ -161,7 +161,7 @@ Store requirement policy: missing Upstash is a hard fail (`status: "fail"`) on V
 Observability notes:
 
 - `deployment_contract.built` logs `{ ok, authMode, storeBackend, aiGatewayAuth, onVercel, requirementIds }`
-- `deploy_preflight.built` logs `{ ok, authMode, publicOrigin, webhookBypassEnabled, webhookBypassRecommended, storeBackend, aiGatewayAuth, cronSecretConfigured, actionCount, consumedContractIds }`
+- `deploy_preflight.built` logs `{ ok, authMode, publicOrigin, webhookBypassEnabled, webhookBypassRecommended, storeBackend, aiGatewayAuth, cronSecretConfigured, cronSecretExplicitlyConfigured, cronSecretSource, actionCount, consumedContractIds }`
 - `launch_verify.blocking_check` logs `{ blocking, failingCheckIds, requiredActionIds, recommendedActionIds, skipPhaseIds }`
 - `launch_verify.preflight_evaluated` logs `LaunchVerificationDiagnostics`
 - `LaunchVerificationDiagnostics.warningChannelIds` is deprecated; prefer `failingChannelIds`
@@ -178,6 +178,8 @@ Observability notes:
   storeBackend: "upstash" | "memory";
   aiGatewayAuth: "oidc" | "api-key" | "unavailable";
   cronSecretConfigured: boolean;
+  cronSecretExplicitlyConfigured: boolean;
+  cronSecretSource: "cron-secret" | "admin-secret" | "missing";
   publicOriginResolution: PublicOriginResolution | null;
   webhookDiagnostics: { slack, telegram, discord };
   channels: Record<ChannelName, ChannelConnectability>;
@@ -546,11 +548,11 @@ These variables are checked by `buildDeploymentContract()` in `src/server/deploy
 
 | Variable | Context | Policy |
 | -------- | ------- | ------ |
-| `CRON_SECRET` | Required on Vercel | Authenticates `/api/cron/watchdog`. Missing on Vercel is a hard failure in the deployment contract. |
+| `CRON_SECRET` | Recommended on Vercel | Authenticates `/api/cron/watchdog`. When unset, the runtime falls back to `ADMIN_SECRET`. The deployment contract **warns** (not fails) on Vercel when only `ADMIN_SECRET` is available. Set `CRON_SECRET` separately if you want independent rotation for cron authentication. Missing both `CRON_SECRET` and `ADMIN_SECRET` on Vercel is a hard failure. |
 | `UPSTASH_REDIS_REST_URL` | All deployments | Required for persistent state. Provision via Vercel Marketplace. |
 | `UPSTASH_REDIS_REST_TOKEN` | All deployments | Required for persistent state. Paired with the URL above. |
 | `OPENCLAW_INSTANCE_ID` | All environments | Optional. Namespace token for Redis key isolation. On Vercel deployments, automatically uses `VERCEL_PROJECT_ID` when unset, giving each project its own namespace. Falls back to `openclaw-single` in local/non-Vercel environments. Can be set explicitly to override auto-detection. Changing it later points the app at a new namespace; it does not migrate existing state. |
-| `OPENCLAW_PACKAGE_SPEC` | All environments | Optional locally, recommended on Vercel. Defaults to `openclaw@latest` when unset in local dev. On Vercel deployments, the deployment contract **warns** — it does not fail — when unset or unpinned (e.g. `openclaw@latest`). The runtime still falls back to `openclaw@latest`, but resumes are non-deterministic. Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox resumes. |
+| `OPENCLAW_PACKAGE_SPEC` | All environments | Optional locally, recommended on Vercel. When unset, the runtime falls back to a pinned known-good version (currently `openclaw@2026.3.28`). On Vercel deployments, the deployment contract **warns** — it does not fail — when unset or unpinned. Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox resumes. |
 | `OPENCLAW_SANDBOX_VCPUS` | All environments | Optional. vCPU count for sandbox create and resume (valid: 1, 2, 4, 8; default: 1). Keep this fixed during benchmarks so resume timings stay comparable. |
 | `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | All environments | Optional. How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place. If you increase this value, the next touch/heartbeat can top the sandbox timeout up to the new target. If you decrease it, the lower value becomes exact on the next create or restore. |
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode | Required for OAuth flow. |
