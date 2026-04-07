@@ -30,6 +30,7 @@ import {
   OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH,
   OPENCLAW_WORKER_SANDBOX_BATCH_SKILL_PATH,
   OPENCLAW_WORKER_SANDBOX_BATCH_SCRIPT_PATH,
+  OPENCLAW_MARKETING_SKILLS_PATH,
 } from "@/server/openclaw/config";
 
 // --- buildRestoreAssetManifest ---
@@ -80,6 +81,22 @@ test("static restore files produce non-empty buffers", () => {
     assert.ok(Buffer.isBuffer(file.content), `${file.path} content is a Buffer`);
     assert.ok(file.content.length > 0, `${file.path} content is non-empty`);
   }
+});
+
+test("static restore files include marketing skill files when available", () => {
+  const paths = buildStaticRestoreFiles().map((f) => f.path);
+  assert.ok(
+    paths.some((p) => p.startsWith(OPENCLAW_MARKETING_SKILLS_PATH)),
+    "should include marketing skill files",
+  );
+});
+
+test("static restore files include marketing tool files when available", () => {
+  const paths = buildStaticRestoreFiles().map((f) => f.path);
+  assert.ok(
+    paths.some((p) => p.includes("/marketing-tools/")),
+    "should include marketing tool files",
+  );
 });
 
 // --- buildDynamicRestoreFiles ---

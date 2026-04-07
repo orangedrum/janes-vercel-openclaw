@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import type { WhatsAppGatewayConfig } from "@/server/openclaw/config";
 import {
@@ -65,6 +67,7 @@ import {
   OPENCLAW_VISION_SKILL_PATH,
   OPENCLAW_WEB_SEARCH_SCRIPT_PATH,
   OPENCLAW_WEB_SEARCH_SKILL_PATH,
+  OPENCLAW_MARKETING_SKILLS_PATH,
 } from "@/server/openclaw/config";
 
 export const OPENCLAW_RESTORE_ASSET_MANIFEST_PATH =
@@ -83,6 +86,68 @@ export function buildWorkerSandboxRestoreFiles(): { path: string; content: Buffe
     { path: OPENCLAW_WORKER_SANDBOX_BATCH_SKILL_PATH, content: Buffer.from(buildWorkerSandboxBatchSkill()) },
     { path: OPENCLAW_WORKER_SANDBOX_BATCH_SCRIPT_PATH, content: Buffer.from(buildWorkerSandboxBatchScript()) },
   ];
+}
+
+function buildMarketingSkillRestoreFiles(): { path: string; content: Buffer }[] {
+  const root = join(process.cwd(), "src/server/openclaw/marketing-skills");
+  if (!existsSync(root)) {
+    return [];
+  }
+
+  function walk(current: string, relativePath = ""): { path: string; content: Buffer }[] {
+    let files: { path: string; content: Buffer }[] = [];
+    for (const entry of readdirSync(current)) {
+      const fullPath = join(current, entry);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        files = files.concat(walk(fullPath, join(relativePath, entry)));
+        continue;
+      }
+      if (!stat.isFile()) {
+        continue;
+      }
+
+      const targetRelative = relativePath ? join(relativePath, entry) : entry;
+      files.push({
+        path: join(OPENCLAW_MARKETING_SKILLS_PATH, targetRelative),
+        content: Buffer.from(readFileSync(fullPath, "utf8")),
+      });
+    }
+    return files;
+  }
+
+  return walk(root);
+}
+
+function buildMarketingToolsRestoreFiles(): { path: string; content: Buffer }[] {
+  const toolsRoot = join(process.cwd(), "src/server/openclaw/marketing-tools");
+  if (!existsSync(toolsRoot)) {
+    return [];
+  }
+
+  function walk(current: string, relativePath = ""): { path: string; content: Buffer }[] {
+    let files: { path: string; content: Buffer }[] = [];
+    for (const entry of readdirSync(current)) {
+      const fullPath = join(current, entry);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        files = files.concat(walk(fullPath, join(relativePath, entry)));
+        continue;
+      }
+      if (!stat.isFile()) {
+        continue;
+      }
+
+      const targetRelative = relativePath ? join(relativePath, entry) : entry;
+      files.push({
+        path: join("/home/vercel-sandbox/.openclaw/marketing-tools", targetRelative),
+        content: Buffer.from(readFileSync(fullPath, "utf8")),
+      });
+    }
+    return files;
+  }
+
+  return walk(toolsRoot);
 }
 
 export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
@@ -128,6 +193,8 @@ export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
     { path: OPENCLAW_REASONING_SCRIPT_PATH, content: Buffer.from(buildReasoningScript()) },
     { path: OPENCLAW_COMPARE_SKILL_PATH, content: Buffer.from(buildCompareSkill()) },
     { path: OPENCLAW_COMPARE_SCRIPT_PATH, content: Buffer.from(buildCompareScript()) },
+    ...buildMarketingSkillRestoreFiles(),
+    ...buildMarketingToolsRestoreFiles(),
     ...buildWorkerSandboxRestoreFiles(),
   ];
 }

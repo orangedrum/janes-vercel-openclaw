@@ -30,13 +30,15 @@ Click **Deploy with Vercel** above, set a password, and you're up.
 4. **Verify** — run destructive launch verification from the admin panel before connecting channels. Preflight is a config-readiness check. It does not prove the sandbox can complete a real channel delivery.
 5. **Connect channels** — optionally wire up Slack, Telegram, WhatsApp (experimental), or Discord (experimental) from the admin panel so people can chat with your instance. For Slack, set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` to enable one-click OAuth install, or enter credentials manually. A deployment is channel-ready only after destructive launch verification passes and channelReadiness.ready is true.
 
-## What you get
+## Template Usage
 
-- **Full OpenClaw UI** proxied at `/gateway` with auth and WebSocket rewriting
-- **Persistent sandboxes** — sandbox state is automatically preserved on stop and restored on resume
-- **Slack, Telegram, WhatsApp (experimental) & Discord (experimental)** — channel integrations with durable delivery
-- **Egress firewall** — learn which domains your agent talks to, then lock it down
-- **Auto-wake** — a cron watchdog wakes your sandbox when scheduled OpenClaw jobs are due
+This repo can be used as a template for new OpenClaw projects. For new projects:
+
+1. Clone this repo to a new directory
+2. Deploy to Vercel as described above
+3. On first launch, OpenClaw will automatically prompt you to set up your product marketing context via the `product-marketing-context` skill. This captures your product details, audience, and positioning so all other marketing skills work effectively.
+
+If the automatic prompt doesn't appear, you can manually run `/product-marketing-context` in the OpenClaw chat to set it up.
 
 ## Built with
 
