@@ -16,7 +16,6 @@ import {
 } from "@/server/observability/operation-context";
 import { logStateSnapshot } from "@/server/observability/state-snapshot";
 import {
-  getAiGatewayBearerTokenOptional,
   resolveAiGatewayCredentialOptional,
   isVercelDeployment,
 } from "@/server/env";
@@ -26,7 +25,6 @@ import { setupOpenClaw, CommandFailedError, waitForGatewayReady } from "@/server
 import {
   computeGatewayConfigHash,
   GATEWAY_CONFIG_HASH_VERSION,
-  OPENCLAW_AI_GATEWAY_API_KEY_PATH,
   OPENCLAW_BIN,
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
@@ -784,13 +782,11 @@ export async function syncGatewayConfigToSandbox(): Promise<LiveConfigSyncResult
   }
 
   const { getPublicOrigin } = await import("@/server/public-url");
-  const apiKey = await getAiGatewayBearerTokenOptional();
   const proxyOrigin = getPublicOrigin();
 
   const slackConfig = meta.channels.slack;
   const files = buildDynamicRestoreFiles({
     proxyOrigin,
-    apiKey,
     telegramBotToken: meta.channels.telegram?.botToken,
     telegramWebhookSecret: meta.channels.telegram?.webhookSecret,
     slackCredentials: slackConfig
@@ -936,11 +932,9 @@ export async function ensureRunningSandboxDynamicConfigFresh(input: {
   }
 
   // Stale — rewrite dynamic config files.
-  const apiKey = await getAiGatewayBearerTokenOptional();
   const slackConfig = meta.channels.slack;
   const files = buildDynamicRestoreFiles({
     proxyOrigin: input.origin,
-    apiKey,
     telegramBotToken: meta.channels.telegram?.botToken,
     telegramWebhookSecret: meta.channels.telegram?.webhookSecret,
     slackCredentials: slackConfig
@@ -1249,10 +1243,8 @@ export async function prepareRestoreTarget(input: {
   try {
     const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
     const slackConfig = meta.channels.slack;
-    const apiKey = await getAiGatewayBearerTokenOptional();
     await syncRestoreAssetsIfNeeded(sandbox, {
       origin: input.origin,
-      apiKey,
       telegramBotToken: meta.channels.telegram?.botToken,
       telegramWebhookSecret: meta.channels.telegram?.webhookSecret,
       slackCredentials: slackConfig
@@ -1428,10 +1420,8 @@ export async function prepareHotSpareFromPreparedRestore(options?: {
     return { ok: false, reason: "snapshot-missing", candidateSandboxId: null };
   }
 
-  const credential = await resolveAiGatewayCredentialOptional();
   const restoreEnv = buildRestoreRuntimeEnv({
     gatewayToken: meta.gatewayToken,
-    apiKey: credential?.token,
   });
 
   const result = await preCreateHotSpareFromSnapshot(meta, {
@@ -1925,30 +1915,22 @@ async function withTokenRefreshLock(
 }
 
 // ---------------------------------------------------------------------------
-// Core token write + gateway restart
+// Core credential write (gateway token only — AI key is injected via network
+// policy transform and never enters the sandbox).
 // ---------------------------------------------------------------------------
-
-const WRITE_AI_GATEWAY_TOKEN_SCRIPT = [
-  `install -d -m 700 ${OPENCLAW_STATE_DIR}`,
-  `printf '%s' "$1" > ${OPENCLAW_AI_GATEWAY_API_KEY_PATH}`,
-  `chmod 600 ${OPENCLAW_AI_GATEWAY_API_KEY_PATH}`,
-].join("\n");
 
 const WRITE_RESTORE_CREDENTIAL_FILES_SCRIPT = [
   `install -d -m 700 ${OPENCLAW_STATE_DIR}`,
   `printf '%s' "$1" > ${OPENCLAW_GATEWAY_TOKEN_PATH}`,
   `chmod 600 ${OPENCLAW_GATEWAY_TOKEN_PATH}`,
-  `printf '%s' "$2" > ${OPENCLAW_AI_GATEWAY_API_KEY_PATH}`,
-  `chmod 600 ${OPENCLAW_AI_GATEWAY_API_KEY_PATH}`,
 ].join("\n");
 
 export async function writeRestoreCredentialFiles(
   sandbox: SandboxHandle,
-  options: { gatewayToken: string; apiKey?: string },
+  options: { gatewayToken: string },
 ): Promise<void> {
   logInfo("sandbox.restore.write_credentials", {
     sandboxId: sandbox.sandboxId,
-    hasApiKey: options.apiKey != null && options.apiKey.length > 0,
   });
 
   const result = await sandbox.runCommand("sh", [
@@ -1956,7 +1938,6 @@ export async function writeRestoreCredentialFiles(
     WRITE_RESTORE_CREDENTIAL_FILES_SCRIPT,
     "--",
     options.gatewayToken,
-    options.apiKey ?? "",
   ]);
 
   if (result.exitCode !== 0) {
@@ -1969,11 +1950,9 @@ export async function writeRestoreCredentialFiles(
   }
 }
 
-// Targeted gateway restart for token refresh — uses the dedicated restart
-// script which kills the old gateway and starts a fresh one with updated
-// tokens read from disk.  Unlike the full startup script, the restart script
-// does NOT delete paired.json, does NOT set up shell hooks, so token refresh
-// is side-effect-free with respect to pairing and learning state.
+// Token refresh via network policy update — the AI Gateway credential is
+// injected as an Authorization header transform at the firewall layer, so
+// refreshing it is a single SDK call with no gateway restart required.
 
 async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string): Promise<void> {
   const credential = await resolveAiGatewayCredentialOptional();
@@ -1995,54 +1974,15 @@ async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string):
     throw new Error("No OIDC token available for refresh");
   }
 
-  // Read the current token from the sandbox and skip if unchanged.
-  // This avoids killing and restarting the gateway unnecessarily.
-  try {
-    const existing = await sandbox.readFileToBuffer({
-      path: OPENCLAW_AI_GATEWAY_API_KEY_PATH,
-    });
-    if (existing && existing.toString("utf8").trim() === freshToken) {
-      logInfo("sandbox.token_refresh.skipped_unchanged", { sandboxId });
-      await mutateMeta((next) => {
-        next.lastTokenRefreshAt = Date.now();
-        next.lastTokenSource = credential.source;
-        next.lastTokenExpiresAt = credential.expiresAt ?? null;
-      });
-      return;
-    }
-  } catch {
-    // File may not exist yet — proceed with write.
-  }
-
   logInfo("sandbox.token_refresh.start", { sandboxId });
 
-  const writeResult = await sandbox.runCommand("sh", [
-    "-c",
-    WRITE_AI_GATEWAY_TOKEN_SCRIPT,
-    "--",
-    freshToken,
-  ]);
-  if (writeResult.exitCode !== 0) {
-    const output = await writeResult.output("both");
-    throw new CommandFailedError({
-      command: "write-ai-gateway-token",
-      exitCode: writeResult.exitCode,
-      output,
-    });
-  }
-
-  logInfo("sandbox.token_refresh.token_written", { sandboxId });
-
-  // Restart gateway via the on-disk script so it reloads the fresh token.
+  // Update the network policy with the fresh token — the firewall layer
+  // injects the Authorization header on outbound requests to ai-gateway.
+  // No file writes or gateway restarts needed.
   const meta = await getInitializedMeta();
-  await restartGateway(sandbox);
+  await applyFirewallPolicyToSandbox(sandbox, meta, freshToken);
 
-  logInfo("sandbox.token_refresh.gateway_restarted", { sandboxId });
-
-  // Wait for the gateway to become healthy before returning.
-  // Without this, the caller's immediate forwardToGateway() hits a dead gateway.
-  await waitForGatewayReady(sandbox, { maxAttempts: 40, delayMs: 250 });
-  logInfo("sandbox.token_refresh.gateway_ready", { sandboxId });
+  logInfo("sandbox.token_refresh.policy_updated", { sandboxId });
 
   await mutateMeta((next) => {
     next.lastTokenRefreshAt = Date.now();
@@ -2486,14 +2426,12 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
 
       const restoreEnv = buildRestoreRuntimeEnv({
         gatewayToken: latest.gatewayToken,
-        apiKey: freshApiKey,
       });
 
       const assetSyncStart = Date.now();
       const slackConfig = latest.channels.slack;
       await syncRestoreAssetsIfNeeded(sandbox, {
         origin,
-        apiKey: freshApiKey,
         telegramBotToken: latest.channels.telegram?.botToken,
         telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
         slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
@@ -2535,7 +2473,7 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
       const firewallStart = Date.now();
       try {
         progress.setPhase("applying-firewall", `Applying ${latest.firewall.mode} firewall policy`);
-        await applyFirewallPolicyToSandbox(sandbox, latest);
+        await applyFirewallPolicyToSandbox(sandbox, latest, freshApiKey);
       } catch (err) {
         const firewallError = err instanceof Error ? err.message : String(err);
         logWarn("sandbox.create.persistent_resume.firewall_sync_failed", ctx({
@@ -2603,12 +2541,11 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
 
     // Fresh sandbox — run full bootstrap
     const latest = await getInitializedMeta();
-    // Reuse the already-resolved credential — no redundant second lookup.
+    // Reuse the already-resolved credential for firewall policy transforms.
     const apiKey = credential?.token;
     const slackCfg = latest.channels.slack;
     const setupResult = await setupOpenClaw(sandbox, {
       gatewayToken: latest.gatewayToken,
-      apiKey,
       proxyOrigin: origin,
       telegramBotToken: latest.channels.telegram?.botToken,
       telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
@@ -2637,6 +2574,7 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
     const firewallPolicy = toNetworkPolicy(
       pending.firewall.mode,
       pending.firewall.allowlist,
+      apiKey,
     );
     const firewallPolicyHash = createHash("sha256")
       .update(JSON.stringify(firewallPolicy))
@@ -2647,7 +2585,7 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
     const firewallStartedAt = Date.now();
     try {
       progress.setPhase("applying-firewall", `Applying ${pending.firewall.mode} firewall policy`);
-      await applyFirewallPolicyToSandbox(sandbox, pending);
+      await applyFirewallPolicyToSandbox(sandbox, pending, apiKey);
       firewallApplied = true;
     } catch (err) {
       firewallError = err instanceof Error ? err.message : String(err);
@@ -2832,7 +2770,6 @@ async function restoreSandboxFromSnapshot(
 
     const restoreEnv = buildRestoreRuntimeEnv({
       gatewayToken: latest.gatewayToken,
-      apiKey: freshApiKey,
     });
 
     // Hot-spare promotion attempt — skip the normal Sandbox.create() if a
@@ -2977,7 +2914,6 @@ async function restoreSandboxFromSnapshot(
       await sandbox.writeFiles(
         buildDynamicRestoreFiles({
           proxyOrigin: origin,
-          apiKey: freshApiKey,
           telegramBotToken: latest.channels.telegram?.botToken,
           telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
           slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
@@ -3023,6 +2959,7 @@ async function restoreSandboxFromSnapshot(
     const requestedFirewallPolicy = toNetworkPolicy(
       next.firewall.mode,
       next.firewall.allowlist,
+      freshApiKey,
     );
     const requestedFirewallPolicyHash = createHash("sha256")
       .update(JSON.stringify(requestedFirewallPolicy))
@@ -3034,7 +2971,7 @@ async function restoreSandboxFromSnapshot(
     const firewallPromise = (async () => {
       const startedAt = Date.now();
       try {
-        await applyFirewallPolicyToSandbox(sandbox, next);
+        await applyFirewallPolicyToSandbox(sandbox, next, freshApiKey);
         const completedAt = Date.now();
         return {
           ok: true as const,
@@ -3323,7 +3260,6 @@ async function restoreSandboxFromSnapshot(
     if (!skippedStaticAssetSync) {
       syncRestoreAssetsIfNeeded(sandbox, {
         origin,
-        apiKey: freshApiKey,
         telegramBotToken: latest.channels.telegram?.botToken,
         telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
         slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
@@ -3451,7 +3387,6 @@ async function syncRestoreAssetsIfNeeded(
   sandbox: SandboxHandle,
   options: {
     origin: string;
-    apiKey?: string;
     telegramBotToken?: string;
     telegramWebhookSecret?: string;
     slackCredentials?: { botToken: string; signingSecret: string };
@@ -3474,7 +3409,6 @@ async function syncRestoreAssetsIfNeeded(
 
   const files = buildDynamicRestoreFiles({
     proxyOrigin: options.origin,
-    apiKey: options.apiKey,
     telegramBotToken: options.telegramBotToken,
     telegramWebhookSecret: options.telegramWebhookSecret,
     slackCredentials: options.slackCredentials,
@@ -3783,16 +3717,12 @@ function isOperationStale(meta: SingleMeta): boolean {
   return Date.now() - meta.updatedAt > STALE_OPERATION_MS;
 }
 
-async function buildRuntimeEnv(): Promise<{ env?: Record<string, string> }> {
-  const token = await getAiGatewayBearerTokenOptional();
-  if (!token) {
-    return {};
-  }
-
+function buildRuntimeEnv(): { env?: Record<string, string> } {
+  // AI Gateway API key is injected via network policy header transform —
+  // only OPENAI_BASE_URL is needed so code inside the sandbox knows where
+  // to send requests.
   return {
     env: {
-      AI_GATEWAY_API_KEY: token,
-      OPENAI_API_KEY: token,
       OPENAI_BASE_URL: "https://ai-gateway.vercel.sh/v1",
     },
   };

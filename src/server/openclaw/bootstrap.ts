@@ -76,7 +76,6 @@ export async function setupOpenClaw(
   sandbox: SandboxHandle,
   options: {
     gatewayToken: string;
-    apiKey?: string;
     proxyOrigin: string;
     telegramBotToken?: string;
     slackCredentials?: { botToken: string; signingSecret: string };
@@ -254,7 +253,6 @@ export async function setupOpenClaw(
 
   const bootstrapFiles = buildBootstrapFiles({
     gatewayToken: options.gatewayToken,
-    apiKey: options.apiKey,
     proxyOrigin: options.proxyOrigin,
     telegramBotToken: options.telegramBotToken,
     telegramWebhookSecret: options.telegramWebhookSecret,
