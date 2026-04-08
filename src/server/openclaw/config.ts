@@ -279,6 +279,51 @@ export function buildGatewayConfig(
     },
   };
 
+  config.models = {
+    mode: "merge",
+    providers: {
+      anthropic: {
+        baseUrl: AI_GATEWAY_BASE_URL,
+        apiKey: "sk-placeholder",
+        api: "anthropic",
+      },
+      openai: {
+        baseUrl: AI_GATEWAY_BASE_URL,
+        apiKey: "sk-placeholder",
+        api: "openai-completions",
+        models: [
+          { id: "gpt-image-1", name: "GPT Image 1" },
+          { id: "dall-e-3", name: "DALL-E 3" },
+          { id: "gpt-4o", name: "GPT-4o", input: ["text", "image"] },
+          { id: "gpt-4o-mini-tts", name: "GPT-4o Mini TTS" },
+          { id: "text-embedding-3-small", name: "Text Embedding 3 Small" },
+          { id: "text-embedding-3-large", name: "Text Embedding 3 Large" },
+          { id: "whisper-1", name: "Whisper" },
+        ],
+      },
+      google: {
+        baseUrl: AI_GATEWAY_BASE_URL,
+        apiKey: "sk-placeholder",
+        api: "google",
+      },
+      deepseek: {
+        baseUrl: AI_GATEWAY_BASE_URL,
+        apiKey: "sk-placeholder",
+        api: "deepseek",
+      },
+      xai: {
+        baseUrl: AI_GATEWAY_BASE_URL,
+        apiKey: "sk-placeholder",
+        api: "xai",
+      },
+      mistral: {
+        baseUrl: AI_GATEWAY_BASE_URL,
+        apiKey: "sk-placeholder",
+        api: "mistral",
+      },
+    },
+  };
+
   // Telegram webhook delivery remains app-owned at the public route, but
   // OpenClaw still needs its native Telegram config so boot-time setWebhook
   // registers the app URL instead of the sandbox-local listener.
