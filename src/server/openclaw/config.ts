@@ -702,8 +702,12 @@ export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"
 OC_PKG="/home/vercel-sandbox/.global/npm/lib/node_modules/openclaw"
 OC_CARBON_PATH="\$OC_PKG/node_modules/@buape/carbon"
 if [ ! -d "\$OC_CARBON_PATH" ]; then
-  echo '{"event":"fast_restore.missing_dependency","package":"@buape/carbon","path":"'\$OC_CARBON_PATH'","action":"rebuild_artifact"}' >&2
-  exit 1
+  echo '{"event":"fast_restore.installing_missing_dependency","package":"@buape/carbon"}' >&2
+  cd "\$OC_PKG" && npm install @buape/carbon --no-save
+  if [ ! -d "\$OC_CARBON_PATH" ]; then
+    echo '{"event":"fast_restore.missing_dependency","package":"@buape/carbon","path":"'\$OC_CARBON_PATH'","action":"rebuild_artifact"}' >&2
+    exit 1
+  fi
 fi
 # Snapshot invariant: reject snapshots that still contain the stale
 # host-scheduler skill.  It told the agent "the cron tool is disabled"
