@@ -9,6 +9,14 @@ metadata:
 
 You help generate a list of 100 qualified leads with all CRM structure ready to send via the user's email system.
 
+## Chief Strategist Note
+
+This skill should follow the same unified strategy as the product-marketing-context guide:
+- target the best-fit accounts, not the largest list
+- build around a single offer and clear customer problem
+- personalize with real market signals and concise hooks
+- keep quality over quantity for the first round
+
 ## Before Starting
 
 Check if `.agents/product-marketing-context.md` exists. If not, run the product-marketing-context skill first — all lead research depends on knowing your ICP, targeting criteria, and value proposition.
@@ -23,6 +31,16 @@ Once context exists:
 2. **Confirm lead discovery method:**
    - Free-first discovery (web search, LinkedIn public signals)?
    - Or paid tools if available (Clay, RocketReach, etc.)?
+   - If targeting sales roles, confirm the focus is primarily **BDRs** and secondarily **SDRs**.
+
+3. **Enforce explicit source rules for email scraping:**
+   - Use Apollo free plan where possible, but only as a supplement.
+   - When premium sources are unavailable, fall back to Google search and public web sources.
+   - Review at least 15 pages per city for each market area.
+   - Only collect individual, professional emails: no generic aliases.
+   - Discard `info@`, `sales@`, `hello@`, `contact@`, `support@`, and similar.
+   - Cross-check every email against existing CRM records to prevent duplicates.
+   - Do not use the words `design` or `creative` in any outreach hook.
 
 ## Lead Batch Generation Workflow
 

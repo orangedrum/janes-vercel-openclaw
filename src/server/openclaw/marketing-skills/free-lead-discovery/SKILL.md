@@ -19,6 +19,30 @@ Use this skill for:
 - verifying names, titles, and emails with free sources
 - preparing lead rows for Google Sheets or another CRM
 
+## Target Role Definition
+
+This skill should prioritize the sales development roles the user requested:
+- **BDR (Business Development Representative)** — primary focus. Outbound hunters who do cold prospecting, generate new opportunities, and schedule meetings for senior sales.
+- **SDR (Sales Development Representative)** — secondary focus. Often handles inbound lead qualification and routes opportunities to AEs.
+
+Both roles:
+- focus on outbound prospecting, lead qualification, pipeline development, and CRM maintenance
+- research target companies and decision-makers
+- book meetings for Account Executives
+
+## Search & Source Rules
+
+When sourcing contacts, use the following explicit rules:
+- **Use every free signal first:** public databases, accessible lists, LinkedIn public profiles, company pages, news, and job posts.
+- **Apollo free plan is acceptable** if available, but do not require paid subscriptions.
+- **Fallback to Google search** and public web sources when premium tools are unavailable.
+- **Page depth:** review at least 15 search result pages per city or market area.
+- **Contact type:** only individual human emails, e.g. `firstname@domain.com`, `firstname.lastname@domain.com`.
+- **Discard generic addresses:** `info@`, `sales@`, `hello@`, `contact@`, `support@`, and similar.
+- **Gmail hover-ready:** targets should be professional, company-domain emails that can be hovered in Gmail for verification.
+- **Deduplicate:** cross-reference every email against the existing CRM and the current batch to ensure zero repeats.
+- **Hook restriction:** do not use the words `design` or `creative` in any outreach hook.
+
 ## Free Discovery Workflow
 
 ### Step 1: Build Free Search Queries

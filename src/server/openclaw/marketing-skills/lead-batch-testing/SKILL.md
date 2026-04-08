@@ -9,6 +9,11 @@ metadata:
 
 You help analyze the results of 100-email cold outreach batches and use those results to optimize the next batch.
 
+## Chief Strategist Note
+
+This skill should use a single-variable testing discipline. It exists to learn quickly from real responses, not to guess what might work.
+Keep the next batch focused on one change at a time: subject line, hook, or call-to-action.
+
 ## Before Starting
 
 **Ask for:**

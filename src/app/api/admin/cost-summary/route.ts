@@ -1,18 +1,18 @@
-import { getRequestContext } from "@/app/request-context";
-import { buildResponse } from "@/components/api-route-errors";
-import { getMeta, getSandboxController } from "@/server/sandbox/controller";
+import { requireJsonRouteAuth, authJsonOk, authJsonError } from "@/server/auth/route-auth";
+import { getStore } from "@/server/store/store";
 import { summarizeRestoreCosts, formatCostSummary } from "@/server/cost-calculator";
 
 export async function GET(request: Request): Promise<Response> {
-  try {
-    const auth = await getRequestContext(request);
-    if (!auth.isValid) {
-      return buildResponse(401, { error: "Unauthorized" });
-    }
+  const auth = await requireJsonRouteAuth(request);
+  if (auth instanceof Response) {
+    return auth;
+  }
 
-    const meta = await getMeta();
+  try {
+    const store = getStore();
+    const meta = await store.getMeta();
     if (!meta) {
-      return buildResponse(404, { error: "No sandbox metadata found" });
+      return authJsonError(new Error("No sandbox metadata found"), auth, { status: 404 });
     }
 
     // batches per week can be passed as query param, defaults to 3
@@ -22,14 +22,13 @@ export async function GET(request: Request): Promise<Response> {
     const summary = summarizeRestoreCosts(meta.lastRestoreMetrics, meta.restoreHistory, batchesPerWeek);
     const formatted = formatCostSummary(summary);
 
-    return buildResponse(200, {
+    return authJsonOk({
       ok: true,
       summary,
       formatted,
       note: "Cost projection assumes batchesPerWeek create + feedback cycles. Adjust 'batches' param to update.",
-    });
+    }, auth);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return buildResponse(500, { error: message });
+    return authJsonError(err, auth);
   }
 }

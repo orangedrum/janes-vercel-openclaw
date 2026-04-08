@@ -1,15 +1,15 @@
-import { getRequestContext } from "@/app/request-context";
-import { buildResponse } from "@/components/api-route-errors";
+import { requireJsonRouteAuth, authJsonOk, authJsonError } from "@/server/auth/route-auth";
+import { jsonOk } from "@/shared/http";
+import { getStore } from "@/server/store/store";
 import { checkEnvironment, formatEnvWarnings, getStartupWarnings } from "@/server/env-checker";
-import { getMeta } from "@/server/sandbox/controller";
 
 export async function GET(request: Request): Promise<Response> {
-  try {
-    const auth = await getRequestContext(request);
-    if (!auth.isValid) {
-      return buildResponse(401, { error: "Unauthorized" });
-    }
+  const auth = await requireJsonRouteAuth(request);
+  if (auth instanceof Response) {
+    return auth;
+  }
 
+  try {
     const url = new URL(request.url);
     const suppressedStr = url.searchParams.get("suppressed");
     const suppressAll = url.searchParams.get("suppressAll") === "true";
@@ -28,7 +28,7 @@ export async function GET(request: Request): Promise<Response> {
 
     const formattedText = formatEnvWarnings(warnings);
 
-    return buildResponse(200, {
+    return authJsonOk({
       ok: true,
       results,
       warnings,
@@ -37,37 +37,36 @@ export async function GET(request: Request): Promise<Response> {
       suppressedChecks: suppressedList,
       suppressAll,
       note: "Critical vars must be set. Optional vars enhance features (email validation, AI Gateway, channels). Pass ?suppressed=VAR1,VAR2 to hide warnings.",
-    });
+    }, auth);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return buildResponse(500, { error: message });
+    return authJsonError(err, auth);
   }
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  try {
-    const auth = await getRequestContext(request);
-    if (!auth.isValid) {
-      return buildResponse(401, { error: "Unauthorized" });
-    }
+  const auth = await requireJsonRouteAuth(request);
+  if (auth instanceof Response) {
+    return auth;
+  }
 
+  try {
     const body = (await request.json()) as { suppress?: string[] | null; suppressAll?: boolean };
 
     // Store suppressed checks in metadata
-    const meta = await getMeta();
+    const store = getStore();
+    const meta = await store.getMeta();
     if (!meta) {
-      return buildResponse(404, { error: "No metadata found" });
+      return authJsonError(new Error("No metadata found"), auth, { status: 404 });
     }
 
     // TODO: implement persistent storage of suppressed env checks when metadata extensibility is added
     // For now, just return the current state
 
-    return buildResponse(200, {
+    return authJsonOk({
       ok: true,
       message: "Env check suppression preferences noted (will persist in future version)",
-    });
+    }, auth);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return buildResponse(500, { error: message });
+    return authJsonError(err, auth);
   }
 }

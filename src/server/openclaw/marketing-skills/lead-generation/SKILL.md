@@ -20,6 +20,10 @@ Gather this context (ask if not provided):
    - What roles/titles are you targeting?
    - What company sizes or industries?
    - What locations/geographies?
+   - If targeting sales roles, confirm whether the focus is primarily **BDRs** and secondarily **SDRs**.
+   - Use the following job definition when targeting these roles:
+     - **BDR:** outbound cold-prospecting, hunting new pipeline, booking meetings for AEs.
+     - **SDR:** inbound qualification and routing of marketing-generated leads.
 
 2. **Lead Quality Criteria**
    - What makes a "good" lead for your business?
@@ -41,20 +45,34 @@ Gather this context (ask if not provided):
 
 ### Step 1: Define Search Criteria
 
-Based on your target profile, create specific search parameters:
+Based on your target profile, create specific search parameters. For your primary use case, prioritize these roles:
 
-**For B2B SaaS:**
-- Titles: CEO, CTO, VP Engineering, Head of Product, Director of Operations
+- **BDR (Business Development Representative):** outbound prospecting, cold outreach, pipeline creation, meeting booking for senior sellers.
+- **SDR (Sales Development Representative):** inbound qualification, lead triage, and routing marketing-generated interest.
+
+**For B2B sales development targeting:**
+- Titles: BDR, Business Development Representative, SDR, Sales Development Representative
+- Secondary titles: Sales Development Manager, Lead Development Representative, Outbound Sales Rep
 - Company size: 50-500 employees (or your ideal range)
-- Industries: Technology, Finance, Healthcare (your target verticals)
-- Signals: Recent funding, hiring in engineering/product, tech stack matches
+- Industries: use the product marketing context target verticals
+- Signals: companies hiring sales development staff, recent outbound growth investment, changes in go-to-market motion
 
-**For B2C or other businesses:**
+**For other profiles:**
 - Adjust titles and criteria based on your ideal customer profile
 
 ### Step 2: Free Discovery First
 
 If paid tools are not available, use free public search sources and search operators first. This is the most sustainable lead source for English-speaking countries.
+
+**Search & Source Rules**
+- Use public databases and accessible prospecting lists where available.
+- If Apollo free plan access exists, use it as a supplement, not the only source.
+- Fallback to Google search, LinkedIn, company websites, and public content when premium tools are unavailable.
+- Review at least 15 search result pages per city or target market.
+- Only collect individual, human emails, such as `firstname@domain.com` or `firstname.lastname@company.com`.
+- Discard generic aliases: `info@`, `sales@`, `hello@`, `contact@`, `support@`, and similar.
+- Cross-check every email against the existing CRM and current batch to avoid duplicates.
+- Do not use the words `design` or `creative` in any outreach hook.
 
 **Free discovery sources:**
 - Google search results

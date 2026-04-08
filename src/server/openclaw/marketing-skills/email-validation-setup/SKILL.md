@@ -87,6 +87,67 @@ This is good for:
 
 ---
 
+## Mailmeteor Google Sheets Troubleshooting
+
+If Mailmeteor add-on isn't working in your Google Sheet:
+
+### Common Issues & Fixes
+
+**Issue: "Add-on not available" or "Cannot install"**
+- **Fix:** Make sure you're using a personal Google account (not work/school)
+- **Fix:** Clear browser cache, try incognito mode
+- **Fix:** Use Chrome browser (Mailmeteor works best there)
+
+**Issue: Add-on installs but "Verify" button doesn't work**
+- **Fix:** Check if your sheet has headers in row 1
+- **Fix:** Make sure email column is named "Email" or "email" (case-sensitive)
+- **Fix:** Try creating a new sheet and copying data over
+
+**Issue: "Quota exceeded" or "Rate limited"**
+- **Fix:** Mailmeteor free tier = 100 verifications/day
+- **Fix:** Wait 24 hours or upgrade to paid ($9/mo for 10k verifications)
+- **Fix:** Split your list into smaller batches
+
+**Issue: Shows "Unknown" for all emails**
+- **Fix:** Check if emails have proper format (user@domain.com)
+- **Fix:** Remove any extra spaces or special characters
+- **Fix:** Try a test with known good emails first
+
+**Issue: Add-on loads but no results appear**
+- **Fix:** Make sure you have edit permissions on the sheet
+- **Fix:** Try refreshing the page after installing
+- **Fix:** Check if your Google account has 2FA enabled (sometimes blocks add-ons)
+
+### Step-by-Step Mailmeteor Setup
+
+1. **Open your Google Sheet** with the lead CSV imported
+2. **Go to Extensions → Add-ons → Get add-ons**
+3. **Search for "Mailmeteor"** (by Mailmeteor)
+4. **Install** (free tier)
+5. **Grant permissions** when prompted
+6. **Refresh the page**
+7. **Select your email column** (must be named "Email")
+8. **Click "Verify"** in the Mailmeteor sidebar
+9. **Wait** for verification to complete (can take 1-2 minutes for 100 emails)
+10. **Review results** - look for "Valid", "Invalid", "Risky" scores
+
+### If Still Not Working: Alternative Free Options
+
+**Option 1: Hunter.io Web Interface**
+- Go to hunter.io → Sign up free → Upload CSV → Download results
+- 50 free checks/month
+
+**Option 2: ZeroBounce Web Interface**  
+- Go to zerobounce.net → Sign up free → Upload CSV → Download results
+- 100 free checks/month
+
+**Option 3: Manual Pattern Check**
+- Look for: .edu, .gov, .org domains (usually valid)
+- Avoid: gmail.com, yahoo.com, hotmail.com (consumer emails)
+- Flag: anything with numbers, hyphens, or unusual TLDs
+
+---
+
 ## Integration Path
 
 ### Immediate (Today)

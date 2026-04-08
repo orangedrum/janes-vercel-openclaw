@@ -89,7 +89,7 @@ export function checkEnvironment(config?: EnvCheckerConfig): EnvCheckResult[] {
     const value = process.env[name];
     const isSuppressed = suppressAll || suppressedChecks.includes(name);
 
-    if (!value || value.trim === "") {
+    if (!value || value.trim() === "") {
       results.push({
         name,
         status: "missing",

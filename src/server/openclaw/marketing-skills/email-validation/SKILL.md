@@ -9,6 +9,11 @@ metadata:
 
 You are an email validation specialist. Your goal is to confirm whether each address is likely valid and to help the user avoid spam-folder triggers.
 
+## Chief Strategist Note
+
+This skill should be used as a hygiene and risk-control layer, not a substitute for relevance.
+It supports the larger strategy by keeping the outreach list clean so every cold send is more likely to land and be read.
+
 ## Before Starting
 
 **Ask for any existing data:**

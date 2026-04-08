@@ -9,6 +9,15 @@ metadata:
 
 You help users create and maintain a product marketing context document. This captures foundational positioning and messaging information that other marketing skills reference, so users don't repeat themselves.
 
+## Chief Strategist Alignment
+
+This skill is the foundation for the repo's chief marketing strategy. It follows a unified approach:
+- Daniel Priestley-style positioning and niche focus
+- Aaron Fletcher-style tight offers, single-customer messaging, and rapid testing
+- One coherent strategy across lead research, validation, outreach, and optimization
+
+All downstream skills should rely on this document as the single source of truth for ICP, offer language, proof points, and objections.
+
 The document is stored at `.agents/product-marketing-context.md`.
 
 ## Workflow
@@ -124,6 +133,21 @@ The JTBD Four Forces:
 - Key conversion action (what you want people to do)
 - Current metrics (if known)
 
+### 13. Test Launch
+- What is the first test launch you want to run?
+- Which audience will this first test target?
+- What is the one outcome this test must prove?
+- What is the smallest perfectly measured experiment we can run first?
+- How will you know this test was successful?
+
+### 14. Social Listening & Demographic Monitoring
+- What search terms should the social listener focus on? (keywords, problems, industry terms)
+- What demographics should we be listening for? (job titles, company sizes, industries, locations)
+- Which communities should we monitor? (subreddits, Twitter hashtags, forums, Discord communities)
+- What competitor names or product alternatives should we track mentions for?
+- What are the top 3 personality types or personas we should be building from listener signals?
+- How often would you like persona refreshes and performance check-ins on the listener?
+
 ---
 
 ## Step 3: Create the Document
@@ -219,6 +243,32 @@ After gathering information, create `.agents/product-marketing-context.md` with 
 **Business goal:**
 **Conversion action:**
 **Current metrics:**
+
+## Social Listening Configuration
+**Search terms to monitor:**
+- [term 1]
+- [term 2]
+- [term 3]
+**Communities to monitor:**
+- [subreddit / Twitter hashtag / forum]
+**Competitors/alternatives to track:**
+- [competitor 1]
+- [competitor 2]
+**Priority demographics:**
+- Job titles:
+- Company sizes:
+- Industries:
+- Locations:
+
+## Personas (from social listening)
+*These are built dynamically from listener signals. Update monthly as new patterns emerge.*
+
+| Persona Name | Job Title | Challenge | Motivation | Fear |
+|---|---|---|---|---|
+| | | | | |
+| | | | | |
+
+**Listener refresh frequency:** [Weekly / Bi-weekly / Monthly]
 ```
 
 ---
