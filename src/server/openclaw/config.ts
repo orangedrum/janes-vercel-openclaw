@@ -315,11 +315,6 @@ export function buildGatewayConfig(
   config.models = {
     mode: "merge",
     providers: {
-      anthropic: {
-        baseUrl: AI_GATEWAY_BASE_URL,
-        apiKey: "sk-placeholder",
-        api: "anthropic",
-      },
       openai: {
         baseUrl: AI_GATEWAY_BASE_URL,
         apiKey: "sk-placeholder",
@@ -333,26 +328,6 @@ export function buildGatewayConfig(
           { id: "text-embedding-3-large", name: "Text Embedding 3 Large" },
           { id: "whisper-1", name: "Whisper" },
         ],
-      },
-      google: {
-        baseUrl: AI_GATEWAY_BASE_URL,
-        apiKey: "sk-placeholder",
-        api: "google",
-      },
-      deepseek: {
-        baseUrl: AI_GATEWAY_BASE_URL,
-        apiKey: "sk-placeholder",
-        api: "deepseek",
-      },
-      xai: {
-        baseUrl: AI_GATEWAY_BASE_URL,
-        apiKey: "sk-placeholder",
-        api: "xai",
-      },
-      mistral: {
-        baseUrl: AI_GATEWAY_BASE_URL,
-        apiKey: "sk-placeholder",
-        api: "mistral",
       },
     },
   };
