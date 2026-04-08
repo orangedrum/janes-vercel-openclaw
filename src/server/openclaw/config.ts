@@ -279,6 +279,39 @@ export function buildGatewayConfig(
     },
   };
 
+  config.agents = {
+    defaults: {
+      model: {
+        primary: "google/gemini-3.1-flash",
+        fallbacks: [
+          "google/gemini-3-flash",
+          "google/gemini-2.5-flash",
+          "openai/gpt-5.3-chat",
+          "openai/gpt-5.2",
+        ],
+      },
+      models: {
+        "google/gemini-3.1-flash": { alias: "Gemini 3.1 Flash" },
+        "google/gemini-3-flash": { alias: "Gemini 3 Flash" },
+        "google/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
+        "google/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
+        "openai/gpt-5.3-chat": { alias: "GPT-5.3 Chat" },
+        "openai/gpt-5.2": { alias: "GPT-5.2" },
+        "openai/gpt-5-mini": { alias: "GPT-5 Mini" },
+        "openai/o3": { alias: "o3" },
+        "openai/o4-mini": { alias: "o4-mini" },
+        "anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
+        "anthropic/claude-sonnet-4.6": { alias: "Claude Sonnet 4.6" },
+        "anthropic/claude-haiku-4.5": { alias: "Claude Haiku 4.5" },
+        "deepseek/deepseek-v3.2": { alias: "DeepSeek V3.2" },
+        "deepseek/deepseek-v3.2-thinking": { alias: "DeepSeek V3.2 Thinking" },
+        "xai/grok-4": { alias: "Grok 4" },
+        "mistral/mistral-large-3": { alias: "Mistral Large 3" },
+        "mistral/devstral-2": { alias: "Mistral Devstral 2" },
+      },
+    },
+  };
+
   config.models = {
     mode: "merge",
     providers: {
