@@ -269,7 +269,6 @@ export function buildGatewayConfig(
         mode: "trusted-proxy",
         trustedProxy: ["10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
       },
-      trustedProxies: ["10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
       controlUi,
       http: {
         endpoints: {
