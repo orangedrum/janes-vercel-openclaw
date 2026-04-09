@@ -714,6 +714,22 @@ console.error(JSON.stringify({ event: "fast_restore.force_pair", deviceId }));
 else
   printf '{"ready":false,"attempts":%d,"readyMs":%d}\\n' "\$_attempts" "\$_ready_ms"
   echo '{"event":"fast_restore.readiness_timeout","action":"fallback_full_startup"}' >&2
+
+  # If the gateway crashed due to a missing runtime dependency (seen after
+  # manual OpenClaw updates or partial node_modules state), repair deps in
+  # place and retry once before failing the restore.
+  if grep -q 'MODULE_NOT_FOUND' "${OPENCLAW_LOG_FILE}" 2>/dev/null; then
+    echo '{"event":"fast_restore.repair_deps_start"}' >&2
+    if [ -d "\$OC_PKG" ]; then
+      cd "\$OC_PKG" && npm install --no-save --omit=dev >/tmp/openclaw-repair.log 2>&1 || true
+      echo '{"event":"fast_restore.repair_deps_done"}' >&2
+      ${buildGatewayKillShell()}
+      ${buildGatewayLaunchShell()}
+    else
+      echo '{"event":"fast_restore.repair_deps_skipped","reason":"missing_openclaw_package_dir"}' >&2
+    fi
+  fi
+
   if [ -x "${OPENCLAW_STARTUP_SCRIPT_PATH}" ]; then
     bash "${OPENCLAW_STARTUP_SCRIPT_PATH}" || true
   else
