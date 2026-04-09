@@ -251,7 +251,9 @@ export async function setupOpenClaw(
   progress?.setPhase("writing-config", "Writing gateway config");
   progress?.appendLine("system", "Writing OpenClaw config and startup files");
 
-  const apiKey = await getAiGatewayBearerTokenOptional();
+  const envApiKey = process.env.AI_GATEWAY_API_KEY?.trim();
+  const oidcApiKey = await getAiGatewayBearerTokenOptional();
+  const apiKey = envApiKey && envApiKey.length > 0 ? envApiKey : oidcApiKey;
 
   const bootstrapFiles = buildBootstrapFiles({
     gatewayToken: options.gatewayToken,

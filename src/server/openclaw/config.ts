@@ -258,6 +258,28 @@ export function buildGatewayConfig(
   telegramWebhookSecret?: string,
   whatsappConfig?: WhatsAppGatewayConfig,
 ): string {
+  const explicitApiKey = apiKey?.trim() || process.env.AI_GATEWAY_API_KEY?.trim() || "";
+  const useDirectGemini = explicitApiKey.startsWith("AIza");
+  const defaultPrimaryModel = useDirectGemini
+    ? "openai/gemini-2.5-flash"
+    : "vercel-ai-gateway/google/gemini-2.5-flash";
+  const defaultFallbackModels = useDirectGemini
+    ? [
+        "openai/gemini-3-flash",
+        "openai/gemini-2.5-pro",
+        "openai/gpt-5.3-chat",
+        "openai/gpt-5.2",
+      ]
+    : [
+        "vercel-ai-gateway/google/gemini-3-flash",
+        "vercel-ai-gateway/google/gemini-2.5-pro",
+        "vercel-ai-gateway/openai/gpt-5.3-chat",
+        "vercel-ai-gateway/openai/gpt-5.2",
+      ];
+  const modelProviderBaseUrl = useDirectGemini
+    ? "https://generativelanguage.googleapis.com/v1beta/openai"
+    : AI_GATEWAY_BASE_URL;
+
   const controlUi: Record<string, unknown> = {
     allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", false),
     // Device auth is always disabled in the proxied setup because the
@@ -292,13 +314,8 @@ export function buildGatewayConfig(
   config.agents = {
     defaults: {
       model: {
-        primary: "vercel-ai-gateway/google/gemini-2.5-flash",
-        fallbacks: [
-          "vercel-ai-gateway/google/gemini-3-flash",
-          "vercel-ai-gateway/google/gemini-2.5-pro",
-          "vercel-ai-gateway/openai/gpt-5.3-chat",
-          "vercel-ai-gateway/openai/gpt-5.2",
-        ],
+        primary: defaultPrimaryModel,
+        fallbacks: defaultFallbackModels,
       },
       models: {
         "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
@@ -313,6 +330,9 @@ export function buildGatewayConfig(
         "vercel-ai-gateway/google/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
         "vercel-ai-gateway/google/gemini-3-flash": { alias: "Gemini 3 Flash" },
         "vercel-ai-gateway/google/gemini-3.1-flash-image-preview": { alias: "Gemini 3.1 Flash Image" },
+        "openai/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
+        "openai/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
+        "openai/gemini-3-flash": { alias: "Gemini 3 Flash" },
         "vercel-ai-gateway/deepseek/deepseek-v3.2": { alias: "DeepSeek V3.2" },
         "vercel-ai-gateway/deepseek/deepseek-v3.2-thinking": { alias: "DeepSeek V3.2 Thinking" },
         "vercel-ai-gateway/xai/grok-4": { alias: "Grok 4" },
@@ -326,10 +346,13 @@ export function buildGatewayConfig(
     mode: "merge",
     providers: {
       openai: {
-        baseUrl: AI_GATEWAY_BASE_URL,
+        baseUrl: modelProviderBaseUrl,
         apiKey: "sk-placeholder",
         api: "openai-completions",
         models: [
+          { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+          { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+          { id: "gemini-3-flash", name: "Gemini 3 Flash" },
           { id: "gpt-image-1", name: "GPT Image 1" },
           { id: "dall-e-3", name: "DALL-E 3" },
           { id: "gpt-4o", name: "GPT-4o", input: ["text", "image"] },
