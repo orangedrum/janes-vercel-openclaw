@@ -13,6 +13,7 @@ export const BUN_DOWNLOAD_SHA256 = "8611ba935af886f05a6f38740a15160326c15e5d5d07
 export const OPENCLAW_STATE_DIR = "/home/vercel-sandbox/.openclaw";
 export const OPENCLAW_CONFIG_PATH = `${OPENCLAW_STATE_DIR}/openclaw.json`;
 export const OPENCLAW_GATEWAY_TOKEN_PATH = `${OPENCLAW_STATE_DIR}/.gateway-token`;
+export const OPENCLAW_AI_GATEWAY_API_KEY_PATH = `${OPENCLAW_STATE_DIR}/.ai-gateway-api-key`;
 
 export const OPENCLAW_FORCE_PAIR_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.force-pair.mjs`;
 export const OPENCLAW_NET_LEARN_PATH = "/tmp/net-learn.js";
@@ -100,10 +101,10 @@ function buildGatewayPortProfileShell(): string {
 
 /**
  * Shell fragment that reads the gateway token from disk and exports the
- * variables needed by the openclaw gateway.  The AI Gateway API key is
- * NOT read from disk — it is injected via network policy header transform
- * at the sandbox firewall layer.  Only OPENAI_BASE_URL is set so code
- * inside the sandbox knows where to send requests.
+ * variables needed by the openclaw gateway.  The AI Gateway API key is also
+ * injected via network policy header transform at the firewall layer, but
+ * OpenClaw still needs env vars to populate its internal auth store
+ * (auth-profiles.json) at startup.
  * Exits non-zero when the gateway token is missing or empty.
  */
 function buildGatewayEnvShell(): string {
@@ -112,6 +113,13 @@ function buildGatewayEnvShell(): string {
     'if [ -z "$gateway_token" ]; then',
     '  echo \'{"event":"gateway_env.error","reason":"empty_gateway_token"}\' >&2',
     "  exit 1",
+    "fi",
+    'if [ -z "${AI_GATEWAY_API_KEY:-}" ]; then',
+    `  AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"`,
+    "fi",
+    'if [ -n "$AI_GATEWAY_API_KEY" ]; then',
+    '  export AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY"',
+    '  export OPENAI_API_KEY="$AI_GATEWAY_API_KEY"',
     "fi",
     `export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"`,
     `export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"`,
@@ -644,6 +652,14 @@ if [ -n "\${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
   (umask 077; printf '%s' "\$gateway_token" > "${OPENCLAW_GATEWAY_TOKEN_PATH}")
 else
   gateway_token="$(cat "${OPENCLAW_GATEWAY_TOKEN_PATH}" 2>/dev/null || true)"
+fi
+if [ -z "\${AI_GATEWAY_API_KEY:-}" ]; then
+  AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
+fi
+if [ -n "\$AI_GATEWAY_API_KEY" ]; then
+  (umask 077; printf '%s' "\$AI_GATEWAY_API_KEY" > "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}")
+  export AI_GATEWAY_API_KEY="\$AI_GATEWAY_API_KEY"
+  export OPENAI_API_KEY="\$AI_GATEWAY_API_KEY"
 fi
 if [ -z "\$gateway_token" ]; then
   echo '{"event":"fast_restore.error","reason":"empty_gateway_token"}' >&2

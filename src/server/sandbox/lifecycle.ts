@@ -1422,6 +1422,7 @@ export async function prepareHotSpareFromPreparedRestore(options?: {
 
   const restoreEnv = buildRestoreRuntimeEnv({
     gatewayToken: meta.gatewayToken,
+    apiKey: credential?.token,
   });
 
   const result = await preCreateHotSpareFromSnapshot(meta, {
@@ -2426,12 +2427,14 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
 
       const restoreEnv = buildRestoreRuntimeEnv({
         gatewayToken: latest.gatewayToken,
+        apiKey: freshApiKey,
       });
 
       const assetSyncStart = Date.now();
       const slackConfig = latest.channels.slack;
       await syncRestoreAssetsIfNeeded(sandbox, {
         origin,
+        apiKey: freshApiKey,
         telegramBotToken: latest.channels.telegram?.botToken,
         telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
         slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
@@ -2770,6 +2773,7 @@ async function restoreSandboxFromSnapshot(
 
     const restoreEnv = buildRestoreRuntimeEnv({
       gatewayToken: latest.gatewayToken,
+      apiKey: credential?.token,
     });
 
     // Hot-spare promotion attempt — skip the normal Sandbox.create() if a
@@ -2914,6 +2918,7 @@ async function restoreSandboxFromSnapshot(
       await sandbox.writeFiles(
         buildDynamicRestoreFiles({
           proxyOrigin: origin,
+          apiKey: credential?.token,
           telegramBotToken: latest.channels.telegram?.botToken,
           telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
           slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
@@ -3387,6 +3392,7 @@ async function syncRestoreAssetsIfNeeded(
   sandbox: SandboxHandle,
   options: {
     origin: string;
+    apiKey?: string;
     telegramBotToken?: string;
     telegramWebhookSecret?: string;
     slackCredentials?: { botToken: string; signingSecret: string };
@@ -3409,6 +3415,7 @@ async function syncRestoreAssetsIfNeeded(
 
   const files = buildDynamicRestoreFiles({
     proxyOrigin: options.origin,
+    apiKey: options.apiKey,
     telegramBotToken: options.telegramBotToken,
     telegramWebhookSecret: options.telegramWebhookSecret,
     slackCredentials: options.slackCredentials,

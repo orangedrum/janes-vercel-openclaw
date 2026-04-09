@@ -253,6 +253,7 @@ export async function setupOpenClaw(
 
   const bootstrapFiles = buildBootstrapFiles({
     gatewayToken: options.gatewayToken,
+    apiKey,
     proxyOrigin: options.proxyOrigin,
     telegramBotToken: options.telegramBotToken,
     telegramWebhookSecret: options.telegramWebhookSecret,

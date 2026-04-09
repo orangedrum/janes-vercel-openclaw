@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { WhatsAppGatewayConfig } from "@/server/openclaw/config";
 import {
+  OPENCLAW_AI_GATEWAY_API_KEY_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
   buildFastRestoreScript,
   buildForcePairScript,
@@ -201,6 +202,7 @@ export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
 
 export function buildDynamicRestoreFiles(options: {
   proxyOrigin: string;
+  apiKey?: string;
   telegramBotToken?: string;
   telegramWebhookSecret?: string;
   slackCredentials?: { botToken: string; signingSecret: string };
@@ -229,11 +231,19 @@ export function buildDynamicRestoreFiles(options: {
     });
   }
 
+  if (options.apiKey) {
+    files.push({
+      path: OPENCLAW_AI_GATEWAY_API_KEY_PATH,
+      content: Buffer.from(options.apiKey),
+    });
+  }
+
   return files;
 }
 
 export type RestoreRuntimeEnvOptions = {
   gatewayToken: string;
+  apiKey?: string;
 };
 
 export function buildRestoreRuntimeEnv(
@@ -243,12 +253,20 @@ export function buildRestoreRuntimeEnv(
   // env payload limit and the base64-encoded config exceeds it.  The config
   // is delivered via writeFiles() (buildDynamicRestoreFiles) when the hash
   // changes, or already baked into the snapshot when it matches.
-  // AI Gateway API key is injected via network policy header transform —
-  // only OPENAI_BASE_URL is needed so code knows where to send requests.
-  return {
+  // OpenClaw needs AI_GATEWAY_API_KEY/OPENAI_API_KEY in env to populate its
+  // internal auth store (auth-profiles.json). The firewall transform remains
+  // the defense-in-depth credential path for outbound requests.
+  const env: Record<string, string> = {
     OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
     OPENAI_BASE_URL: "https://ai-gateway.vercel.sh/v1",
   };
+
+  if (options.apiKey) {
+    env.AI_GATEWAY_API_KEY = options.apiKey;
+    env.OPENAI_API_KEY = options.apiKey;
+  }
+
+  return env;
 }
 
 export function buildRestoreAssetManifest(): RestoreAssetManifest {
@@ -271,6 +289,7 @@ export function buildRestoreAssetManifest(): RestoreAssetManifest {
 
 export type BootstrapFilesOptions = {
   gatewayToken: string;
+  apiKey?: string;
   proxyOrigin: string;
   telegramBotToken?: string;
   telegramWebhookSecret?: string;
@@ -295,6 +314,7 @@ export function buildBootstrapFiles(
   return [
     ...buildDynamicRestoreFiles({
       proxyOrigin: options.proxyOrigin,
+      apiKey: options.apiKey,
       telegramBotToken: options.telegramBotToken,
       telegramWebhookSecret: options.telegramWebhookSecret,
       slackCredentials: options.slackCredentials,
