@@ -662,7 +662,11 @@ OC_PKG="/home/vercel-sandbox/.global/npm/lib/node_modules/openclaw"
 OC_CARBON_PATH="\$OC_PKG/node_modules/@buape/carbon"
 if [ ! -d "\$OC_CARBON_PATH" ]; then
   echo '{"event":"fast_restore.installing_missing_dependency","package":"@buape/carbon"}' >&2
-  cd "\$OC_PKG" && npm install @buape/carbon --no-save
+  cd "\$OC_PKG"
+  npm install @buape/carbon --no-save --legacy-peer-deps --no-audit --no-fund \
+    >/tmp/openclaw-carbon-install.log 2>&1 || \
+    npm install @buape/carbon --no-save --force --no-audit --no-fund \
+      >/tmp/openclaw-carbon-install.log 2>&1 || true
   if [ ! -d "\$OC_CARBON_PATH" ]; then
     echo '{"event":"fast_restore.missing_dependency","package":"@buape/carbon","path":"'\$OC_CARBON_PATH'","action":"rebuild_artifact"}' >&2
     exit 1
@@ -800,8 +804,14 @@ else
     echo '{"event":"fast_restore.repair_deps_start"}' >&2
     if [ -d "\$OC_PKG" ]; then
       _repair_spec="${process.env.OPENCLAW_PACKAGE_SPEC ?? "openclaw@2026.3.28"}"
-      npm install -g "\$_repair_spec" >/tmp/openclaw-repair-install.log 2>&1 || true
-      cd "\$OC_PKG" && npm install --no-save --omit=dev >/tmp/openclaw-repair.log 2>&1 || true
+      npm install -g "\$_repair_spec" --legacy-peer-deps --no-audit --no-fund \
+        >/tmp/openclaw-repair-install.log 2>&1 || \
+        npm install -g "\$_repair_spec" --force --no-audit --no-fund \
+          >/tmp/openclaw-repair-install.log 2>&1 || true
+      cd "\$OC_PKG" && npm install --no-save --omit=dev --legacy-peer-deps --no-audit --no-fund \
+        >/tmp/openclaw-repair.log 2>&1 || \
+        npm install --no-save --omit=dev --force --no-audit --no-fund \
+          >/tmp/openclaw-repair.log 2>&1 || true
       echo '{"event":"fast_restore.repair_deps_done","action":"reinstall_openclaw_then_npm_install"}' >&2
       ${buildGatewayKillShell()}
       ${buildGatewayLaunchShell()}
