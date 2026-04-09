@@ -716,13 +716,15 @@ else
   echo '{"event":"fast_restore.readiness_timeout","action":"fallback_full_startup"}' >&2
 
   # If the gateway crashed due to a missing runtime dependency (seen after
-  # manual OpenClaw updates or partial node_modules state), repair deps in
-  # place and retry once before failing the restore.
+  # manual OpenClaw updates or partial node_modules state), reinstall
+  # OpenClaw and then repair dependencies in place before retrying.
   if grep -q 'MODULE_NOT_FOUND' "${OPENCLAW_LOG_FILE}" 2>/dev/null; then
     echo '{"event":"fast_restore.repair_deps_start"}' >&2
     if [ -d "\$OC_PKG" ]; then
+      _repair_spec="${process.env.OPENCLAW_PACKAGE_SPEC ?? "openclaw@2026.3.28"}"
+      npm install -g "\$_repair_spec" >/tmp/openclaw-repair-install.log 2>&1 || true
       cd "\$OC_PKG" && npm install --no-save --omit=dev >/tmp/openclaw-repair.log 2>&1 || true
-      echo '{"event":"fast_restore.repair_deps_done"}' >&2
+      echo '{"event":"fast_restore.repair_deps_done","action":"reinstall_openclaw_then_npm_install"}' >&2
       ${buildGatewayKillShell()}
       ${buildGatewayLaunchShell()}
     else
