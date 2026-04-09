@@ -1422,7 +1422,6 @@ export async function prepareHotSpareFromPreparedRestore(options?: {
 
   const restoreEnv = buildRestoreRuntimeEnv({
     gatewayToken: meta.gatewayToken,
-    apiKey: credential?.token,
   });
 
   const result = await preCreateHotSpareFromSnapshot(meta, {
