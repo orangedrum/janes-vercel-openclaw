@@ -281,17 +281,20 @@ export function buildGatewayConfig(
     : AI_GATEWAY_BASE_URL;
 
   const controlUi: Record<string, unknown> = {
-    allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", false),
+    // The app enforces auth before proxying gateway HTML, so Control UI can
+    // safely run with insecure auth to avoid origin deadlocks on preview URLs.
+    allowInsecureAuth: true,
     // Device auth is always disabled in the proxied setup because the
     // server-side force-pair identity can never match the browser's
     // client-generated identity.  The proxy enforces auth before any
     // gateway traffic reaches the sandbox.
     dangerouslyDisableDeviceAuth: true,
   };
-  // In proxied/persistent deployments the public host can change between
-  // deploy URLs while the sandbox persists, which can lock operators out
-  // with "origin not allowed". Use wildcard allowlist to avoid this.
-  controlUi.allowedOrigins = ["*"];
+  // Only pin allowed origins when we have a concrete public origin.
+  // Leaving this unset avoids false-negatives when preview URLs rotate.
+  if (proxyOrigin) {
+    controlUi.allowedOrigins = [proxyOrigin];
+  }
 
   const config: Record<string, unknown> = {
     gateway: {
