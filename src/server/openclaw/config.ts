@@ -266,8 +266,9 @@ export function buildGatewayConfig(
     gateway: {
       mode: "local",
       auth: {
-        mode: "none",
+        mode: "token",
       },
+      trustedProxies: ["10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
       controlUi,
       http: {
         endpoints: {
@@ -282,32 +283,32 @@ export function buildGatewayConfig(
   config.agents = {
     defaults: {
       model: {
-        primary: "google/gemini-2.5-flash",
+        primary: "vercel-ai-gateway/google/gemini-2.5-flash",
         fallbacks: [
-          "google/gemini-3-flash",
-          "google/gemini-2.5-pro",
-          "openai/gpt-5.3-chat",
-          "openai/gpt-5.2",
+          "vercel-ai-gateway/google/gemini-3-flash",
+          "vercel-ai-gateway/google/gemini-2.5-pro",
+          "vercel-ai-gateway/openai/gpt-5.3-chat",
+          "vercel-ai-gateway/openai/gpt-5.2",
         ],
       },
       models: {
-        "google/gemini-3.1-flash": { alias: "Gemini 3.1 Flash" },
-        "google/gemini-3-flash": { alias: "Gemini 3 Flash" },
-        "google/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
-        "google/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
-        "openai/gpt-5.3-chat": { alias: "GPT-5.3 Chat" },
-        "openai/gpt-5.2": { alias: "GPT-5.2" },
-        "openai/gpt-5-mini": { alias: "GPT-5 Mini" },
-        "openai/o3": { alias: "o3" },
-        "openai/o4-mini": { alias: "o4-mini" },
-        "anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
-        "anthropic/claude-sonnet-4.6": { alias: "Claude Sonnet 4.6" },
-        "anthropic/claude-haiku-4.5": { alias: "Claude Haiku 4.5" },
-        "deepseek/deepseek-v3.2": { alias: "DeepSeek V3.2" },
-        "deepseek/deepseek-v3.2-thinking": { alias: "DeepSeek V3.2 Thinking" },
-        "xai/grok-4": { alias: "Grok 4" },
-        "mistral/mistral-large-3": { alias: "Mistral Large 3" },
-        "mistral/devstral-2": { alias: "Mistral Devstral 2" },
+        "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
+        "vercel-ai-gateway/anthropic/claude-sonnet-4.6": { alias: "Claude Sonnet 4.6" },
+        "vercel-ai-gateway/anthropic/claude-haiku-4.5": { alias: "Claude Haiku 4.5" },
+        "vercel-ai-gateway/openai/gpt-5.3-chat": { alias: "GPT-5.3 Chat" },
+        "vercel-ai-gateway/openai/gpt-5.2": { alias: "GPT-5.2" },
+        "vercel-ai-gateway/openai/gpt-5-mini": { alias: "GPT-5 Mini" },
+        "vercel-ai-gateway/openai/o3": { alias: "o3" },
+        "vercel-ai-gateway/openai/o4-mini": { alias: "o4-mini" },
+        "vercel-ai-gateway/google/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
+        "vercel-ai-gateway/google/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
+        "vercel-ai-gateway/google/gemini-3-flash": { alias: "Gemini 3 Flash" },
+        "vercel-ai-gateway/google/gemini-3.1-flash-image-preview": { alias: "Gemini 3.1 Flash Image" },
+        "vercel-ai-gateway/deepseek/deepseek-v3.2": { alias: "DeepSeek V3.2" },
+        "vercel-ai-gateway/deepseek/deepseek-v3.2-thinking": { alias: "DeepSeek V3.2 Thinking" },
+        "vercel-ai-gateway/xai/grok-4": { alias: "Grok 4" },
+        "vercel-ai-gateway/mistral/mistral-large-3": { alias: "Mistral Large 3" },
+        "vercel-ai-gateway/mistral/devstral-2": { alias: "Devstral 2" },
       },
     },
   };
@@ -347,13 +348,13 @@ export function buildGatewayConfig(
       image: {
         enabled: true,
         models: [
-          { provider: "openai", model: "google/gemini-3.1-flash-image-preview" },
-          { provider: "openai", model: "openai/gpt-4o" },
+          { provider: "vercel-ai-gateway", model: "google/gemini-3.1-flash-image-preview" },
+          { provider: "vercel-ai-gateway", model: "openai/gpt-4o" },
         ],
       },
       video: {
         enabled: true,
-        models: [{ provider: "openai", model: "google/gemini-3-flash" }],
+        models: [{ provider: "vercel-ai-gateway", model: "google/gemini-3-flash" }],
       },
       audio: { enabled: true },
     },
