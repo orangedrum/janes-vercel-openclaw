@@ -1,5 +1,5 @@
 import { logError, logInfo, logWarn } from "@/server/log";
-import { getOpenclawPackageSpec, isVercelDeployment } from "@/server/env";
+import { getAiGatewayBearerTokenOptional, getOpenclawPackageSpec, isVercelDeployment } from "@/server/env";
 import { isPinnedPackageSpec } from "@/server/deployment-contract";
 import type { WhatsAppGatewayConfig } from "@/server/openclaw/config";
 import {
@@ -250,6 +250,8 @@ export async function setupOpenClaw(
 
   progress?.setPhase("writing-config", "Writing gateway config");
   progress?.appendLine("system", "Writing OpenClaw config and startup files");
+
+  const apiKey = await getAiGatewayBearerTokenOptional();
 
   const bootstrapFiles = buildBootstrapFiles({
     gatewayToken: options.gatewayToken,
