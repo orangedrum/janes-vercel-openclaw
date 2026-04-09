@@ -195,6 +195,7 @@ export function buildTokenHtmlHeaders(
   ];
   const csp = [
     `default-src 'self' 'unsafe-inline'`,
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval'`,
     `connect-src ${connectSrc.join(" ")}`,
     "img-src 'self' data: blob:",
     "form-action 'self'",
@@ -213,6 +214,7 @@ export function buildTokenHtmlHeaders(
 export function buildWaitingPageCsp(): string {
   return [
     "default-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "connect-src 'self'",
     "img-src 'self' data:",
     "form-action 'self'",
