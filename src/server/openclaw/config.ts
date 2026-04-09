@@ -713,8 +713,41 @@ console.error(JSON.stringify({ event: "fast_restore.force_pair", deviceId }));
   echo '{"event":"fast_restore.complete"}' >&2
 else
   printf '{"ready":false,"attempts":%d,"readyMs":%d}\\n' "\$_attempts" "\$_ready_ms"
-  echo '{"event":"fast_restore.readiness_timeout"}' >&2
-  exit 1
+  echo '{"event":"fast_restore.readiness_timeout","action":"fallback_full_startup"}' >&2
+  if [ -x "${OPENCLAW_STARTUP_SCRIPT_PATH}" ]; then
+    bash "${OPENCLAW_STARTUP_SCRIPT_PATH}" || true
+  else
+    # Absolute fallback if the startup script file is not executable/present.
+    ${buildGatewayKillShell()}
+    ${buildGatewayLaunchShell()}
+  fi
+
+  # Second-chance readiness probe after full startup path.
+  _retry_timeout=120
+  _retry_attempts=0
+  _retry_ready=0
+  _retry_deadline=$(( $(date +%s) + _retry_timeout ))
+  while [ "$(date +%s)" -lt "$_retry_deadline" ]; do
+    _retry_attempts=$((_retry_attempts + 1))
+    _retry_http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:${OPENCLAW_PORT}/ 2>/dev/null || true)
+    if [ "$((_retry_attempts % 20))" = "0" ] && [ "$_retry_attempts" -gt 0 ]; then
+      echo "{\"event\":\"fast_restore.retry_probe\",\"attempt\":$_retry_attempts,\"http_code\":\"$_retry_http_code\"}" >&2
+    fi
+    if [ "$_retry_http_code" -gt 0 ] 2>/dev/null && [ "$_retry_http_code" -lt 500 ] 2>/dev/null; then
+      _retry_ready=1
+      break
+    fi
+    sleep 0.1
+  done
+
+  if [ "$_retry_ready" = "1" ]; then
+    echo '{"event":"fast_restore.recovered_via_full_startup"}' >&2
+    echo '{"event":"fast_restore.complete"}' >&2
+  else
+    echo '{"event":"fast_restore.readiness_timeout_after_fallback"}' >&2
+    tail -n 120 "${OPENCLAW_LOG_FILE}" >&2 || true
+    exit 1
+  fi
 fi
 `;
 }
