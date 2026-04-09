@@ -282,10 +282,10 @@ export function buildGatewayConfig(
   config.agents = {
     defaults: {
       model: {
-        primary: "google/gemini-3.1-flash",
+        primary: "google/gemini-2.5-flash",
         fallbacks: [
           "google/gemini-3-flash",
-          "google/gemini-2.5-flash",
+          "google/gemini-2.5-pro",
           "openai/gpt-5.3-chat",
           "openai/gpt-5.2",
         ],
@@ -331,6 +331,84 @@ export function buildGatewayConfig(
       },
     },
   };
+
+  // Grant owner-level tool access (cron, gateway, nodes) to channel
+  // senders. The proxy enforces auth before traffic reaches the sandbox.
+  const ownerAllowFrom = process.env.OPENCLAW_OWNER_ALLOW_FROM;
+  config.commands = {
+    ownerAllowFrom: ownerAllowFrom
+      ? ownerAllowFrom.split(",").map((s) => s.trim()).filter(Boolean)
+      : ["*"],
+  };
+
+  config.tools = {
+    profile: "full",
+    media: {
+      image: {
+        enabled: true,
+        models: [
+          { provider: "openai", model: "google/gemini-3.1-flash-image-preview" },
+          { provider: "openai", model: "openai/gpt-4o" },
+        ],
+      },
+      video: {
+        enabled: true,
+        models: [{ provider: "openai", model: "google/gemini-3-flash" }],
+      },
+      audio: { enabled: true },
+    },
+  };
+
+  if (telegramBotToken) {
+    const channels = (config.channels as Record<string, unknown>) ?? {};
+    const origin = proxyOrigin?.replace(/\/+$/, "");
+    const telegramConfig: Record<string, unknown> = {
+      enabled: true,
+      botToken: telegramBotToken,
+      dmPolicy: "open",
+      groupPolicy: "open",
+      allowFrom: ["*"],
+      webhookPort: OPENCLAW_TELEGRAM_WEBHOOK_PORT,
+      webhookHost: OPENCLAW_TELEGRAM_WEBHOOK_HOST,
+      webhookPath: OPENCLAW_TELEGRAM_INTERNAL_WEBHOOK_PATH,
+    };
+    if (origin) {
+      telegramConfig.webhookUrl = `${origin}${TELEGRAM_PUBLIC_WEBHOOK_PATH}`;
+    }
+    if (telegramWebhookSecret) {
+      telegramConfig.webhookSecret = telegramWebhookSecret;
+    }
+    channels.telegram = telegramConfig;
+    config.channels = channels;
+  }
+
+  if (slackCredentials) {
+    const channels = (config.channels as Record<string, unknown>) ?? {};
+    channels.slack = {
+      enabled: true,
+      mode: "http",
+      botToken: slackCredentials.botToken,
+      signingSecret: slackCredentials.signingSecret,
+      dmPolicy: "open",
+      groupPolicy: "open",
+      allowFrom: ["*"],
+      webhookPath: "/slack/events",
+    };
+    config.channels = channels;
+  }
+
+  if (whatsappConfig?.enabled) {
+    const channels = (config.channels as Record<string, unknown>) ?? {};
+    channels.whatsapp = {
+      enabled: true,
+      dmPolicy: whatsappConfig.dmPolicy ?? "pairing",
+      allowFrom: whatsappConfig.allowFrom ?? [],
+      groupPolicy: whatsappConfig.groupPolicy ?? "allowlist",
+      groupAllowFrom: whatsappConfig.groupAllowFrom ?? [],
+      ...(whatsappConfig.groups ? { groups: whatsappConfig.groups } : {}),
+    };
+    config.channels = channels;
+  }
 
   // Telegram webhook delivery remains app-owned at the public route, but
   // OpenClaw still needs its native Telegram config so boot-time setWebhook
