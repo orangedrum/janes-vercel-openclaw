@@ -258,9 +258,10 @@ export function buildGatewayConfig(
     // gateway traffic reaches the sandbox.
     dangerouslyDisableDeviceAuth: true,
   };
-  if (proxyOrigin) {
-    controlUi.allowedOrigins = [proxyOrigin];
-  }
+  // In proxied deployments, OpenClaw Control UI validates browser Origin.
+  // Some restore paths can temporarily miss proxyOrigin; fall back to "*"
+  // so operator login does not deadlock on "origin not allowed".
+  controlUi.allowedOrigins = proxyOrigin ? [proxyOrigin] : ["*"];
 
   const config: Record<string, unknown> = {
     gateway: {
