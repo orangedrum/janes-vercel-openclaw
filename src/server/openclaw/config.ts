@@ -299,8 +299,13 @@ export function buildGatewayConfig(
     // gateway traffic reaches the sandbox.
     dangerouslyDisableDeviceAuth: true,
   };
-  // Do not pin allowedOrigins in proxied mode. Preview hostnames rotate and
-  // strict origin pinning can lock operators out of the Control UI.
+  // Allow the current proxy origin explicitly and include wildcard fallback
+  // so rotating preview domains do not lock operators out of Control UI.
+  if (proxyOrigin) {
+    controlUi.allowedOrigins = [proxyOrigin, "*"];
+  } else {
+    controlUi.allowedOrigins = ["*"];
+  }
 
   const config: Record<string, unknown> = {
     gateway: {
