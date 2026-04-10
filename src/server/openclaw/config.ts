@@ -81,6 +81,7 @@ function readBooleanEnv(name: string, defaultValue = false): boolean {
 // ---------------------------------------------------------------------------
 
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1";
+const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 /**
  * Shell fragment that ensures OPENCLAW_GATEWAY_PORT is in the shell profile
@@ -120,6 +121,10 @@ function buildGatewayEnvShell(): string {
     'if [ -n "$AI_GATEWAY_API_KEY" ]; then',
     '  export AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY"',
     '  export OPENAI_API_KEY="$AI_GATEWAY_API_KEY"',
+    '  if echo "$AI_GATEWAY_API_KEY" | grep -q "^AIza"; then',
+    '    export GEMINI_API_KEY="$AI_GATEWAY_API_KEY"',
+    '    export GOOGLE_GENERATIVE_AI_API_KEY="$AI_GATEWAY_API_KEY"',
+    '  fi',
     "fi",
     `export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"`,
     `export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"`,
@@ -275,7 +280,7 @@ export function buildGatewayConfig(
     "";
   const useDirectGemini = explicitApiKey.startsWith("AIza");
   const defaultPrimaryModel = useDirectGemini
-    ? "openai/gemini-2.0-flash"
+    ? "google/gemini-2.0-flash"
     : "vercel-ai-gateway/google/gemini-2.5-flash";
   const defaultFallbackModels = useDirectGemini
     ? []
@@ -286,7 +291,7 @@ export function buildGatewayConfig(
         "vercel-ai-gateway/openai/gpt-5.2",
       ];
   const modelProviderBaseUrl = useDirectGemini
-    ? "https://generativelanguage.googleapis.com/v1beta/openai"
+    ? GOOGLE_GEMINI_BASE_URL
     : AI_GATEWAY_BASE_URL;
 
   const controlUi: Record<string, unknown> = {
@@ -333,7 +338,7 @@ export function buildGatewayConfig(
       },
       models: useDirectGemini
         ? {
-            "openai/gemini-2.0-flash": { alias: "Gemini 2.0 Flash" },
+            "google/gemini-2.0-flash": { alias: "Gemini 2.0 Flash" },
           }
         : {
             "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
@@ -362,16 +367,20 @@ export function buildGatewayConfig(
 
   config.models = {
     mode: "merge",
-    providers: {
-      openai: {
-        baseUrl: modelProviderBaseUrl,
-        apiKey: explicitApiKey || "sk-placeholder",
-        api: "openai-completions",
-        models: useDirectGemini
-          ? [
-              { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
-            ]
-          : [
+    providers: useDirectGemini
+      ? {
+          google: {
+            baseUrl: modelProviderBaseUrl,
+            apiKey: explicitApiKey || "sk-placeholder",
+            api: "google",
+          },
+        }
+      : {
+          openai: {
+            baseUrl: modelProviderBaseUrl,
+            apiKey: explicitApiKey || "sk-placeholder",
+            api: "openai-completions",
+            models: [
               { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
               { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
               { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
@@ -384,8 +393,8 @@ export function buildGatewayConfig(
               { id: "text-embedding-3-large", name: "Text Embedding 3 Large" },
               { id: "whisper-1", name: "Whisper" },
             ],
-      },
-    },
+          },
+        },
   };
 
   // Grant owner-level tool access (cron, gateway, nodes) to channel
@@ -403,7 +412,7 @@ export function buildGatewayConfig(
       image: {
         enabled: true,
         models: useDirectGemini
-          ? [{ provider: "openai", model: "gemini-3.1-flash-image-preview" }]
+          ? [{ provider: "google", model: "gemini-2.0-flash" }]
           : [
               { provider: "vercel-ai-gateway", model: "google/gemini-3.1-flash-image-preview" },
               { provider: "vercel-ai-gateway", model: "openai/gpt-4o" },
@@ -412,7 +421,7 @@ export function buildGatewayConfig(
       video: {
         enabled: true,
         models: useDirectGemini
-          ? [{ provider: "openai", model: "gemini-2.0-flash" }]
+          ? [{ provider: "google", model: "gemini-2.0-flash" }]
           : [{ provider: "vercel-ai-gateway", model: "google/gemini-3-flash" }],
       },
       audio: { enabled: true },
