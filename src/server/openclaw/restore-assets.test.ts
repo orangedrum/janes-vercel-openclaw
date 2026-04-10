@@ -86,8 +86,8 @@ test("static restore files produce non-empty buffers", () => {
 test("static restore files include marketing skill files when available", () => {
   const paths = buildStaticRestoreFiles().map((f) => f.path);
   assert.ok(
-    paths.some((p) => p.startsWith(OPENCLAW_MARKETING_SKILLS_PATH)),
-    "should include marketing skill files",
+    paths.includes(`${OPENCLAW_MARKETING_SKILLS_PATH}/cold-email/SKILL.md`),
+    "should include top-level marketing skill files where OpenClaw discovers them",
   );
 });
 
