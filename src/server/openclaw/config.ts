@@ -372,7 +372,8 @@ export function buildGatewayConfig(
           google: {
             baseUrl: modelProviderBaseUrl,
             apiKey: explicitApiKey || "sk-placeholder",
-            api: "google",
+            api: "google-generative-ai",
+            models: [{ id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" }],
           },
         }
       : {
