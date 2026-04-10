@@ -419,7 +419,7 @@ export function buildGatewayConfig(
   };
 
   config.tools = {
-    profile: "full",
+    profile: "coding",
     media: {
       image: {
         enabled: true,
