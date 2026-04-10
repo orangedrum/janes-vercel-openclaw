@@ -277,8 +277,6 @@ export function buildGatewayConfig(
     ? [
         "openai/gemini-3-flash",
         "openai/gemini-2.5-pro",
-        "openai/gpt-5.3-chat",
-        "openai/gpt-5.2",
       ]
     : [
         "vercel-ai-gateway/google/gemini-3-flash",
@@ -330,28 +328,35 @@ export function buildGatewayConfig(
         primary: defaultPrimaryModel,
         fallbacks: defaultFallbackModels,
       },
-      models: {
-        "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
-        "vercel-ai-gateway/anthropic/claude-sonnet-4.6": { alias: "Claude Sonnet 4.6" },
-        "vercel-ai-gateway/anthropic/claude-haiku-4.5": { alias: "Claude Haiku 4.5" },
-        "vercel-ai-gateway/openai/gpt-5.3-chat": { alias: "GPT-5.3 Chat" },
-        "vercel-ai-gateway/openai/gpt-5.2": { alias: "GPT-5.2" },
-        "vercel-ai-gateway/openai/gpt-5-mini": { alias: "GPT-5 Mini" },
-        "vercel-ai-gateway/openai/o3": { alias: "o3" },
-        "vercel-ai-gateway/openai/o4-mini": { alias: "o4-mini" },
-        "vercel-ai-gateway/google/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
-        "vercel-ai-gateway/google/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
-        "vercel-ai-gateway/google/gemini-3-flash": { alias: "Gemini 3 Flash" },
-        "vercel-ai-gateway/google/gemini-3.1-flash-image-preview": { alias: "Gemini 3.1 Flash Image" },
-        "openai/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
-        "openai/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
-        "openai/gemini-3-flash": { alias: "Gemini 3 Flash" },
-        "vercel-ai-gateway/deepseek/deepseek-v3.2": { alias: "DeepSeek V3.2" },
-        "vercel-ai-gateway/deepseek/deepseek-v3.2-thinking": { alias: "DeepSeek V3.2 Thinking" },
-        "vercel-ai-gateway/xai/grok-4": { alias: "Grok 4" },
-        "vercel-ai-gateway/mistral/mistral-large-3": { alias: "Mistral Large 3" },
-        "vercel-ai-gateway/mistral/devstral-2": { alias: "Devstral 2" },
-      },
+      models: useDirectGemini
+        ? {
+            "openai/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
+            "openai/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
+            "openai/gemini-3-flash": { alias: "Gemini 3 Flash" },
+            "openai/gemini-3.1-flash-image-preview": { alias: "Gemini 3.1 Flash Image" },
+          }
+        : {
+            "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
+            "vercel-ai-gateway/anthropic/claude-sonnet-4.6": { alias: "Claude Sonnet 4.6" },
+            "vercel-ai-gateway/anthropic/claude-haiku-4.5": { alias: "Claude Haiku 4.5" },
+            "vercel-ai-gateway/openai/gpt-5.3-chat": { alias: "GPT-5.3 Chat" },
+            "vercel-ai-gateway/openai/gpt-5.2": { alias: "GPT-5.2" },
+            "vercel-ai-gateway/openai/gpt-5-mini": { alias: "GPT-5 Mini" },
+            "vercel-ai-gateway/openai/o3": { alias: "o3" },
+            "vercel-ai-gateway/openai/o4-mini": { alias: "o4-mini" },
+            "vercel-ai-gateway/google/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
+            "vercel-ai-gateway/google/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
+            "vercel-ai-gateway/google/gemini-3-flash": { alias: "Gemini 3 Flash" },
+            "vercel-ai-gateway/google/gemini-3.1-flash-image-preview": { alias: "Gemini 3.1 Flash Image" },
+            "openai/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
+            "openai/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
+            "openai/gemini-3-flash": { alias: "Gemini 3 Flash" },
+            "vercel-ai-gateway/deepseek/deepseek-v3.2": { alias: "DeepSeek V3.2" },
+            "vercel-ai-gateway/deepseek/deepseek-v3.2-thinking": { alias: "DeepSeek V3.2 Thinking" },
+            "vercel-ai-gateway/xai/grok-4": { alias: "Grok 4" },
+            "vercel-ai-gateway/mistral/mistral-large-3": { alias: "Mistral Large 3" },
+            "vercel-ai-gateway/mistral/devstral-2": { alias: "Devstral 2" },
+          },
     },
   };
 
@@ -392,14 +397,18 @@ export function buildGatewayConfig(
     media: {
       image: {
         enabled: true,
-        models: [
-          { provider: "vercel-ai-gateway", model: "google/gemini-3.1-flash-image-preview" },
-          { provider: "vercel-ai-gateway", model: "openai/gpt-4o" },
-        ],
+        models: useDirectGemini
+          ? [{ provider: "openai", model: "gemini-3.1-flash-image-preview" }]
+          : [
+              { provider: "vercel-ai-gateway", model: "google/gemini-3.1-flash-image-preview" },
+              { provider: "vercel-ai-gateway", model: "openai/gpt-4o" },
+            ],
       },
       video: {
         enabled: true,
-        models: [{ provider: "vercel-ai-gateway", model: "google/gemini-3-flash" }],
+        models: useDirectGemini
+          ? [{ provider: "openai", model: "gemini-3-flash" }]
+          : [{ provider: "vercel-ai-gateway", model: "google/gemini-3-flash" }],
       },
       audio: { enabled: true },
     },
