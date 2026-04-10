@@ -283,7 +283,10 @@ export function buildGatewayConfig(
     ? "google/gemini-2.0-flash"
     : "vercel-ai-gateway/google/gemini-2.5-flash";
   const defaultFallbackModels = useDirectGemini
-    ? []
+    ? [
+        "google/gemini-2.0-flash-lite",
+        "google/gemini-1.5-flash",
+      ]
     : [
         "vercel-ai-gateway/google/gemini-3-flash",
         "vercel-ai-gateway/google/gemini-2.5-pro",
@@ -339,6 +342,8 @@ export function buildGatewayConfig(
       models: useDirectGemini
         ? {
             "google/gemini-2.0-flash": { alias: "Gemini 2.0 Flash" },
+            "google/gemini-2.0-flash-lite": { alias: "Gemini 2.0 Flash Lite" },
+            "google/gemini-1.5-flash": { alias: "Gemini 1.5 Flash" },
           }
         : {
             "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
@@ -373,7 +378,11 @@ export function buildGatewayConfig(
             baseUrl: modelProviderBaseUrl,
             apiKey: explicitApiKey || "sk-placeholder",
             api: "google-generative-ai",
-            models: [{ id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" }],
+            models: [
+              { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
+              { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite" },
+              { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
+            ],
           },
         }
       : {
