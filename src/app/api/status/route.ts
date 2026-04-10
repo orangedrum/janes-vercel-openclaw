@@ -1,13 +1,17 @@
+import { after } from "next/server";
+
 import { requireJsonRouteAuth } from "@/server/auth/route-auth";
 import { getPublicChannelState } from "@/server/channels/state";
 import { getAuthMode } from "@/server/env";
 import { computeWouldBlock } from "@/server/firewall/state";
 import { extractRequestId, logError } from "@/server/log";
+import { getPublicOrigin } from "@/server/public-url";
 import {
   buildRestoreTargetAttestation,
   buildRestoreTargetPlan,
 } from "@/server/sandbox/restore-attestation";
 import {
+  ensureSandboxRunning,
   getRunningSandboxTimeoutRemainingMs,
   probeGatewayReady,
   reconcileStaleRunningStatus,
@@ -21,6 +25,12 @@ import {
 import { getStore, getInitializedMeta, mutateMeta } from "@/server/store/store";
 import { jsonError } from "@/shared/http";
 import type { SingleMeta } from "@/shared/types";
+
+const STALE_BUSY_STATUS_MS = 5 * 60 * 1000;
+
+function isBusyStatus(status: SingleMeta["status"]): boolean {
+  return status === "creating" || status === "setup" || status === "booting" || status === "restoring";
+}
 
 type GatewayStatus = "ready" | "not-ready" | "unknown";
 
@@ -113,6 +123,25 @@ export async function GET(request: Request): Promise<Response> {
       responseMeta.status === "setup" ||
       responseMeta.status === "booting" ||
       responseMeta.status === "error";
+
+    // Safety net: if metadata is stuck in a busy status for too long,
+    // trigger ensure in the background so polling can self-heal.
+    if (
+      isBusyStatus(responseMeta.status) &&
+      Date.now() - responseMeta.updatedAt > STALE_BUSY_STATUS_MS
+    ) {
+      const origin = getPublicOrigin(request);
+      after(() =>
+        ensureSandboxRunning({
+          origin,
+          reason: "status.stale-busy-auto-recover",
+          schedule: after,
+        }).catch(() => {
+          // Keep status responses best-effort; failures are logged by lifecycle paths.
+        }),
+      );
+    }
+
     const setupProgress = includeSetupProgress
       ? await readSetupProgress(responseMeta.id, responseMeta.lifecycleAttemptId)
       : null;
