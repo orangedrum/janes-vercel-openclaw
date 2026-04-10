@@ -124,7 +124,13 @@ function buildGatewayEnvShell(): string {
     `export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"`,
     `export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"`,
     'export OPENCLAW_GATEWAY_TOKEN="$gateway_token"',
-    `export OPENAI_BASE_URL="${AI_GATEWAY_BASE_URL}"`,
+    // Detect Gemini API key (AIza prefix) and route directly to Google,
+    // otherwise use Vercel AI Gateway.
+    'if echo "${AI_GATEWAY_API_KEY:-}" | grep -q "^AIza"; then',
+    '  export OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"',
+    'else',
+    `  export OPENAI_BASE_URL="${AI_GATEWAY_BASE_URL}"`,
+    'fi',
     `export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"`,
   ].join("\n");
 }
@@ -258,7 +264,11 @@ export function buildGatewayConfig(
   telegramWebhookSecret?: string,
   whatsappConfig?: WhatsAppGatewayConfig,
 ): string {
-  const explicitApiKey = apiKey?.trim() || process.env.AI_GATEWAY_API_KEY?.trim() || "";
+  const explicitApiKey =
+    apiKey?.trim() ||
+    process.env.AI_GATEWAY_API_KEY?.trim() ||
+    process.env.GEMINI_API_KEY?.trim() ||
+    "";
   const useDirectGemini = explicitApiKey.startsWith("AIza");
   const defaultPrimaryModel = useDirectGemini
     ? "openai/gemini-2.5-flash"
@@ -350,7 +360,7 @@ export function buildGatewayConfig(
     providers: {
       openai: {
         baseUrl: modelProviderBaseUrl,
-        apiKey: "sk-placeholder",
+        apiKey: explicitApiKey || "sk-placeholder",
         api: "openai-completions",
         models: [
           { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
@@ -696,7 +706,11 @@ fi
 export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"
 export OPENCLAW_GATEWAY_TOKEN="\$gateway_token"
-export OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1"
+if echo "\${AI_GATEWAY_API_KEY:-}" | grep -q "^AIza"; then
+  export OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"
+else
+  export OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1"
+fi
 ${buildNetLearnWriteShell()}
 export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"
 # Integrity check: fail fast if bundled peer dependencies are missing.

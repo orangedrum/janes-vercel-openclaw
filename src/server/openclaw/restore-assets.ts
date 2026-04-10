@@ -258,7 +258,10 @@ export function buildRestoreRuntimeEnv(
   // the defense-in-depth credential path for outbound requests.
   const env: Record<string, string> = {
     OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
-    OPENAI_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+    OPENAI_BASE_URL:
+      options.apiKey?.startsWith("AIza")
+        ? "https://generativelanguage.googleapis.com/v1beta/openai"
+        : "https://ai-gateway.vercel.sh/v1",
   };
 
   if (options.apiKey) {

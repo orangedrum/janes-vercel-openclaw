@@ -2422,7 +2422,8 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
       progress.appendLine("system", "Resumed persistent sandbox — running fast restore");
 
       const latest = await getInitializedMeta();
-      const freshApiKey = process.env.AI_GATEWAY_API_KEY?.trim() || credential?.token;
+      const freshApiKey =
+        process.env.AI_GATEWAY_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim() || credential?.token;
 
       const restoreEnv = buildRestoreRuntimeEnv({
         gatewayToken: latest.gatewayToken,
@@ -2748,7 +2749,8 @@ async function restoreSandboxFromSnapshot(
     // Build all payloads before Sandbox.create.  Config, credentials, and
     // firewall policy are resolved here so zero writeFiles() calls are
     // needed on the hot path.
-    const freshApiKey = process.env.AI_GATEWAY_API_KEY?.trim() || credential?.token;
+    const freshApiKey =
+      process.env.AI_GATEWAY_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim() || credential?.token;
     markPhase("getMeta2");
     const latest = await getInitializedMeta();
     logInfo("sandbox.restore.timing", { phase: "getMeta2", ms: elapsedSince("getMeta2") });
@@ -2772,7 +2774,7 @@ async function restoreSandboxFromSnapshot(
 
     const restoreEnv = buildRestoreRuntimeEnv({
       gatewayToken: latest.gatewayToken,
-      apiKey: credential?.token,
+      apiKey: freshApiKey,
     });
 
     // Hot-spare promotion attempt — skip the normal Sandbox.create() if a
