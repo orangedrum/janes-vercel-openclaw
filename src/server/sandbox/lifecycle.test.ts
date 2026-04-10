@@ -432,6 +432,34 @@ test("stopSandbox returns current meta if already stopped with snapshot", async 
   });
 });
 
+test("stopSandbox reconciles SDK 400 no-body idempotent stop as stopped", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sbx-stop-400";
+      meta.portUrls = { "3000": "https://sbx-stop-400-3000.fake.vercel.run" };
+    });
+
+    const handle = fake.getHandle("sbx-stop-400");
+    assert.ok(handle, "sandbox handle should exist");
+    if (!handle) {
+      throw new Error("sandbox handle missing");
+    }
+
+    handle.stop = async () => {
+      handle.setStatus("stopped");
+      throw new Error("400 status code (no body)");
+    };
+
+    const result = await stopSandbox();
+
+    assert.equal(result.status, "stopped");
+    assert.equal(result.sandboxId, "sbx-stop-400");
+    assert.equal(result.portUrls, null);
+  });
+});
+
 test("ensureSandboxRunning returns running state when already running", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {

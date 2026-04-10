@@ -598,6 +598,36 @@ async function readCronNextWakeFromSandbox(
   }
 }
 
+function getHttpStatusCodeFromError(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const maybeStatus = (
+    error as {
+      status?: unknown;
+      statusCode?: unknown;
+      response?: { status?: unknown };
+    }
+  );
+  const candidates = [maybeStatus.status, maybeStatus.statusCode, maybeStatus.response?.status];
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function isSandboxGoneOrAlreadyStoppedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const statusCode = getHttpStatusCodeFromError(error);
+  if (statusCode === 404 || statusCode === 410) return true;
+  // Vercel Sandbox SDK can return 400 "no body" for idempotent stop when
+  // the sandbox already transitioned to stopped/stopping.
+  if (statusCode === 400 && /no body/i.test(message)) return true;
+  if (/\b(404|410)\b/.test(message)) return true;
+  if (/\b400\b/.test(message) && /no body/i.test(message)) return true;
+  return false;
+}
+
 export async function stopSandbox(): Promise<SingleMeta> {
   logInfo("sandbox.stop_requested");
   return withLifecycleLock(async () => {
@@ -687,15 +717,32 @@ export async function stopSandbox(): Promise<SingleMeta> {
     } catch (err) {
       // The sandbox may have already been stopped by the platform (timeout
       // expiry, etc.).  The Vercel API returns 404 or 410 in this case.
-      // With v2 persistent sandboxes, a gone sandbox means it was deleted.
-      // Mark as uninitialized so the next ensure creates a fresh one.
-      const message = err instanceof Error ? err.message : String(err);
-      const isGone = message.includes("404") || message.includes("410");
-      if (isGone) {
-        logWarn("sandbox.stop.sandbox_already_gone", {
+      // With v2 persistent sandboxes, SDK stop may also return 400 (no body)
+      // after a concurrent/idempotent stop. Treat these as non-fatal.
+      if (isSandboxGoneOrAlreadyStoppedError(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        logWarn("sandbox.stop.idempotent_stop_reconciled", {
           sandboxId: meta.sandboxId,
           error: message,
+          statusCode: getHttpStatusCodeFromError(err),
         });
+
+        try {
+          const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+          if (sandbox.status === "stopped" || sandbox.status === "stopping") {
+            return mutateMeta((next) => {
+              next.portUrls = null;
+              next.status = "stopped";
+              next.lastAccessedAt = Date.now();
+              next.lastError = null;
+            });
+          }
+        } catch {
+          // If get() also fails, treat it as gone and fully uninitialized.
+        }
+
+        // Sandbox is gone or cannot be queried — reset runtime pointers so
+        // the next ensure creates a fresh sandbox.
         return mutateMeta((next) => {
           next.sandboxId = null;
           next.portUrls = null;
