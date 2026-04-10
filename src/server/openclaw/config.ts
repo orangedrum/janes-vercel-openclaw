@@ -130,7 +130,7 @@ function buildGatewayEnvShell(): string {
     '  export OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"',
     '  _sessions_file="${OPENCLAW_STATE_DIR}/agents/main/sessions/sessions.json"',
     '  if [ -f "$_sessions_file" ]; then',
-    "    node -e \"const fs=require('fs');const p=process.argv[1];const raw=fs.readFileSync(p,'utf8');const data=JSON.parse(raw);const text=JSON.stringify(data);if(!text.includes('gemini-3-flash')) process.exit(0);const replaced=JSON.parse(text.replaceAll('gemini-3-flash','gemini-2.0-flash'));fs.writeFileSync(p, JSON.stringify(replaced,null,2)+'\\n',{mode:0o600});\" \"$_sessions_file\" || true",
+    "    node -e \"const fs=require('fs');const p=process.argv[1];const raw=fs.readFileSync(p,'utf8');const data=JSON.parse(raw);const text=JSON.stringify(data);const next=text.replaceAll('gemini-3-flash','gemini-2.0-flash').replaceAll('gemini-2.5-flash','gemini-2.0-flash').replaceAll('gemini-2.5-pro','gemini-2.0-flash');if(next===text) process.exit(0);const replaced=JSON.parse(next);fs.writeFileSync(p, JSON.stringify(replaced,null,2)+'\\n',{mode:0o600});\" \"$_sessions_file\" || true",
     '  fi',
     'else',
     `  export OPENAI_BASE_URL="${AI_GATEWAY_BASE_URL}"`,
@@ -278,10 +278,7 @@ export function buildGatewayConfig(
     ? "openai/gemini-2.0-flash"
     : "vercel-ai-gateway/google/gemini-2.5-flash";
   const defaultFallbackModels = useDirectGemini
-    ? [
-        "openai/gemini-2.5-flash",
-        "openai/gemini-2.5-pro",
-      ]
+    ? []
     : [
         "vercel-ai-gateway/google/gemini-3-flash",
         "vercel-ai-gateway/google/gemini-2.5-pro",
@@ -337,8 +334,6 @@ export function buildGatewayConfig(
       models: useDirectGemini
         ? {
             "openai/gemini-2.0-flash": { alias: "Gemini 2.0 Flash" },
-            "openai/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
-            "openai/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
           }
         : {
             "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
@@ -375,8 +370,6 @@ export function buildGatewayConfig(
         models: useDirectGemini
           ? [
               { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
-              { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-              { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
             ]
           : [
               { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
