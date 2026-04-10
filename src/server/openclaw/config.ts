@@ -271,10 +271,11 @@ export function buildGatewayConfig(
     "";
   const useDirectGemini = explicitApiKey.startsWith("AIza");
   const defaultPrimaryModel = useDirectGemini
-    ? "openai/gemini-2.5-flash"
+    ? "openai/gemini-2.0-flash"
     : "vercel-ai-gateway/google/gemini-2.5-flash";
   const defaultFallbackModels = useDirectGemini
     ? [
+        "openai/gemini-2.5-flash",
         "openai/gemini-3-flash",
         "openai/gemini-2.5-pro",
       ]
@@ -330,6 +331,7 @@ export function buildGatewayConfig(
       },
       models: useDirectGemini
         ? {
+            "openai/gemini-2.0-flash": { alias: "Gemini 2.0 Flash" },
             "openai/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
             "openai/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
             "openai/gemini-3-flash": { alias: "Gemini 3 Flash" },
@@ -368,6 +370,7 @@ export function buildGatewayConfig(
         apiKey: explicitApiKey || "sk-placeholder",
         api: "openai-completions",
         models: [
+          { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
           { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
           { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
           { id: "gemini-3-flash", name: "Gemini 3 Flash" },
