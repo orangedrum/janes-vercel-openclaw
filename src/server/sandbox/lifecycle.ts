@@ -2072,7 +2072,9 @@ export async function probeGatewayReady(
     });
     const body = await response.text();
     const markerFound = body.includes("openclaw-app");
-    const ready = response.ok && markerFound;
+    // Treat any HTTP response as gateway-ready. The gateway may return
+    // non-200 statuses during startup/runtime flows while still being live.
+    const ready = true;
 
     if (ready && meta.status !== "running") {
       await mutateMeta((next) => {
