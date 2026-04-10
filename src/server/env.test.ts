@@ -47,7 +47,7 @@ afterEach(() => {
 
 test("getAiGatewayAuthMode returns unavailable when no token source exists", async () => {
   await withEnv(
-    { AI_GATEWAY_API_KEY: undefined },
+    { AI_GATEWAY_API_KEY: undefined, GEMINI_API_KEY: undefined },
     async () => {
       _setAiGatewayTokenOverrideForTesting(undefined);
       const mode = await getAiGatewayAuthMode();
@@ -76,10 +76,42 @@ test("getAiGatewayBearerTokenOptional returns undefined in test mode without AI_
       NODE_ENV: "test",
       VERCEL: "1",
       AI_GATEWAY_API_KEY: undefined,
+      GEMINI_API_KEY: undefined,
     },
     async () => {
       const token = await getAiGatewayBearerTokenOptional();
       assert.equal(token, undefined);
+    },
+  );
+});
+
+test("getAiGatewayBearerTokenOptional uses GEMINI_API_KEY in test mode when AI_GATEWAY_API_KEY is absent", async () => {
+  await withEnv(
+    {
+      NODE_ENV: "test",
+      VERCEL: "1",
+      AI_GATEWAY_API_KEY: undefined,
+      GEMINI_API_KEY: "AIza-test-gemini-key",
+    },
+    async () => {
+      const token = await getAiGatewayBearerTokenOptional();
+      assert.equal(token, "AIza-test-gemini-key");
+    },
+  );
+});
+
+test("getAiGatewayAuthMode returns api-key when GEMINI_API_KEY is set", async () => {
+  await withEnv(
+    {
+      NODE_ENV: undefined,
+      VERCEL: "1",
+      AI_GATEWAY_API_KEY: undefined,
+      GEMINI_API_KEY: "AIza-live-gemini-key",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(null);
+      const mode = await getAiGatewayAuthMode();
+      assert.equal(mode, "api-key");
     },
   );
 });

@@ -187,15 +187,16 @@ export function decodeJwtExp(token: string): number | null {
  *
  * Priority in tests:
  *  1. Explicit test overrides
- *  2. Static `AI_GATEWAY_API_KEY` env var
+ *  2. Static key env var (`AI_GATEWAY_API_KEY` or `GEMINI_API_KEY`)
  *  3. Never fetch OIDC
  *
  * Priority on Vercel deployments:
- *  1. Vercel OIDC token (`@vercel/oidc`)
- *  2. Static `AI_GATEWAY_API_KEY` env var (fallback)
+ *  1. Static `GEMINI_API_KEY` env var (direct Gemini path)
+ *  2. Vercel OIDC token (`@vercel/oidc`)
+ *  3. Static `AI_GATEWAY_API_KEY` env var (fallback)
  *
  * Priority elsewhere:
- *  1. Static `AI_GATEWAY_API_KEY` env var
+ *  1. Static key env var (`AI_GATEWAY_API_KEY` or `GEMINI_API_KEY`)
  *  2. Vercel OIDC token (when available, e.g. `vercel env pull`)
  *
  * Returns `null` or `undefined` when no credential is available.
@@ -212,9 +213,12 @@ export async function resolveAiGatewayCredentialOptional(): Promise<AiGatewayCre
     return { token: _aiGatewayTokenOverride, source: "oidc", expiresAt: decodeJwtExp(_aiGatewayTokenOverride) };
   }
 
-  // Skip real OIDC lookups in tests. Use the static key when provided.
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  const staticAiGatewayKey = process.env.AI_GATEWAY_API_KEY?.trim();
+
+  // Skip real OIDC lookups in tests. Use static keys when provided.
   if (process.env.NODE_ENV === "test") {
-    const staticKey = process.env.AI_GATEWAY_API_KEY?.trim();
+    const staticKey = staticAiGatewayKey || geminiKey;
     if (staticKey) {
       return { token: staticKey, source: "api-key", expiresAt: null };
     }
@@ -222,6 +226,11 @@ export async function resolveAiGatewayCredentialOptional(): Promise<AiGatewayCre
   }
 
   const onVercel = isVercelDeployment();
+
+  // Explicit direct Gemini key always wins over OIDC.
+  if (geminiKey) {
+    return { token: geminiKey, source: "api-key", expiresAt: null };
+  }
 
   // On Vercel: try OIDC first.
   if (onVercel) {
@@ -236,7 +245,7 @@ export async function resolveAiGatewayCredentialOptional(): Promise<AiGatewayCre
   }
 
   // Static API key.
-  const staticKey = process.env.AI_GATEWAY_API_KEY?.trim();
+  const staticKey = staticAiGatewayKey;
   if (staticKey) {
     return { token: staticKey, source: "api-key", expiresAt: null };
   }
