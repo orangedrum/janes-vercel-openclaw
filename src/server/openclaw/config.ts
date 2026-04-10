@@ -299,11 +299,8 @@ export function buildGatewayConfig(
     // gateway traffic reaches the sandbox.
     dangerouslyDisableDeviceAuth: true,
   };
-  // Only pin allowed origins when we have a concrete public origin.
-  // Leaving this unset avoids false-negatives when preview URLs rotate.
-  if (proxyOrigin) {
-    controlUi.allowedOrigins = [proxyOrigin];
-  }
+  // Do not pin allowedOrigins in proxied mode. Preview hostnames rotate and
+  // strict origin pinning can lock operators out of the Control UI.
 
   const config: Record<string, unknown> = {
     gateway: {
