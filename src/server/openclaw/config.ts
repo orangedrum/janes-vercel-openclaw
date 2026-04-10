@@ -128,6 +128,10 @@ function buildGatewayEnvShell(): string {
     // otherwise use Vercel AI Gateway.
     'if echo "${AI_GATEWAY_API_KEY:-}" | grep -q "^AIza"; then',
     '  export OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai"',
+    '  _sessions_file="${OPENCLAW_STATE_DIR}/agents/main/sessions/sessions.json"',
+    '  if [ -f "$_sessions_file" ]; then',
+    "    node -e \"const fs=require('fs');const p=process.argv[1];const raw=fs.readFileSync(p,'utf8');const data=JSON.parse(raw);const text=JSON.stringify(data);if(!text.includes('gemini-3-flash')) process.exit(0);const replaced=JSON.parse(text.replaceAll('gemini-3-flash','gemini-2.0-flash'));fs.writeFileSync(p, JSON.stringify(replaced,null,2)+'\\n',{mode:0o600});\" \"$_sessions_file\" || true",
+    '  fi',
     'else',
     `  export OPENAI_BASE_URL="${AI_GATEWAY_BASE_URL}"`,
     'fi',
@@ -276,7 +280,6 @@ export function buildGatewayConfig(
   const defaultFallbackModels = useDirectGemini
     ? [
         "openai/gemini-2.5-flash",
-        "openai/gemini-3-flash",
         "openai/gemini-2.5-pro",
       ]
     : [
@@ -336,8 +339,6 @@ export function buildGatewayConfig(
             "openai/gemini-2.0-flash": { alias: "Gemini 2.0 Flash" },
             "openai/gemini-2.5-pro": { alias: "Gemini 2.5 Pro" },
             "openai/gemini-2.5-flash": { alias: "Gemini 2.5 Flash" },
-            "openai/gemini-3-flash": { alias: "Gemini 3 Flash" },
-            "openai/gemini-3.1-flash-image-preview": { alias: "Gemini 3.1 Flash Image" },
           }
         : {
             "vercel-ai-gateway/anthropic/claude-opus-4.6": { alias: "Claude Opus 4.6" },
@@ -371,19 +372,25 @@ export function buildGatewayConfig(
         baseUrl: modelProviderBaseUrl,
         apiKey: explicitApiKey || "sk-placeholder",
         api: "openai-completions",
-        models: [
-          { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
-          { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-          { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-          { id: "gemini-3-flash", name: "Gemini 3 Flash" },
-          { id: "gpt-image-1", name: "GPT Image 1" },
-          { id: "dall-e-3", name: "DALL-E 3" },
-          { id: "gpt-4o", name: "GPT-4o", input: ["text", "image"] },
-          { id: "gpt-4o-mini-tts", name: "GPT-4o Mini TTS" },
-          { id: "text-embedding-3-small", name: "Text Embedding 3 Small" },
-          { id: "text-embedding-3-large", name: "Text Embedding 3 Large" },
-          { id: "whisper-1", name: "Whisper" },
-        ],
+        models: useDirectGemini
+          ? [
+              { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
+              { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+              { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+            ]
+          : [
+              { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
+              { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+              { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+              { id: "gemini-3-flash", name: "Gemini 3 Flash" },
+              { id: "gpt-image-1", name: "GPT Image 1" },
+              { id: "dall-e-3", name: "DALL-E 3" },
+              { id: "gpt-4o", name: "GPT-4o", input: ["text", "image"] },
+              { id: "gpt-4o-mini-tts", name: "GPT-4o Mini TTS" },
+              { id: "text-embedding-3-small", name: "Text Embedding 3 Small" },
+              { id: "text-embedding-3-large", name: "Text Embedding 3 Large" },
+              { id: "whisper-1", name: "Whisper" },
+            ],
       },
     },
   };
@@ -412,7 +419,7 @@ export function buildGatewayConfig(
       video: {
         enabled: true,
         models: useDirectGemini
-          ? [{ provider: "openai", model: "gemini-3-flash" }]
+          ? [{ provider: "openai", model: "gemini-2.0-flash" }]
           : [{ provider: "vercel-ai-gateway", model: "google/gemini-3-flash" }],
       },
       audio: { enabled: true },
